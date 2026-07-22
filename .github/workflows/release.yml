@@ -1,37 +1,60 @@
 name: Release
+
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to package without a leading v
+        required: false
+        default: dev
+
 permissions:
   contents: write
+
 jobs:
   package:
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - run: brew install xcodegen create-dmg
-      - run: xcodegen generate
-      - name: Build archive
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Resolve package version
+        id: version
+        shell: bash
         run: |
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Release -archivePath build/MacVitals.xcarchive CODE_SIGNING_ALLOWED=NO archive
-          mkdir -p dist
-          cp -R build/MacVitals.xcarchive/Products/Applications/MacVitals.app dist/
-          ditto -c -k --sequesterRsrc --keepParent dist/MacVitals.app dist/MacVitals-${GITHUB_REF_NAME#v}.zip
-      - name: Create DMG
-        run: create-dmg --volname MacVitals --window-size 600 400 --icon-size 128 --app-drop-link 450 190 dist/MacVitals-${GITHUB_REF_NAME#v}.dmg dist/MacVitals.app || true
-      - name: Checksums
-        run: (cd dist && shasum -a 256 MacVitals-* > SHA256SUMS.txt)
-      - name: Release status
-        run: |
-          cat > dist/BUILD_STATUS.txt <<'EOF'
-          This artifact is an unsigned, non-notarized CI build unless the workflow was extended with valid Apple signing credentials.
-          macOS Gatekeeper may require a local source build or explicit user approval.
-          EOF
-      - uses: softprops/action-gh-release@v2
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          [[ -n "${version}" ]] || version=dev
+          echo "value=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and verify unsigned release artifacts
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "${{ steps.version.outputs.value }}"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacVitals-${{ steps.version.outputs.value }}-unsigned
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
         with:
           name: MacVitals ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
           files: |
             dist/MacVitals-*.zip
             dist/MacVitals-*.dmg
