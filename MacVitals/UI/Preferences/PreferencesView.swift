@@ -65,6 +65,15 @@ struct PreferencesView: View {
       Toggle("Enable local alerts", isOn: $settings.notificationsEnabled)
         .accessibilityIdentifier("notificationsEnabledToggle")
 
+      if settings.notificationsEnabled,
+        let message = settings.notificationAuthorizationState.message
+      {
+        Text(message)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("notificationAuthorizationStatusMessage")
+      }
+
       LabeledContent("Memory threshold") {
         HStack {
           Slider(value: $settings.memoryAlertThreshold, in: 50...100, step: 5)
