@@ -2,7 +2,7 @@
 
 MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU, memory, battery, adapter and real-time power diagnostics.
 
-> **Release status:** Apple Silicon and Intel hosted macOS workflows now verify formatting, native builds, unit/provider tests, packaged-app runtime smoke, universal unsigned Release packaging, ZIP/DMG consistency, EN/RU resources, SHA-256 checksums and machine-readable build provenance. Apple signing, notarization, physical battery/adapter validation, Instruments energy measurements and final hardware screenshots remain incomplete.
+> **Release status:** Apple Silicon and Intel hosted macOS workflows now verify formatting, native builds, unit/provider tests, packaged-app runtime smoke, universal unsigned Release packaging, the production application icon, ZIP/DMG consistency, EN/RU resources, SHA-256 checksums and machine-readable build provenance. Apple signing, notarization, physical battery/adapter validation, Instruments energy measurements and final hardware screenshots remain incomplete.
 
 ## Highlights
 
@@ -18,8 +18,9 @@ MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU,
 - Local state-transition alerts with cooldown and explicit permission handling
 - Bounded in-memory history with sleep/wake discontinuities
 - Reproducible unsigned ZIP and DMG packaging with provenance and checksum verification
+- Reproducible project-owned macOS application icon with structural and checksum validation
 - Native hosted runtime smoke on both arm64 and x86_64
-- English and Russian localization resources and UI smoke coverage
+- English and Russian localization resources and five-tab Preferences accessibility smoke coverage
 - No accounts, ads, analytics, telemetry, cloud backend, root helper or `sudo`
 
 ## GPU limitation
@@ -58,7 +59,7 @@ The package output includes:
 - `BUILD_STATUS.txt`
 - `BUILD_MANIFEST.json`
 
-The verifier checks the bundle, localizations, universal executable, ZIP/DMG payload consistency, signing/notarization classification and exact checksum scope. An artifact must not be described as Developer ID signed or notarized unless the actual bundle and provenance checks confirm those states.
+The verifier checks the application icon, bundle, localizations, universal executable, ZIP/DMG payload consistency, signing/notarization classification and exact checksum scope. An artifact must not be described as Developer ID signed or notarized unless the actual bundle and provenance checks confirm those states.
 
 To run the same short packaged-app regression guardrail used by CI:
 
@@ -103,7 +104,6 @@ The evaluator does **not** compare voltages. Its most important practical signal
 - Physical Apple Silicon laptop validation under battery/adapter transitions
 - Physical Intel Mac validation for retained sensor claims, or explicitly narrowed support claims
 - Instruments energy/wakeup/allocations evidence and multi-hour stability testing
-- Final screenshots and accessibility pass on physical hardware
-- Production application icon and final visual review
+- Final screenshots, VoiceOver review and visual review on physical hardware
 
-See [README_RU.md](README_RU.md), [architecture](ARCHITECTURE.md), [sensor compatibility](docs/SENSOR_COMPATIBILITY.md), [build provenance](docs/BUILD_PROVENANCE.md), and [release process](docs/RELEASE.md).
+See [README_RU.md](README_RU.md), [architecture](ARCHITECTURE.md), [application icon](docs/APP_ICON.md), [sensor compatibility](docs/SENSOR_COMPATIBILITY.md), [build provenance](docs/BUILD_PROVENANCE.md), and [release process](docs/RELEASE.md).
