@@ -1,8 +1,66 @@
 import Foundation
 import UserNotifications
 
+nonisolated enum NotificationAuthorizationState: Equatable, Sendable {
+  case unknown
+  case notDetermined
+  case denied
+  case authorized
+  case provisional
+  case ephemeral
+  case failed(String)
+
+  var canDeliver: Bool {
+    switch self {
+    case .authorized, .provisional, .ephemeral: return true
+    default: return false
+    }
+  }
+
+  var message: String? {
+    switch self {
+    case .unknown:
+      return "Checking notification permission…"
+    case .notDetermined:
+      return "macOS will ask for notification permission when alerts are enabled."
+    case .denied:
+      return "Notifications are disabled in System Settings › Notifications › MacVitals."
+    case .authorized:
+      return nil
+    case .provisional:
+      return "Notifications are authorized for quiet delivery."
+    case .ephemeral:
+      return "Notifications have temporary authorization."
+    case .failed(let message):
+      return message
+    }
+  }
+}
+
+nonisolated enum NotificationAuthorizationMapper {
+  static func state(for status: UNAuthorizationStatus) -> NotificationAuthorizationState {
+    switch status {
+    case .notDetermined: return .notDetermined
+    case .denied: return .denied
+    case .authorized: return .authorized
+    case .provisional: return .provisional
+    case .ephemeral: return .ephemeral
+    @unknown default: return .unknown
+    }
+  }
+}
+
 @MainActor
 final class NotificationCoordinator {
+  var onAuthorizationStateChange: ((NotificationAuthorizationState) -> Void)?
+
+  private(set) var authorizationState: NotificationAuthorizationState = .unknown {
+    didSet {
+      guard authorizationState != oldValue else { return }
+      onAuthorizationStateChange?(authorizationState)
+    }
+  }
+
   private var enabled = false
   private var policy = AlertPolicy()
   private let center: UNUserNotificationCenter
@@ -22,8 +80,24 @@ final class NotificationCoordinator {
         memoryThresholdPercent: memoryThreshold,
         lowBatteryThresholdPercent: lowBatteryThreshold))
 
-    guard enabled else { return }
-    center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    Task { [weak self] in
+      guard let self else { return }
+      await refreshAuthorizationState()
+      guard enabled, authorizationState == .notDetermined else { return }
+
+      do {
+        _ = try await center.requestAuthorization(options: [.alert, .sound])
+        await refreshAuthorizationState()
+      } catch {
+        authorizationState = .failed(
+          "Could not request notification permission: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  func refreshAuthorizationState() async {
+    let settings = await center.notificationSettings()
+    authorizationState = NotificationAuthorizationMapper.state(for: settings.authorizationStatus)
   }
 
   func process(
@@ -31,7 +105,7 @@ final class NotificationCoordinator {
     memoryThreshold: Double,
     lowBatteryThreshold: Double
   ) {
-    guard enabled else { return }
+    guard enabled, authorizationState.canDeliver else { return }
 
     let events = policy.evaluate(snapshot: snapshot)
     for event in events {
@@ -43,7 +117,16 @@ final class NotificationCoordinator {
         identifier: "macvitals.\(event.kind.rawValue).\(UUID().uuidString)",
         content: content,
         trigger: nil)
-      center.add(request)
+
+      Task { [weak self] in
+        guard let self else { return }
+        do {
+          try await center.add(request)
+        } catch {
+          authorizationState = .failed(
+            "Could not deliver a notification: \(error.localizedDescription)")
+        }
+      }
     }
   }
 }
