@@ -29,15 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       .store(in: &cancellables)
 
     coordinator.onSnapshot = { [weak self] snapshot in
-      guard let self else { return }
-      notificationCoordinator.process(
-        snapshot: snapshot,
-        memoryThreshold: settings.memoryAlertThreshold,
-        lowBatteryThreshold: settings.lowBatteryAlertThreshold)
-    }
-
-    Task { [weak self] in
-      await self?.notificationCoordinator.refreshAuthorizationState()
+      self?.notificationCoordinator.process(snapshot: snapshot)
     }
 
     coordinator.start()
