@@ -28,12 +28,12 @@ final class SamplingIntervalPolicyTests: XCTestCase {
       SamplingIntervalPolicy.sleepNanoseconds(
         intervalSeconds: .infinity,
         elapsedMilliseconds: .infinity),
-      0)
+      2_000_000_000)
     XCTAssertEqual(
       SamplingIntervalPolicy.sleepNanoseconds(
         intervalSeconds: .nan,
         elapsedMilliseconds: .nan),
-      0)
+      2_000_000_000)
     XCTAssertEqual(
       SamplingIntervalPolicy.sleepNanoseconds(
         intervalSeconds: 2,
