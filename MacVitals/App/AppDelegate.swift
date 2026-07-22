@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Logger.lifecycle.info("MacVitals started")
   }
 
+  func applicationDidBecomeActive(_ notification: Notification) {
+    settings.refreshLaunchAtLoginState()
+  }
+
   func applicationWillTerminate(_ notification: Notification) {
     coordinator.stop()
     coordinator.onSnapshot = nil
