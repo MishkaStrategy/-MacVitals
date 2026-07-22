@@ -64,6 +64,13 @@ nonisolated enum BatteryValueNormalizer {
     return value
   }
 
+  static func text(_ value: Any?) -> String? {
+    guard let value = value as? String else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    return String(trimmed.prefix(256))
+  }
+
   static func state(
     charging: Bool,
     externalPower: Bool,
