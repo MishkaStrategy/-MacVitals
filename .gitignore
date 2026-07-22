@@ -10,3 +10,4 @@ performance-results/
 *.xcuserstate
 xcuserdata/
 MacVitals.xcodeproj/
+MacVitals/Resources/AppIcon.icns
