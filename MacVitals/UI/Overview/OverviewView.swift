@@ -13,15 +13,22 @@ struct OverviewView: View {
           Text("Privacy-first Mac diagnostics").foregroundStyle(.secondary)
         }
         Spacer()
-        Button { openSettings() } label: { Image(systemName: "gearshape") }
-          .buttonStyle(.plain)
-          .accessibilityLabel("Preferences")
+        Button {
+          openSettings()
+        } label: {
+          Image(systemName: "gearshape")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Preferences")
       }
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
         MetricCard(
-          title: "CPU", value: percent(coordinator.snapshot.cpu.value?.total), symbol: "cpu")
+          title: "CPU",
+          value: MetricNumberFormatter.percentage(coordinator.snapshot.cpu.value?.total),
+          symbol: "cpu")
         MetricCard(
-          title: "Memory", value: percent(coordinator.snapshot.memory.value?.usedPercent),
+          title: "Memory",
+          value: MetricNumberFormatter.percentage(coordinator.snapshot.memory.value?.usedPercent),
           symbol: "memorychip")
         MetricCard(title: "GPU", value: gpuText, symbol: "rectangle.3.group")
         MetricCard(title: "Battery", value: batteryText, symbol: "battery.75percent")
@@ -121,7 +128,9 @@ struct OverviewView: View {
 
   private var gpuText: String {
     guard let gpu = coordinator.snapshot.gpu.value else { return L10n.string("Unavailable") }
-    if let utilization = gpu.systemUtilizationPercent { return percent(utilization) }
+    if let utilization = gpu.systemUtilizationPercent {
+      return MetricNumberFormatter.percentage(utilization)
+    }
     return L10n.string(gpu.metalAvailable ? "Metal" : "Unavailable")
   }
 
@@ -136,12 +145,10 @@ struct OverviewView: View {
   }
 
   private var batteryText: String {
-    coordinator.snapshot.battery.value?.percentage.map(percent)
-      ?? L10n.string("No battery")
-  }
-
-  private func percent(_ value: Double?) -> String {
-    value.map { "\(Int($0.rounded()))%" } ?? "—"
+    guard let battery = coordinator.snapshot.battery.value, battery.present else {
+      return L10n.string("No battery")
+    }
+    return MetricNumberFormatter.percentage(battery.percentage)
   }
 
   private func formattedBytes(_ bytes: UInt64) -> String {
