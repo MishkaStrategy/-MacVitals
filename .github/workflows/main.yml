@@ -1,15 +1,44 @@
 name: Main
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  release-build:
+  verify:
     runs-on: macos-15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - run: brew install xcodegen
-      - run: xcodegen generate
-      - run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Unit and hardware-smoke tests
+        run: >-
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
+          -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+          test -only-testing:MacVitalsTests
+
+      - name: Package and verify unsigned main candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
+
+      - name: Upload verified unsigned candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacVitals-main-0.0.${{ github.run_number }}-unsigned
+          path: dist/
+          if-no-files-found: error
