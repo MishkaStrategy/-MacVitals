@@ -1,7 +1,6 @@
 import AppKit
 import Combine
 import Foundation
-import ServiceManagement
 import SwiftUI
 
 nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -110,23 +109,37 @@ final class SettingsStore: ObservableObject {
   }
   @Published var memoryAlertThreshold: Double {
     didSet {
-      memoryAlertThreshold = min(100, max(50, memoryAlertThreshold))
+      let clamped = min(100, max(50, memoryAlertThreshold))
+      if clamped != memoryAlertThreshold {
+        memoryAlertThreshold = clamped
+        return
+      }
       UserDefaults.standard.set(memoryAlertThreshold, forKey: Keys.memoryAlertThreshold)
     }
   }
   @Published var lowBatteryAlertThreshold: Double {
     didSet {
-      lowBatteryAlertThreshold = min(50, max(5, lowBatteryAlertThreshold))
+      let clamped = min(50, max(5, lowBatteryAlertThreshold))
+      if clamped != lowBatteryAlertThreshold {
+        lowBatteryAlertThreshold = clamped
+        return
+      }
       UserDefaults.standard.set(lowBatteryAlertThreshold, forKey: Keys.lowBatteryAlertThreshold)
     }
   }
-  @Published var launchAtLogin: Bool = false
+  @Published private(set) var launchAtLoginState: LaunchAtLoginState = .disabled
+
+  private let launchAtLoginManager: any LaunchAtLoginManaging
+
+  var launchAtLogin: Bool { launchAtLoginState.isEnabled }
 
   var hiddenMetrics: [MenuMetric] {
     MenuMetric.allCases.filter { !enabledMetrics.contains($0) }
   }
 
-  init() {
+  init(launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager()) {
+    self.launchAtLoginManager = launchAtLoginManager
+
     let defaults = UserDefaults.standard
     samplingInterval = defaults.double(forKey: Keys.samplingInterval).nonZero ?? 2
     showInDock = defaults.bool(forKey: Keys.showInDock)
@@ -158,7 +171,7 @@ final class SettingsStore: ObservableObject {
 
     selectedPreset = initialPreset
     enabledMetrics = initialMetrics
-    launchAtLogin = SMAppService.mainApp.status == .enabled
+    refreshLaunchAtLoginState()
   }
 
   func applyPreset(_ preset: MenuPreset) {
@@ -179,15 +192,15 @@ final class SettingsStore: ObservableObject {
 
   func setLaunchAtLogin(_ enabled: Bool) {
     do {
-      if enabled {
-        try SMAppService.mainApp.register()
-      } else {
-        try SMAppService.mainApp.unregister()
-      }
-      launchAtLogin = SMAppService.mainApp.status == .enabled
+      try launchAtLoginManager.setEnabled(enabled)
+      refreshLaunchAtLoginState()
     } catch {
-      launchAtLogin = SMAppService.mainApp.status == .enabled
+      launchAtLoginState = .failed("Could not update launch at login: \(error.localizedDescription)")
     }
+  }
+
+  func refreshLaunchAtLoginState() {
+    launchAtLoginState = launchAtLoginManager.state
   }
 
   func reset() {
