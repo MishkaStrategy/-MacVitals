@@ -4,15 +4,13 @@ MacVitals ships with a project-owned application icon. It uses a dark rounded-sq
 
 ## Reproducible source
 
-The canonical repository source is:
+The canonical artwork, rasterizer, PNG encoder and ICNS packager are implemented in:
 
-- `AssetsSource/AppIcon.icns.base64.part00` … `partNN`
+- `scripts/materialize_app_icon.py`
 
-The reviewed decoded ICNS SHA-256 is:
+No binary or encoded image source is stored in the repository. The generator uses only the Python standard library and produces every required representation deterministically.
 
-```text
-ec94e8a136730d1bd133f6bd5d7418b050b3bdad3d06ff759b03e4c0fb39398e
-```
+The reviewed generated ICNS SHA-256 is recorded in the generator and checked on every build.
 
 The generated `MacVitals/Resources/AppIcon.icns` file is intentionally ignored by Git. Materialize it before generating the Xcode project:
 
@@ -25,15 +23,13 @@ xcodegen generate
 
 ## Validation
 
-The materializer uses only the Python standard library. It verifies:
+The generator verifies:
 
-- base64 integrity;
-- the reviewed source SHA-256;
-- contiguous source-part numbering;
+- the reviewed generated SHA-256;
 - the ICNS header and total length;
 - exactly one required chunk for 16, 32, 64, 128, 256, 512 and 1024 pixel representations;
 - embedded PNG structure, dimensions, encoding flags and CRC values;
-- byte-for-byte equality between the packaged icon and the reviewed source.
+- byte-for-byte equality between the packaged icon and freshly generated data.
 
 Run the portable checks without writing generated files:
 
@@ -46,4 +42,4 @@ Release verification also requires `CFBundleIconFile=AppIcon.icns`, rejects enco
 
 ## Updating the artwork
 
-An icon update must be reviewed visually at every representation size, replace the complete contiguous set of canonical encoded source parts, update the reviewed SHA-256 constant in `materialize_app_icon.py`, and pass the complete local and macOS release gates. Generated `AppIcon.icns` files must not be committed directly.
+An icon update must be reviewed visually at every representation size, update the deterministic geometry or palette in `materialize_app_icon.py`, update its reviewed SHA-256 constant, and pass the complete local and macOS release gates. Generated `AppIcon.icns` files must not be committed directly.
