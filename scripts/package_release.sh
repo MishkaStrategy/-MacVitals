@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${1:-${VERSION:-dev}}"
+BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 ARCHIVE_PATH="${BUILD_DIR}/MacVitals.xcarchive"
@@ -13,6 +14,10 @@ DMG_PATH="${DIST_DIR}/MacVitals-${VERSION}.dmg"
 
 if [[ ! "${VERSION}" =~ ^[0-9A-Za-z._-]+$ ]]; then
   echo "Invalid release version: ${VERSION}" >&2
+  exit 2
+fi
+if [[ ! "${BUILD_NUMBER}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+  echo "Invalid build number: ${BUILD_NUMBER}" >&2
   exit 2
 fi
 
@@ -33,6 +38,8 @@ xcodebuild \
   -scheme MacVitals \
   -configuration Release \
   -archivePath "${ARCHIVE_PATH}" \
+  MARKETING_VERSION="${VERSION}" \
+  CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
   CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" \
   archive
 
@@ -69,7 +76,7 @@ else
 fi
 
 cat > "${DIST_DIR}/BUILD_STATUS.txt" <<EOF
-MacVitals ${VERSION}
+MacVitals ${VERSION} (${BUILD_NUMBER})
 Signing status: ${signing_status}
 Notarization status: ${notarization_status}
 
