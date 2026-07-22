@@ -40,8 +40,4 @@ final class LifecycleMonitor {
     observers.forEach(center.removeObserver)
     observers.removeAll(keepingCapacity: false)
   }
-
-  deinit {
-    observers.forEach(center.removeObserver)
-  }
 }
