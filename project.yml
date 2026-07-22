@@ -40,9 +40,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: MacVitals/Resources/MacVitals.entitlements
         ENABLE_APP_SANDBOX: NO
     dependencies:
-      - framework: IOKit.framework
-      - framework: ServiceManagement.framework
-      - framework: Metal.framework
+      - sdk: IOKit.framework
+      - sdk: ServiceManagement.framework
+      - sdk: Metal.framework
   MacVitalsTests:
     type: bundle.unit-test
     platform: macOS
