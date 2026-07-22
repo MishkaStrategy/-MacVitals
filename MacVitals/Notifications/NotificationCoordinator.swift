@@ -82,7 +82,7 @@ final class NotificationCoordinator {
       guard enabled, authorizationState == .notDetermined else { return }
 
       do {
-        _ = try await center.requestAuthorization(options: [.alert, .sound])
+        try await requestAuthorization()
         await refreshAuthorizationState()
       } catch {
         authorizationState = .failed(
@@ -92,8 +92,14 @@ final class NotificationCoordinator {
   }
 
   func refreshAuthorizationState() async {
-    let settings = await center.notificationSettings()
-    authorizationState = NotificationAuthorizationMapper.state(for: settings.authorizationStatus)
+    let center = self.center
+    let state = await withCheckedContinuation { continuation in
+      center.getNotificationSettings { settings in
+        continuation.resume(
+          returning: NotificationAuthorizationMapper.state(for: settings.authorizationStatus))
+      }
+    }
+    authorizationState = state
   }
 
   func process(
@@ -114,13 +120,24 @@ final class NotificationCoordinator {
         content: content,
         trigger: nil)
 
-      Task { [weak self] in
-        guard let self else { return }
-        do {
-          try await center.add(request)
-        } catch {
-          authorizationState = .failed(
+      center.add(request) { [weak self] error in
+        guard let error else { return }
+        Task { @MainActor [weak self] in
+          self?.authorizationState = .failed(
             "Could not deliver a notification: \(error.localizedDescription)")
+        }
+      }
+    }
+  }
+
+  private func requestAuthorization() async throws {
+    let center = self.center
+    try await withCheckedThrowingContinuation { continuation in
+      center.requestAuthorization(options: [.alert, .sound]) { _, error in
+        if let error {
+          continuation.resume(throwing: error)
+        } else {
+          continuation.resume()
         }
       }
     }
