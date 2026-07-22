@@ -32,6 +32,27 @@ final class AlertPolicyTests: XCTestCase {
       1)
   }
 
+  func testNativeMemoryPressureOverridesPercentageThreshold() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 95, cooldown: 0))
+
+    let events = policy.evaluate(
+      snapshot: snapshot(memoryPercent: 40, memoryPressure: .warning))
+
+    XCTAssertEqual(events.map(\.kind), [.highMemory])
+    XCTAssertEqual(events.first?.title, "Memory pressure warning")
+  }
+
+  func testCriticalMemoryPressureUsesCriticalMessage() {
+    var policy = AlertPolicy(configuration: .init(memoryThresholdPercent: 95, cooldown: 0))
+
+    let events = policy.evaluate(
+      snapshot: snapshot(memoryPercent: 40, memoryPressure: .critical))
+
+    XCTAssertEqual(events.first?.title, "Critical memory pressure")
+    XCTAssertTrue(events.first?.message.contains("critical memory pressure") == true)
+  }
+
   func testInsufficientPowerRequiresConfidence() {
     var policy = AlertPolicy(
       configuration: .init(powerConfidenceThreshold: 0.8, cooldown: 0))
@@ -61,6 +82,7 @@ final class AlertPolicyTests: XCTestCase {
 
   private func snapshot(
     memoryPercent: Double = 50,
+    memoryPressure: MemoryPressureLevel = .normal,
     batteryPercent: Double = 80,
     batteryState: BatteryState = .charging,
     powerStatus: PowerSufficiencyStatus = .sufficient,
@@ -76,7 +98,7 @@ final class AlertPolicyTests: XCTestCase {
           availableBytes: 0, activeBytes: 0, inactiveBytes: 0, wiredBytes: 0,
           compressedBytes: 0, purgeableBytes: 0, speculativeBytes: 0,
           swapTotalBytes: nil, swapUsedBytes: nil, swapFreeBytes: nil,
-          pressure: nil, usedPercent: memoryPercent),
+          pressureLevel: memoryPressure, usedPercent: memoryPercent),
         unit: .bytes, availability: .available, quality: .derived,
         source: .machHostStatistics, timestamp: now, isEstimated: false, message: nil),
       battery: MetricValue(
