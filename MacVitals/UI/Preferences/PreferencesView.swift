@@ -9,6 +9,9 @@ struct PreferencesView: View {
       generalTab
         .tabItem { Label("General", systemImage: "gear") }
 
+      alertsTab
+        .tabItem { Label("Alerts", systemImage: "bell") }
+
       menuBarTab
         .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
 
@@ -44,6 +47,42 @@ struct PreferencesView: View {
 
       Toggle("Reduce motion", isOn: $settings.reducedMotion)
         .accessibilityIdentifier("reduceMotionToggle")
+    }
+    .padding()
+  }
+
+  private var alertsTab: some View {
+    Form {
+      Toggle("Enable local alerts", isOn: $settings.notificationsEnabled)
+        .accessibilityIdentifier("notificationsEnabledToggle")
+
+      LabeledContent("Memory threshold") {
+        HStack {
+          Slider(value: $settings.memoryAlertThreshold, in: 50...100, step: 5)
+            .frame(width: 220)
+          Text("\(Int(settings.memoryAlertThreshold))%")
+            .monospacedDigit()
+            .frame(width: 42, alignment: .trailing)
+        }
+      }
+      .disabled(!settings.notificationsEnabled)
+
+      LabeledContent("Low battery threshold") {
+        HStack {
+          Slider(value: $settings.lowBatteryAlertThreshold, in: 5...50, step: 5)
+            .frame(width: 220)
+          Text("\(Int(settings.lowBatteryAlertThreshold))%")
+            .monospacedDigit()
+            .frame(width: 42, alignment: .trailing)
+        }
+      }
+      .disabled(!settings.notificationsEnabled)
+
+      Text(
+        "Alerts are generated only on state transitions and use a cooldown to prevent repeated notifications. System permission is requested only when local alerts are enabled."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
     }
     .padding()
   }
