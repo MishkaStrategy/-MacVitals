@@ -76,10 +76,15 @@ final class NotificationCoordinator {
         memoryThresholdPercent: memoryThreshold,
         lowBatteryThresholdPercent: lowBatteryThreshold))
 
+    guard enabled else {
+      authorizationState = .unknown
+      return
+    }
+
     Task { [weak self] in
       guard let self else { return }
       await refreshAuthorizationState()
-      guard enabled, authorizationState == .notDetermined else { return }
+      guard authorizationState == .notDetermined else { return }
 
       do {
         try await requestAuthorization()
@@ -92,6 +97,11 @@ final class NotificationCoordinator {
   }
 
   func refreshAuthorizationState() async {
+    guard enabled else {
+      authorizationState = .unknown
+      return
+    }
+
     let center = self.center
     let state = await withCheckedContinuation { continuation in
       center.getNotificationSettings { settings in
