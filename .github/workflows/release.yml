@@ -1,4 +1,4 @@
-name: Release
+name: Release Candidate
 
 on:
   push:
@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to package without a leading v
+        description: Numeric version to package without a leading v
         required: false
         default: 0.0.0
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   package:
@@ -33,30 +33,31 @@ jobs:
             version="${{ inputs.version }}"
           fi
           [[ -n "${version}" ]] || version=0.0.0
+          [[ "${version}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || {
+            echo "Version must contain one to three numeric components: ${version}" >&2
+            exit 2
+          }
           echo "value=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build and verify unsigned release artifacts
+      - name: Build and verify unsigned release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
         run: bash scripts/package_release.sh "${{ steps.version.outputs.value }}"
 
-      - name: Upload packaged artifacts
+      - name: Upload unsigned candidate for internal validation
         uses: actions/upload-artifact@v4
         with:
           name: MacVitals-${{ steps.version.outputs.value }}-unsigned
           path: dist/
           if-no-files-found: error
 
-      - name: Publish GitHub release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          name: MacVitals ${{ github.ref_name }}
-          body_path: RELEASE_NOTES.md
-          fail_on_unmatched_files: true
-          files: |
-            dist/MacVitals-*.zip
-            dist/MacVitals-*.dmg
-            dist/SHA256SUMS.txt
-            dist/BUILD_STATUS.txt
+      - name: Record publication gate
+        run: |
+          {
+            echo "## Publication blocked"
+            echo
+            echo "This workflow produces an unsigned, non-notarized validation artifact only."
+            echo "It intentionally does not create a public GitHub Release."
+            echo "Public release publication requires a separate Developer ID signing, notarization, stapling and Gatekeeper verification workflow."
+          } >> "${GITHUB_STEP_SUMMARY}"
