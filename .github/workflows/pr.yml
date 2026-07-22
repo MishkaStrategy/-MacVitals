@@ -10,12 +10,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install build tools
-        run: brew install xcodegen swiftformat
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: Generate project
         run: xcodegen generate
-      - name: SwiftFormat lint
-        run: swiftformat --lint MacVitals MacVitalsTests MacVitalsUITests
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
       - name: Build
         run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
       - name: Unit tests
