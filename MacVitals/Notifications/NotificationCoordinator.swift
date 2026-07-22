@@ -7,12 +7,11 @@ nonisolated enum NotificationAuthorizationState: Equatable, Sendable {
   case denied
   case authorized
   case provisional
-  case ephemeral
   case failed(String)
 
   var canDeliver: Bool {
     switch self {
-    case .authorized, .provisional, .ephemeral: return true
+    case .authorized, .provisional: return true
     default: return false
     }
   }
@@ -29,8 +28,6 @@ nonisolated enum NotificationAuthorizationState: Equatable, Sendable {
       return nil
     case .provisional:
       return "Notifications are authorized for quiet delivery."
-    case .ephemeral:
-      return "Notifications have temporary authorization."
     case .failed(let message):
       return message
     }
@@ -44,7 +41,6 @@ nonisolated enum NotificationAuthorizationMapper {
     case .denied: return .denied
     case .authorized: return .authorized
     case .provisional: return .provisional
-    case .ephemeral: return .ephemeral
     @unknown default: return .unknown
     }
   }
