@@ -1,0 +1,39 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen create-dmg
+      - run: xcodegen generate
+      - name: Build archive
+        run: |
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Release -archivePath build/MacVitals.xcarchive CODE_SIGNING_ALLOWED=NO archive
+          mkdir -p dist
+          cp -R build/MacVitals.xcarchive/Products/Applications/MacVitals.app dist/
+          ditto -c -k --sequesterRsrc --keepParent dist/MacVitals.app dist/MacVitals-${GITHUB_REF_NAME#v}.zip
+      - name: Create DMG
+        run: create-dmg --volname MacVitals --window-size 600 400 --icon-size 128 --app-drop-link 450 190 dist/MacVitals-${GITHUB_REF_NAME#v}.dmg dist/MacVitals.app || true
+      - name: Checksums
+        run: (cd dist && shasum -a 256 MacVitals-* > SHA256SUMS.txt)
+      - name: Release status
+        run: |
+          cat > dist/BUILD_STATUS.txt <<'EOF'
+          This artifact is an unsigned, non-notarized CI build unless the workflow was extended with valid Apple signing credentials.
+          macOS Gatekeeper may require a local source build or explicit user approval.
+          EOF
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: MacVitals ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/MacVitals-*.zip
+            dist/MacVitals-*.dmg
+            dist/SHA256SUMS.txt
+            dist/BUILD_STATUS.txt

@@ -1,0 +1,36 @@
+name: Pull Request
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: brew install xcodegen swiftformat
+      - name: Generate project
+        run: xcodegen generate
+      - name: SwiftFormat lint
+        run: swiftformat --lint MacVitals MacVitalsTests MacVitalsUITests
+      - name: Build
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+      - name: Unit tests
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+  repository-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON and plist XML
+        run: |
+          python3 -m json.tool .github/dependabot.yml >/dev/null
+          python3 - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          for path in pathlib.Path('.').rglob('*.plist'): ET.parse(path)
+          PY
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
