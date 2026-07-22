@@ -10,7 +10,7 @@ struct DiagnosticsView: View {
         LabeledContent(
           "Version",
           value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-            ?? "Unknown")
+            ?? L10n.string("Unknown"))
         LabeledContent("macOS", value: ProcessInfo.processInfo.operatingSystemVersionString)
       }
 
@@ -40,10 +40,10 @@ struct DiagnosticsView: View {
             value: milliseconds(health.timings.totalMilliseconds))
           LabeledContent(
             "Configured interval",
-            value: String(format: "%.2f s", health.configuredIntervalSeconds))
+            value: L10n.format("%.2f s", health.configuredIntervalSeconds))
           LabeledContent(
             "Cadence",
-            value: health.overranInterval ? "Overrun" : "Within interval")
+            value: L10n.string(health.overranInterval ? "Overrun" : "Within interval"))
           timingRow("CPU", health.timings.cpuMilliseconds)
           timingRow("Memory", health.timings.memoryMilliseconds)
           timingRow("Battery", health.timings.batteryMilliseconds)
@@ -66,28 +66,32 @@ struct DiagnosticsView: View {
   }
 
   private func row(
-    _ name: String,
+    _ nameKey: String,
     _ availability: MetricAvailability,
     _ source: MetricSource,
     _ date: Date
   ) -> some View {
     VStack(alignment: .leading) {
       HStack {
-        Text(name)
+        Text(L10n.string(nameKey))
         Spacer()
-        Text(availability.rawValue).foregroundStyle(.secondary)
+        Text(availability.displayName).foregroundStyle(.secondary)
       }
-      Text("\(source.rawValue) · \(date.formatted())")
+      Text(
+        L10n.format(
+          "%@ · %@",
+          source.displayName,
+          date.formatted()))
         .font(.caption)
         .foregroundStyle(.tertiary)
     }
   }
 
-  private func timingRow(_ name: String, _ value: Double) -> some View {
-    LabeledContent(name, value: milliseconds(value))
+  private func timingRow(_ nameKey: String, _ value: Double) -> some View {
+    LabeledContent(L10n.string(nameKey), value: milliseconds(value))
   }
 
   private func milliseconds(_ value: Double) -> String {
-    String(format: "%.3f ms", value)
+    L10n.format("%.3f ms", value)
   }
 }
