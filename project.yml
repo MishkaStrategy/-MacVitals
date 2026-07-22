@@ -31,6 +31,23 @@ targets:
       - MacVitals/Resources
     info:
       path: MacVitals/Resources/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: MacVitals
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSHumanReadableCopyright: Copyright © 2026 MacVitals contributors.
+        CFBundleLocalizations:
+          - en
+          - ru
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals
