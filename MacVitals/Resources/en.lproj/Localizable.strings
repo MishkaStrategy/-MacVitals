@@ -24,6 +24,10 @@
 "Memory, swap and pressure details" = "Memory, swap and pressure details";
 "GPU details" = "GPU details";
 "CPU history" = "CPU history";
+"Time" = "Time";
+"Normal" = "Normal";
+"Warning" = "Warning";
+"Critical" = "Critical";
 
 "Power flow" = "Power flow";
 "Adapter" = "Adapter";
@@ -111,7 +115,14 @@
 "Battery level is low" = "Battery level is low";
 
 "External power is not connected" = "External power is not connected";
+"Collecting enough battery-power samples" = "Collecting enough battery-power samples";
+"Waiting for the confirmation window to complete" = "Waiting for the confirmation window to complete";
 "Battery power direction is unavailable" = "Battery power direction is unavailable";
+"Battery percentage is outside the valid range" = "Battery percentage is outside the valid range";
+"Battery power is outside the plausible range" = "Battery power is outside the plausible range";
+"Measured adapter power is invalid" = "Measured adapter power is invalid";
+"Rated adapter power is invalid" = "Rated adapter power is invalid";
+"Adapter and battery samples were not aligned, so system power was not estimated." = "Adapter and battery samples were not aligned, so system power was not estimated.";
 "Battery is continuously discharging while external power is connected (median %.1f W)" = "Battery is continuously discharging while external power is connected (median %.1f W)";
 "Power is near the configured boundary" = "Power is near the configured boundary";
 "External power supports the system and charges the battery" = "External power supports the system and charges the battery";
