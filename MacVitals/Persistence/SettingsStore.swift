@@ -128,6 +128,7 @@ final class SettingsStore: ObservableObject {
     }
   }
   @Published private(set) var launchAtLoginState: LaunchAtLoginState = .disabled
+  @Published private(set) var notificationAuthorizationState: NotificationAuthorizationState = .unknown
 
   private let launchAtLoginManager: any LaunchAtLoginManaging
 
@@ -201,6 +202,10 @@ final class SettingsStore: ObservableObject {
 
   func refreshLaunchAtLoginState() {
     launchAtLoginState = launchAtLoginManager.state
+  }
+
+  func setNotificationAuthorizationState(_ state: NotificationAuthorizationState) {
+    notificationAuthorizationState = state
   }
 
   func reset() {
