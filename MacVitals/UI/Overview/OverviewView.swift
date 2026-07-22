@@ -43,21 +43,21 @@ struct OverviewView: View {
       }
     }
     .padding(16)
-    .frame(width: 390, height: 615)
+    .frame(width: 390, height: 630)
     .accessibilityElement(children: .contain)
   }
 
   private var memorySummary: some View {
     HStack(spacing: 8) {
-      Image(systemName: "externaldrive")
+      Image(systemName: memoryPressureSymbol)
         .foregroundStyle(.secondary)
       Text(memorySummaryText)
         .font(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
-        .lineLimit(1)
+        .lineLimit(2)
       Spacer(minLength: 0)
     }
-    .accessibilityLabel("Memory and swap details")
+    .accessibilityLabel("Memory, swap and pressure details")
     .accessibilityValue(memorySummaryText)
   }
 
@@ -90,10 +90,17 @@ struct OverviewView: View {
     guard let memory = coordinator.snapshot.memory.value else { return "Memory data unavailable" }
     let used = formattedBytes(memory.usedBytes)
     let physical = formattedBytes(memory.physicalBytes)
-    if let swap = memory.swapUsedBytes {
-      return "RAM \(used) / \(physical) · Swap \(formattedBytes(swap))"
+    let swap = memory.swapUsedBytes.map(formattedBytes) ?? "unavailable"
+    return "RAM \(used) / \(physical) · Swap \(swap)\nPressure: \(memory.pressureLevel.rawValue)"
+  }
+
+  private var memoryPressureSymbol: String {
+    switch coordinator.snapshot.memory.value?.pressureLevel {
+    case .critical: return "exclamationmark.triangle.fill"
+    case .warning: return "exclamationmark.triangle"
+    case .normal: return "checkmark.circle"
+    default: return "questionmark.circle"
     }
-    return "RAM \(used) / \(physical) · Swap unavailable"
   }
 
   private var gpuText: String {
