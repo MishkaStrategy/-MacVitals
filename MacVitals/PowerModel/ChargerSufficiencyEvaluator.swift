@@ -32,6 +32,15 @@ nonisolated struct PowerSample: Sendable, Equatable {
 }
 
 nonisolated struct ChargerSufficiencyConfiguration: Sendable, Equatable {
+  static let defaultInsufficientDischargeWatts = 2.0
+  static let defaultBorderlineDischargeWatts = 0.5
+  static let defaultHysteresisWatts = 0.25
+  static let defaultConfirmationDuration: TimeInterval = 20
+  static let defaultMinimumSamples = 5
+  static let defaultMaximumTimestampSkew: TimeInterval = 5
+  static let defaultMaximumPlausibleBatteryPowerWatts = 250.0
+  static let defaultMaximumPlausibleAdapterPowerWatts = 10_000.0
+
   var insufficientDischargeWatts: Double
   var borderlineDischargeWatts: Double
   var hysteresisWatts: Double
@@ -39,24 +48,57 @@ nonisolated struct ChargerSufficiencyConfiguration: Sendable, Equatable {
   var minimumSamples: Int
   var maximumTimestampSkew: TimeInterval
   var maximumPlausibleBatteryPowerWatts: Double
+  var maximumPlausibleAdapterPowerWatts: Double
 
   init(
-    insufficientDischargeWatts: Double = 2.0,
-    borderlineDischargeWatts: Double = 0.5,
-    hysteresisWatts: Double = 0.25,
-    confirmationDuration: TimeInterval = 20,
-    minimumSamples: Int = 5,
-    maximumTimestampSkew: TimeInterval = 5,
-    maximumPlausibleBatteryPowerWatts: Double = 250
+    insufficientDischargeWatts: Double = defaultInsufficientDischargeWatts,
+    borderlineDischargeWatts: Double = defaultBorderlineDischargeWatts,
+    hysteresisWatts: Double = defaultHysteresisWatts,
+    confirmationDuration: TimeInterval = defaultConfirmationDuration,
+    minimumSamples: Int = defaultMinimumSamples,
+    maximumTimestampSkew: TimeInterval = defaultMaximumTimestampSkew,
+    maximumPlausibleBatteryPowerWatts: Double = defaultMaximumPlausibleBatteryPowerWatts,
+    maximumPlausibleAdapterPowerWatts: Double = defaultMaximumPlausibleAdapterPowerWatts
   ) {
-    self.insufficientDischargeWatts = max(0.1, insufficientDischargeWatts)
-    self.borderlineDischargeWatts = max(
-      0, min(borderlineDischargeWatts, insufficientDischargeWatts))
-    self.hysteresisWatts = max(0, min(hysteresisWatts, insufficientDischargeWatts))
-    self.confirmationDuration = max(0, confirmationDuration)
-    self.minimumSamples = max(1, minimumSamples)
-    self.maximumTimestampSkew = max(0, maximumTimestampSkew)
-    self.maximumPlausibleBatteryPowerWatts = max(1, maximumPlausibleBatteryPowerWatts)
+    let insufficient = Self.bounded(
+      insufficientDischargeWatts,
+      defaultValue: Self.defaultInsufficientDischargeWatts,
+      range: 0.1...10_000)
+    self.insufficientDischargeWatts = insufficient
+    self.borderlineDischargeWatts = Self.bounded(
+      borderlineDischargeWatts,
+      defaultValue: Self.defaultBorderlineDischargeWatts,
+      range: 0...insufficient)
+    self.hysteresisWatts = Self.bounded(
+      hysteresisWatts,
+      defaultValue: Self.defaultHysteresisWatts,
+      range: 0...insufficient)
+    self.confirmationDuration = Self.bounded(
+      confirmationDuration,
+      defaultValue: Self.defaultConfirmationDuration,
+      range: 0...(24 * 60 * 60))
+    self.minimumSamples = min(10_000, max(1, minimumSamples))
+    self.maximumTimestampSkew = Self.bounded(
+      maximumTimestampSkew,
+      defaultValue: Self.defaultMaximumTimestampSkew,
+      range: 0...3_600)
+    self.maximumPlausibleBatteryPowerWatts = Self.bounded(
+      maximumPlausibleBatteryPowerWatts,
+      defaultValue: Self.defaultMaximumPlausibleBatteryPowerWatts,
+      range: 1...10_000)
+    self.maximumPlausibleAdapterPowerWatts = Self.bounded(
+      maximumPlausibleAdapterPowerWatts,
+      defaultValue: Self.defaultMaximumPlausibleAdapterPowerWatts,
+      range: 1...100_000)
+  }
+
+  private static func bounded(
+    _ value: Double,
+    defaultValue: Double,
+    range: ClosedRange<Double>
+  ) -> Double {
+    guard value.isFinite else { return defaultValue }
+    return min(range.upperBound, max(range.lowerBound, value))
   }
 }
 
@@ -87,9 +129,6 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
       lastExternalPower = sample.externalPower
     }
 
-    samples.append(sample)
-    trimHistory(relativeTo: sample.timestamp)
-
     guard sample.externalPower else {
       lastStableStatus = .notConnected
       return assessment(
@@ -101,14 +140,22 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
     }
 
     if let conflict = validationConflict(in: sample) {
+      samples.removeAll(keepingCapacity: true)
       lastStableStatus = .sensorConflict
-      return assessment(.sensorConflict, 0.1, sample, sample.batteryPowerWatts, conflict)
+      return assessment(.sensorConflict, 0.1, sample, nil, conflict)
     }
+
+    samples.append(sample)
+    trimHistory(relativeTo: sample.timestamp)
 
     let windowStart = sample.timestamp.addingTimeInterval(-configuration.confirmationDuration)
     let window =
       samples
-      .filter { $0.externalPower && $0.timestamp >= windowStart && $0.batteryPowerWatts != nil }
+      .filter {
+        $0.externalPower
+          && $0.timestamp >= windowStart
+          && $0.batteryPowerWatts?.isFinite == true
+      }
       .sorted { $0.timestamp < $1.timestamp }
 
     guard window.count >= configuration.minimumSamples else {
@@ -122,7 +169,18 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
       )
     }
 
-    let observedDuration = window.last!.timestamp.timeIntervalSince(window.first!.timestamp)
+    guard let firstTimestamp = window.first?.timestamp,
+      let lastTimestamp = window.last?.timestamp
+    else {
+      return assessment(
+        .unknown,
+        0,
+        sample,
+        nil,
+        L10n.string("Battery power direction is unavailable"))
+    }
+
+    let observedDuration = lastTimestamp.timeIntervalSince(firstTimestamp)
     guard observedDuration >= configuration.confirmationDuration else {
       let durationFactor =
         configuration.confirmationDuration == 0
@@ -138,7 +196,7 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
     }
 
     let powers = window.compactMap(\.batteryPowerWatts).sorted()
-    guard let medianPower = median(powers) else {
+    guard let medianPower = median(powers), medianPower.isFinite else {
       return assessment(
         .unknown,
         0,
@@ -173,7 +231,9 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
   }
 
   private func validationConflict(in sample: PowerSample) -> String? {
-    if let percent = sample.batteryPercent, !(0...100).contains(percent) {
+    if let percent = sample.batteryPercent,
+      !percent.isFinite || !(0...100).contains(percent)
+    {
       return L10n.string("Battery percentage is outside the valid range")
     }
     if let power = sample.batteryPowerWatts,
@@ -181,10 +241,18 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
     {
       return L10n.string("Battery power is outside the plausible range")
     }
-    if let measured = sample.adapterMeasuredPowerWatts, !measured.isFinite || measured < 0 {
+    if let measured = sample.adapterMeasuredPowerWatts,
+      !measured.isFinite
+        || measured < 0
+        || measured > configuration.maximumPlausibleAdapterPowerWatts
+    {
       return L10n.string("Measured adapter power is invalid")
     }
-    if let rated = sample.adapterRatedPowerWatts, !rated.isFinite || rated <= 0 {
+    if let rated = sample.adapterRatedPowerWatts,
+      !rated.isFinite
+        || rated <= 0
+        || rated > configuration.maximumPlausibleAdapterPowerWatts
+    {
       return L10n.string("Rated adapter power is invalid")
     }
     return nil
@@ -216,7 +284,7 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
     if medianPower > borderlineThreshold {
       return .chargingBattery
     }
-    if let batteryPercent, batteryPercent >= 99.5 {
+    if let batteryPercent, batteryPercent.isFinite, batteryPercent >= 99.5 {
       return .powerAdapterOnly
     }
     return .sufficient
@@ -235,7 +303,8 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
       let measured = sample.adapterMeasuredPowerWatts,
       let battery = medianBatteryPower
     {
-      systemPower = max(0, measured - battery)
+      let derived = measured - battery
+      systemPower = derived.isFinite ? max(0, derived) : nil
     } else {
       systemPower = nil
     }
@@ -247,8 +316,8 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
 
     return PowerAssessment(
       status: status,
-      confidence: confidence,
-      batteryPowerWatts: medianBatteryPower,
+      confidence: confidence.isFinite ? max(0, min(1, confidence)) : 0,
+      batteryPowerWatts: medianBatteryPower?.isFinite == true ? medianBatteryPower : nil,
       estimatedSystemPowerWatts: systemPower,
       powerBalanceWatts: nil,
       explanation: explanation + alignmentNote
