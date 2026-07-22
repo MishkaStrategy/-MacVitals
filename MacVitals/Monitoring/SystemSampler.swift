@@ -1,6 +1,18 @@
 import Dispatch
 import Foundation
 
+nonisolated enum ExternalPowerResolver {
+  static func isConnected(
+    battery: BatteryStats?,
+    adapter: AdapterStats?
+  ) -> Bool {
+    if let battery, battery.present {
+      return battery.externalPowerConnected
+    }
+    return adapter?.connected ?? false
+  }
+}
+
 actor SystemSampler {
   private let cpuProvider = CPUProvider()
   private let memoryProvider = MemoryProvider()
@@ -27,7 +39,9 @@ actor SystemSampler {
 
     let powerSample = PowerSample(
       timestamp: now,
-      externalPower: batteryValue?.externalPowerConnected ?? adapterValue?.connected ?? false,
+      externalPower: ExternalPowerResolver.isConnected(
+        battery: batteryValue,
+        adapter: adapterValue),
       batteryPowerWatts: batteryValue?.batteryPowerWatts,
       adapterRatedPowerWatts: adapterValue?.ratedPowerWatts,
       adapterMeasuredPowerWatts: adapterValue?.measuredPowerWatts,
@@ -74,6 +88,7 @@ actor SystemSampler {
     let end = DispatchTime.now().uptimeNanoseconds
     return (
       value,
-      SamplingTimingMath.milliseconds(startNanoseconds: start, endNanoseconds: end))
+      SamplingTimingMath.milliseconds(startNanoseconds: start, endNanoseconds: end)
+    )
   }
 }
