@@ -27,6 +27,7 @@ struct OverviewView: View {
         MetricCard(title: "Battery", value: batteryText, symbol: "battery.75percent")
       }
       memorySummary
+      gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot)
       history
       HStack {
@@ -42,7 +43,7 @@ struct OverviewView: View {
       }
     }
     .padding(16)
-    .frame(width: 390, height: 590)
+    .frame(width: 390, height: 615)
     .accessibilityElement(children: .contain)
   }
 
@@ -58,6 +59,20 @@ struct OverviewView: View {
     }
     .accessibilityLabel("Memory and swap details")
     .accessibilityValue(memorySummaryText)
+  }
+
+  private var gpuSummary: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "display")
+        .foregroundStyle(.secondary)
+      Text(gpuSummaryText)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+    }
+    .accessibilityLabel("GPU details")
+    .accessibilityValue(gpuSummaryText)
   }
 
   private var history: some View {
@@ -82,7 +97,16 @@ struct OverviewView: View {
   }
 
   private var gpuText: String {
-    coordinator.snapshot.gpu.value?.systemUtilizationPercent.map(percent) ?? "Unavailable"
+    guard let gpu = coordinator.snapshot.gpu.value else { return "Unavailable" }
+    if let utilization = gpu.systemUtilizationPercent { return percent(utilization) }
+    return gpu.metalAvailable ? "Metal" : "Unavailable"
+  }
+
+  private var gpuSummaryText: String {
+    guard let gpu = coordinator.snapshot.gpu.value else { return "GPU data unavailable" }
+    let name = gpu.name ?? "Unknown GPU"
+    let memory = gpu.hasUnifiedMemory == true ? "unified memory" : "discrete memory"
+    return "\(name) · \(memory) · utilization unavailable"
   }
 
   private var batteryText: String {
