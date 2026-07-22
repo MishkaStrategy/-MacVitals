@@ -65,12 +65,12 @@ bash "${ROOT_DIR}/scripts/collect_runtime_metrics.sh" \
   "${DURATION_SECONDS}" \
   "${INTERVAL_SECONDS}"
 
-mapfile -t summaries < <(find "${OUTPUT_ROOT}/samples" -name summary.json -type f -print)
-[[ "${#summaries[@]}" -eq 1 ]] || {
-  echo "Expected exactly one runtime summary, found ${#summaries[@]}" >&2
+summary_count="$(find "${OUTPUT_ROOT}/samples" -name summary.json -type f -print | wc -l | tr -d '[:space:]')"
+[[ "${summary_count}" == "1" ]] || {
+  echo "Expected exactly one runtime summary, found ${summary_count}" >&2
   exit 1
 }
-summary_path="${summaries[0]}"
+summary_path="$(find "${OUTPUT_ROOT}/samples" -name summary.json -type f -print | head -n 1)"
 
 python3 "${ROOT_DIR}/scripts/validate_runtime_metrics.py" \
   "${summary_path}" \
