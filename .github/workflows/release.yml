@@ -10,6 +10,10 @@ on:
         required: false
         default: 0.0.0
 
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
