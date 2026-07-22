@@ -1,0 +1,109 @@
+name: Intel Compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  x86_64:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate runtime tooling
+        run: |
+          python3 -m py_compile scripts/validate_runtime_metrics.py
+          python3 scripts/validate_runtime_metrics.py --self-test
+          bash -n scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Build native x86_64 Release app
+        run: |
+          set +e
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build-intel \
+            -destination 'platform=macOS' \
+            ARCHS=x86_64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build > intel-build.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' intel-build.log | tail -n 300 > intel-build-diagnostics.txt || true
+          cat intel-build-diagnostics.txt
+          exit $status
+
+      - name: Verify x86_64 executable
+        run: |
+          executable='build-intel/Build/Products/Release/MacVitals.app/Contents/MacOS/MacVitals'
+          test -x "${executable}"
+          architectures="$(lipo -archs "${executable}")"
+          grep -qw x86_64 <<<"${architectures}"
+          echo "Verified Intel executable architectures: ${architectures}"
+
+      - name: Run native x86_64 unit tests
+        run: |
+          set +e
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -derivedDataPath build-intel-tests \
+            -destination 'platform=macOS' \
+            ARCHS=x86_64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            test -only-testing:MacVitalsTests > intel-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' intel-tests.log | tail -n 400 > intel-test-diagnostics.txt || true
+          cat intel-test-diagnostics.txt
+          exit $status
+
+      - name: Run native x86_64 runtime smoke
+        timeout-minutes: 5
+        env:
+          CI_RUNTIME_DURATION_SECONDS: 30
+          CI_RUNTIME_MINIMUM_OBSERVED_SECONDS: 20
+          CI_RUNTIME_MINIMUM_SAMPLES: 10
+          CI_RUNTIME_MAXIMUM_MEAN_CPU_PERCENT: 100
+          CI_RUNTIME_MAXIMUM_P95_CPU_PERCENT: 250
+          CI_RUNTIME_OUTPUT_ROOT: ${{ github.workspace }}/runtime-intel-results
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build-intel/Build/Products/Release/MacVitals.app \
+            > intel-runtime.log 2>&1
+          status=$?
+          cat intel-runtime.log
+          exit $status
+
+      - name: Upload Intel compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel-compatibility-evidence
+          path: |
+            intel-build.log
+            intel-build-diagnostics.txt
+            intel-tests.log
+            intel-test-diagnostics.txt
+            intel-runtime.log
+            runtime-intel-results/
+          if-no-files-found: ignore
