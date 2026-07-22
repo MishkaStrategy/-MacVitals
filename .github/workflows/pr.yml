@@ -51,6 +51,25 @@ jobs:
             native-tests.log
             native-test-diagnostics.txt
           if-no-files-found: error
+      - name: Release build
+        run: xcodebuild -quiet -project MacVitals.xcodeproj -scheme MacVitals -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+      - name: UI smoke test
+        run: |
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
+          cat native-ui-test-diagnostics.txt
+          exit $status
+      - name: Upload native UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-test-diagnostics
+          path: |
+            native-ui-tests.log
+            native-ui-test-diagnostics.txt
+          if-no-files-found: error
   repository-safety:
     runs-on: ubuntu-latest
     steps:
