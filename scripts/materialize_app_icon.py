@@ -13,7 +13,8 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "AssetsSource" / "AppIcon.icns.base64"
+SOURCE_GLOB = "AppIcon.icns.base64.part*"
+SOURCE_DIRECTORY = ROOT / "AssetsSource"
 OUTPUT = ROOT / "MacVitals" / "Resources" / "AppIcon.icns"
 
 EXPECTED_PNG_DIMENSIONS: dict[bytes, tuple[int, int]] = {
@@ -33,11 +34,25 @@ class IconValidationError(ValueError):
     """Raised when the source icon is malformed or incomplete."""
 
 
-def decode_source(path: Path = SOURCE) -> bytes:
+def source_parts(directory: Path = SOURCE_DIRECTORY) -> list[Path]:
+    parts = sorted(directory.glob(SOURCE_GLOB))
+    if not parts:
+        raise IconValidationError(f"No icon source parts found in {directory}")
+    expected_names = [f"AppIcon.icns.base64.part{index:02d}" for index in range(len(parts))]
+    actual_names = [part.name for part in parts]
+    if actual_names != expected_names:
+        raise IconValidationError(
+            f"Icon source parts must be contiguous: expected {expected_names}, found {actual_names}"
+        )
+    return parts
+
+
+def decode_source(directory: Path = SOURCE_DIRECTORY) -> bytes:
+    parts = source_parts(directory)
     try:
-        encoded = path.read_bytes()
+        encoded = b"".join(part.read_bytes() for part in parts)
     except OSError as error:
-        raise IconValidationError(f"Cannot read icon source {path}: {error}") from error
+        raise IconValidationError(f"Cannot read icon source parts: {error}") from error
     try:
         compact = b"".join(encoded.split())
         decoded = base64.b64decode(compact, validate=True)
