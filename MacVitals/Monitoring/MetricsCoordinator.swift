@@ -11,26 +11,13 @@ final class MetricsCoordinator: ObservableObject {
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
 
-  private let cpuProvider = CPUProvider()
-  private let memoryProvider = MemoryProvider()
-  private let batteryProvider = BatteryProvider()
-  private let adapterProvider = AdapterProvider()
-  private let gpuProvider: GPUProviding = CapabilityGPUProvider()
-  private var evaluator = ChargerSufficiencyEvaluator()
+  private let sampler = SystemSampler()
   private var cpuBuffer = RingBuffer<TimedPoint>(capacity: 450)
   private var memoryBuffer = RingBuffer<TimedPoint>(capacity: 450)
   private var samplingTask: Task<Void, Never>?
 
   func start() {
-    guard samplingTask == nil else { return }
-    isRunning = true
-    samplingTask = Task { [weak self] in
-      while !Task.isCancelled {
-        await self?.sample()
-        let nanos = UInt64(max(0.5, self?.currentInterval ?? 2) * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanos)
-      }
-    }
+    start(resetBeforeSampling: false)
   }
 
   func stop() {
@@ -41,54 +28,43 @@ final class MetricsCoordinator: ObservableObject {
 
   func handleSleep() {
     stop()
-    cpuProvider.resetBaseline()
-    evaluator.reset()
     cpuBuffer.append(TimedPoint(value: nil, discontinuity: true))
     memoryBuffer.append(TimedPoint(value: nil, discontinuity: true))
     publishHistory()
   }
 
   func handleWake() {
-    cpuProvider.resetBaseline()
-    evaluator.reset()
-    start()
+    start(resetBeforeSampling: true)
   }
 
   private var currentInterval: TimeInterval {
     UserDefaults.standard.double(forKey: "samplingInterval").nonZero ?? 2
   }
 
-  private func sample() async {
-    let cpu = cpuProvider.sample()
-    let memory = memoryProvider.sample()
-    let battery = batteryProvider.sample()
-    let adapter = adapterProvider.sample()
-    let gpu = gpuProvider.sample()
-    let batteryValue = battery.value
-    let adapterValue = adapter.value
-    let powerSample = PowerSample(
-      timestamp: Date(),
-      externalPower: batteryValue?.externalPowerConnected ?? adapterValue?.connected ?? false,
-      batteryPowerWatts: batteryValue?.batteryPowerWatts,
-      adapterRatedPowerWatts: adapterValue?.ratedPowerWatts,
-      adapterMeasuredPowerWatts: adapterValue?.measuredPowerWatts,
-      batteryPercent: batteryValue?.percentage,
-      batteryTimestamp: battery.timestamp,
-      adapterTimestamp: adapter.timestamp)
-    let assessment = evaluator.evaluate(powerSample)
-    let power = MetricValue(
-      value: assessment, unit: .watts,
-      availability: assessment.status == .unknown ? .temporarilyUnavailable : .available,
-      quality: .derived, source: .derivedPowerModel,
-      timestamp: Date(), isEstimated: assessment.estimatedSystemPowerWatts != nil,
-      message: assessment.explanation)
-    let newSnapshot = SystemSnapshot(
-      timestamp: Date(), cpu: cpu, memory: memory,
-      battery: battery, adapter: adapter, gpu: gpu, power: power)
+  private func start(resetBeforeSampling: Bool) {
+    guard samplingTask == nil else { return }
+    isRunning = true
+    samplingTask = Task { [weak self, sampler] in
+      if resetBeforeSampling {
+        await sampler.resetForDiscontinuity()
+      }
+
+      while !Task.isCancelled {
+        let newSnapshot = await sampler.sample()
+        guard !Task.isCancelled else { break }
+        self?.consume(newSnapshot)
+
+        let nanos = UInt64(max(0.5, self?.currentInterval ?? 2) * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: nanos)
+      }
+    }
+  }
+
+  private func consume(_ newSnapshot: SystemSnapshot) {
     snapshot = newSnapshot
     onSnapshot?(newSnapshot)
-    cpuBuffer.append(TimedPoint(value: cpu.value?.total))
-    memoryBuffer.append(TimedPoint(value: memory.value?.usedPercent))
+    cpuBuffer.append(TimedPoint(value: newSnapshot.cpu.value?.total))
+    memoryBuffer.append(TimedPoint(value: newSnapshot.memory.value?.usedPercent))
     publishHistory()
   }
 
