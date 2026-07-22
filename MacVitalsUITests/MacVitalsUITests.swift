@@ -76,12 +76,19 @@ final class MacVitalsUITests: XCTestCase {
     file: StaticString,
     line: UInt
   ) {
-    let element = app.descendants(matching: .any)[localizedLabel]
-    XCTAssertTrue(
-      element.waitForExistence(timeout: 3),
-      "Missing localized tab label for \(language): \(localizedLabel)",
-      file: file,
-      line: line)
+    let predicate = NSPredicate(format: "label == %@", localizedLabel)
+    let candidates = [
+      app.radioButtons.matching(predicate).firstMatch,
+      app.buttons.matching(predicate).firstMatch,
+      app.descendants(matching: .any).matching(predicate).firstMatch,
+    ]
+    guard let element = candidates.first(where: { $0.waitForExistence(timeout: 1) }) else {
+      XCTFail(
+        "Missing localized tab label for \(language): \(localizedLabel)",
+        file: file,
+        line: line)
+      return
+    }
     element.click()
   }
 
