@@ -74,8 +74,8 @@ nonisolated struct CPUStats: Codable, Sendable, Equatable {
 nonisolated struct MemoryStats: Codable, Sendable, Equatable {
   let physicalBytes: UInt64
   let usedBytes: UInt64
-  let availableBytes: UInt64
   let freeBytes: UInt64
+  let availableBytes: UInt64
   let activeBytes: UInt64
   let inactiveBytes: UInt64
   let wiredBytes: UInt64
@@ -132,6 +132,10 @@ nonisolated struct AdapterStats: Codable, Sendable, Equatable {
 nonisolated struct GPUStats: Codable, Sendable, Equatable {
   let name: String?
   let metalAvailable: Bool
+  let registryID: UInt64?
+  let hasUnifiedMemory: Bool?
+  let isLowPower: Bool?
+  let isRemovable: Bool?
   let recommendedWorkingSetBytes: UInt64?
   let systemUtilizationPercent: Double?
   let utilizationAvailability: MetricAvailability
