@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-${VERSION:-dev}}"
+VERSION="${1:-${VERSION:-0.0.0}}"
 BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
@@ -12,8 +12,8 @@ DMG_ROOT="${BUILD_DIR}/dmg-root"
 ZIP_PATH="${DIST_DIR}/MacVitals-${VERSION}.zip"
 DMG_PATH="${DIST_DIR}/MacVitals-${VERSION}.dmg"
 
-if [[ ! "${VERSION}" =~ ^[0-9A-Za-z._-]+$ ]]; then
-  echo "Invalid release version: ${VERSION}" >&2
+if [[ ! "${VERSION}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]; then
+  echo "Invalid release version: ${VERSION}. Use one to three numeric components." >&2
   exit 2
 fi
 if [[ ! "${BUILD_NUMBER}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
