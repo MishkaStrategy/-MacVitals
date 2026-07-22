@@ -6,7 +6,7 @@ MacVitals ships with a project-owned application icon. It uses a dark rounded-sq
 
 The canonical repository source is:
 
-- `AssetsSource/AppIcon.icns.base64`
+- `AssetsSource/AppIcon.icns.base64.part00` … `partNN`
 
 The reviewed decoded ICNS SHA-256 is:
 
@@ -29,6 +29,7 @@ The materializer uses only the Python standard library. It verifies:
 
 - base64 integrity;
 - the reviewed source SHA-256;
+- contiguous source-part numbering;
 - the ICNS header and total length;
 - exactly one required chunk for 16, 32, 64, 128, 256, 512 and 1024 pixel representations;
 - embedded PNG structure, dimensions, encoding flags and CRC values;
@@ -45,4 +46,4 @@ Release verification also requires `CFBundleIconFile=AppIcon.icns`, rejects enco
 
 ## Updating the artwork
 
-An icon update must be reviewed visually at every representation size, replace the canonical encoded source, update the reviewed SHA-256 constant in `materialize_app_icon.py`, and pass the complete local and macOS release gates. Generated `AppIcon.icns` files must not be committed directly.
+An icon update must be reviewed visually at every representation size, replace the complete contiguous set of canonical encoded source parts, update the reviewed SHA-256 constant in `materialize_app_icon.py`, and pass the complete local and macOS release gates. Generated `AppIcon.icns` files must not be committed directly.
