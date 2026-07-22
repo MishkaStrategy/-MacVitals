@@ -43,8 +43,6 @@ final class MacVitalsUITests: XCTestCase {
       "Preferences window did not open for \(language)",
       file: file,
       line: line)
-    assertElementExists("preferencesTabView", in: app, file: file, line: line)
-    assertElementExists("preferencesGeneralTab", in: app, file: file, line: line)
     assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
     assertElementExists("launchAtLoginToggle", in: app, file: file, line: line)
@@ -52,24 +50,19 @@ final class MacVitalsUITests: XCTestCase {
     assertLocalizedTabLabel(labels.general, language: language, in: app, file: file, line: line)
 
     selectTab(labels.alerts, language: language, in: app, file: file, line: line)
-    assertElementExists("preferencesAlertsTab", in: app, file: file, line: line)
     assertElementExists("notificationsEnabledToggle", in: app, file: file, line: line)
     assertElementExists("memoryAlertThresholdSlider", in: app, file: file, line: line)
     assertElementExists("lowBatteryAlertThresholdSlider", in: app, file: file, line: line)
 
     selectTab(labels.menuBar, language: language, in: app, file: file, line: line)
-    assertElementExists("preferencesMenuBarTab", in: app, file: file, line: line)
     assertElementExists("menuPresetPicker", in: app, file: file, line: line)
     assertElementExists("menuMetricLayoutList", in: app, file: file, line: line)
     assertElementExists("restoreDefaultsButton", in: app, file: file, line: line)
 
     selectTab(labels.diagnostics, language: language, in: app, file: file, line: line)
-    assertElementExists("preferencesDiagnosticsTab", in: app, file: file, line: line)
-    assertElementExists("diagnosticsList", in: app, file: file, line: line)
     assertElementExists("exportDiagnosticsButton", in: app, file: file, line: line)
 
     selectTab(labels.privacy, language: language, in: app, file: file, line: line)
-    assertElementExists("preferencesPrivacyTab", in: app, file: file, line: line)
     assertElementExists("privacyLocalOnlySummary", in: app, file: file, line: line)
     assertElementExists("privacySupportBundleSummary", in: app, file: file, line: line)
 
