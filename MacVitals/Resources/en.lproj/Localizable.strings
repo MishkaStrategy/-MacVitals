@@ -31,6 +31,8 @@
 "Supporting system" = "Supporting system";
 "Charging" = "Charging";
 "Rated %d W" = "Rated %d W";
+"~%.1f W" = "~%.1f W";
+"%.1f W" = "%.1f W";
 "Not measured" = "Not measured";
 "Sufficient" = "Sufficient";
 "Insufficient" = "Insufficient";
