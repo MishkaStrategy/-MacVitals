@@ -9,6 +9,8 @@ final class MetricsCoordinator: ObservableObject {
   @Published private(set) var memoryHistory: [TimedPoint] = []
   @Published private(set) var isRunning = false
 
+  var onSnapshot: ((SystemSnapshot) -> Void)?
+
   private let cpuProvider = CPUProvider()
   private let memoryProvider = MemoryProvider()
   private let batteryProvider = BatteryProvider()
@@ -80,9 +82,11 @@ final class MetricsCoordinator: ObservableObject {
       quality: .derived, source: .derivedPowerModel,
       timestamp: Date(), isEstimated: assessment.estimatedSystemPowerWatts != nil,
       message: assessment.explanation)
-    snapshot = SystemSnapshot(
+    let newSnapshot = SystemSnapshot(
       timestamp: Date(), cpu: cpu, memory: memory,
       battery: battery, adapter: adapter, gpu: gpu, power: power)
+    snapshot = newSnapshot
+    onSnapshot?(newSnapshot)
     cpuBuffer.append(TimedPoint(value: cpu.value?.total))
     memoryBuffer.append(TimedPoint(value: memory.value?.usedPercent))
     publishHistory()
