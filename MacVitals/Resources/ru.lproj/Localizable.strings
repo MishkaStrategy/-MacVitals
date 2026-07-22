@@ -81,6 +81,20 @@
 "Within interval" = "В пределах интервала";
 "Waiting for the first sampling cycle" = "Ожидание первого цикла сбора";
 "Export redacted support bundle" = "Экспортировать очищенный пакет поддержки";
+"Available" = "Доступно";
+"Temporarily unavailable" = "Временно недоступно";
+"Unsupported" = "Не поддерживается";
+"Permission required" = "Требуется разрешение";
+"Provider error" = "Ошибка источника данных";
+"Stale" = "Устаревшие данные";
+"Estimated" = "Оценочное значение";
+"Mach host statistics" = "Статистика хоста Mach";
+"IOKit power sources" = "Источники питания IOKit";
+"IOKit registry" = "Реестр IOKit";
+"Derived power model" = "Расчётная модель питания";
+"%.2f s" = "%.2f с";
+"%.3f ms" = "%.3f мс";
+"%@ · %@" = "%@ · %@";
 
 "Adapter power" = "Мощность адаптера";
 "Power status" = "Состояние питания";
