@@ -83,6 +83,7 @@ ZIP_APP="${WORK_DIR}/zip/MacVitals.app"
 INFO_PLIST="${ZIP_APP}/Contents/Info.plist"
 EXECUTABLE="${ZIP_APP}/Contents/MacOS/MacVitals"
 RESOURCES="${ZIP_APP}/Contents/Resources"
+ICON_PATH="${RESOURCES}/AppIcon.icns"
 plutil -lint "${INFO_PLIST}" >/dev/null
 [[ -x "${EXECUTABLE}" ]] || {
   echo "Packaged executable is missing or not executable" >&2
@@ -99,6 +100,7 @@ short_version="$(plist_value CFBundleShortVersionString)"
 build_version="$(plist_value CFBundleVersion)"
 minimum_macos="$(plist_value LSMinimumSystemVersion)"
 executable_name="$(plist_value CFBundleExecutable)"
+icon_file="$(plist_value CFBundleIconFile)"
 ui_element="$(plist_value LSUIElement)"
 localizations="$(plist_value CFBundleLocalizations)"
 
@@ -126,6 +128,19 @@ localizations="$(plist_value CFBundleLocalizations)"
   echo "Unexpected executable name: ${executable_name}" >&2
   exit 1
 }
+[[ "${icon_file}" == "AppIcon.icns" ]] || {
+  echo "Unexpected or missing application icon declaration: ${icon_file}" >&2
+  exit 1
+}
+[[ -s "${ICON_PATH}" ]] || {
+  echo "Packaged application icon is missing or empty" >&2
+  exit 1
+}
+python3 "${ROOT_DIR}/scripts/materialize_app_icon.py" --validate-file "${ICON_PATH}"
+if find "${RESOURCES}" -type f -name '*.base64' -print -quit | grep -q .; then
+  echo "Encoded icon source must not be included in the application bundle" >&2
+  exit 1
+fi
 [[ "${ui_element}" == "true" ]] || {
   echo "LSUIElement must remain enabled for a menu bar application" >&2
   exit 1
@@ -262,6 +277,10 @@ cmp -s "${INFO_PLIST}" "${DMG_APP}/Contents/Info.plist" || {
   echo "ZIP and DMG Info.plist files differ" >&2
   exit 1
 }
+cmp -s "${ICON_PATH}" "${DMG_APP}/Contents/Resources/AppIcon.icns" || {
+  echo "ZIP and DMG application icons differ" >&2
+  exit 1
+}
 for locale in en ru; do
   zip_strings="${RESOURCES}/${locale}.lproj/Localizable.strings"
   dmg_strings="${DMG_APP}/Contents/Resources/${locale}.lproj/Localizable.strings"
@@ -282,4 +301,4 @@ codesign --verify --deep --strict "${DMG_APP}" >/dev/null 2>&1 || {
   fi
 }
 
-echo "Verified MacVitals ${VERSION} (${build_version}): provenance, bundle metadata, EN/RU resources, arm64/x86_64 binary, ZIP, DMG and checksums are valid"
+echo "Verified MacVitals ${VERSION} (${build_version}): provenance, app icon, bundle metadata, EN/RU resources, arm64/x86_64 binary, ZIP, DMG and checksums are valid"
