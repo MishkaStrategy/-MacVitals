@@ -2,11 +2,13 @@ import XCTest
 @testable import MacVitals
 
 final class SystemSamplerTests: XCTestCase {
-  func testSamplerProducesCoherentHardwareSnapshot() async throws {
+  func testSamplerProducesCoherentHardwareSnapshotAndTimings() async throws {
     let sampler = SystemSampler()
-    let first = await sampler.sample()
+    let firstResult = await sampler.sample()
     try await Task.sleep(nanoseconds: 100_000_000)
-    let second = await sampler.sample()
+    let secondResult = await sampler.sample()
+    let first = firstResult.snapshot
+    let second = secondResult.snapshot
 
     XCTAssertGreaterThanOrEqual(second.timestamp, first.timestamp)
     XCTAssertEqual(second.memory.availability, .available)
@@ -15,6 +17,9 @@ final class SystemSamplerTests: XCTestCase {
     XCTAssertNotEqual(second.cpu.availability, .providerError)
     XCTAssertNotEqual(second.gpu.availability, .providerError)
     XCTAssertNotNil(second.power.value)
+    XCTAssertGreaterThanOrEqual(secondResult.timings.totalMilliseconds, 0)
+    XCTAssertGreaterThanOrEqual(secondResult.timings.cpuMilliseconds, 0)
+    XCTAssertGreaterThanOrEqual(secondResult.timings.memoryMilliseconds, 0)
 
     let maximumSkew: TimeInterval = 5
     XCTAssertLessThan(abs(second.timestamp.timeIntervalSince(second.memory.timestamp)), maximumSkew)
