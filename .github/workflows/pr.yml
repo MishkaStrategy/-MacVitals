@@ -24,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate JSON and plist XML
+      - name: Validate YAML and plist XML
         run: |
-          python3 -m json.tool .github/dependabot.yml >/dev/null
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml')"
           python3 - <<'PY'
           import pathlib, xml.etree.ElementTree as ET
           for path in pathlib.Path('.').rglob('*.plist'): ET.parse(path)
