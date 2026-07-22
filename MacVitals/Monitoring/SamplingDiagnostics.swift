@@ -63,6 +63,10 @@ nonisolated enum SamplingTimingMath {
   ) -> TimeInterval {
     let interval = max(0.5, intervalSeconds.isFinite ? intervalSeconds : 2)
     let elapsedSeconds = max(0, elapsedMilliseconds.isFinite ? elapsedMilliseconds / 1_000 : 0)
-    return max(minimumDelaySeconds, interval - elapsedSeconds)
+    let minimumDelay =
+      minimumDelaySeconds.isFinite && minimumDelaySeconds > 0
+      ? minimumDelaySeconds
+      : 0.05
+    return max(minimumDelay, interval - elapsedSeconds)
   }
 }
