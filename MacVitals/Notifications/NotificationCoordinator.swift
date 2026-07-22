@@ -19,15 +19,16 @@ nonisolated enum NotificationAuthorizationState: Equatable, Sendable {
   var message: String? {
     switch self {
     case .unknown:
-      return "Checking notification permission…"
+      return L10n.string("Checking notification permission…")
     case .notDetermined:
-      return "macOS will ask for notification permission when alerts are enabled."
+      return L10n.string("macOS will ask for notification permission when alerts are enabled.")
     case .denied:
-      return "Notifications are disabled in System Settings › Notifications › MacVitals."
+      return L10n.string(
+        "Notifications are disabled in System Settings › Notifications › MacVitals.")
     case .authorized:
       return nil
     case .provisional:
-      return "Notifications are authorized for quiet delivery."
+      return L10n.string("Notifications are authorized for quiet delivery.")
     case .failed(let message):
       return message
     }
@@ -129,7 +130,7 @@ final class NotificationCoordinator {
         Task { @MainActor [weak self] in
           guard self?.enabled == true else { return }
           self?.authorizationState = .failed(
-            "Could not deliver a notification: \(message)")
+            L10n.format("Could not deliver a notification: %@", message))
         }
       }
     }
@@ -155,7 +156,7 @@ final class NotificationCoordinator {
       } catch {
         guard enabled, !Task.isCancelled else { return }
         authorizationState = .failed(
-          "Could not request notification permission: \(error.localizedDescription)")
+          L10n.format("Could not request notification permission: %@", error.localizedDescription))
       }
     }
   }
