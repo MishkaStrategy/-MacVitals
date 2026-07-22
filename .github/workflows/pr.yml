@@ -60,13 +60,29 @@ jobs:
           path: |
             native-tests.log
             native-test-diagnostics.txt
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Package and verify release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
-        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
+        run: |
+          set +e
+          bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}" > release-package.log 2>&1
+          status=$?
+          tail -n 500 release-package.log > release-package-diagnostics.txt
+          cat release-package-diagnostics.txt
+          exit $status
+
+      - name: Upload release package diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package-diagnostics
+          path: |
+            release-package.log
+            release-package-diagnostics.txt
+          if-no-files-found: ignore
 
       - name: Upload release candidate
         uses: actions/upload-artifact@v4
@@ -92,7 +108,7 @@ jobs:
           path: |
             native-ui-tests.log
             native-ui-test-diagnostics.txt
-          if-no-files-found: error
+          if-no-files-found: ignore
 
   repository-safety:
     runs-on: ubuntu-latest
