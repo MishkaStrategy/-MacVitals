@@ -39,7 +39,8 @@ final class MetricsCoordinator: ObservableObject {
   }
 
   private var currentInterval: TimeInterval {
-    UserDefaults.standard.double(forKey: "samplingInterval").nonZero ?? 2
+    SamplingIntervalPolicy.normalized(
+      UserDefaults.standard.double(forKey: "samplingInterval"))
   }
 
   private func start(resetBeforeSampling: Bool) {
@@ -55,14 +56,17 @@ final class MetricsCoordinator: ObservableObject {
         let result = await sampler.sample()
         guard !Task.isCancelled else { break }
 
-        let interval = self?.currentInterval ?? 2
+        let interval = self?.currentInterval ?? SamplingIntervalPolicy.defaultValue
         self?.consume(result, configuredInterval: interval)
 
-        let delay = SamplingTimingMath.remainingDelaySeconds(
+        let nanos = SamplingIntervalPolicy.sleepNanoseconds(
           intervalSeconds: interval,
           elapsedMilliseconds: result.timings.totalMilliseconds)
-        let nanos = UInt64(delay * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanos)
+        if nanos > 0 {
+          try? await Task.sleep(nanoseconds: nanos)
+        } else {
+          await Task.yield()
+        }
       }
     }
   }
@@ -83,8 +87,4 @@ final class MetricsCoordinator: ObservableObject {
     cpuHistory = cpuBuffer.values
     memoryHistory = memoryBuffer.values
   }
-}
-
-extension Double {
-  fileprivate var nonZero: Double? { self > 0 ? self : nil }
 }
