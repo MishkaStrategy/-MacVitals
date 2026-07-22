@@ -81,5 +81,5 @@ EOF
   shasum -a 256 "$(basename "${ZIP_PATH}")" "$(basename "${DMG_PATH}")" > SHA256SUMS.txt
 )
 
-"${ROOT_DIR}/scripts/verify_release.sh" "${VERSION}"
+bash "${ROOT_DIR}/scripts/verify_release.sh" "${VERSION}"
 echo "Release artifacts are available in ${DIST_DIR}"
