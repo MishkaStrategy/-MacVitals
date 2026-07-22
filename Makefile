@@ -1,6 +1,6 @@
 .PHONY: bootstrap build test format lint package verify-package clean
 
-VERSION ?= dev
+VERSION ?= 0.0.0
 
 bootstrap:
 	command -v xcodegen >/dev/null || brew install xcodegen
