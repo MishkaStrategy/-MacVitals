@@ -31,16 +31,38 @@ nonisolated enum DiagnosticBundleFactory {
   ) -> DiagnosticBundle {
     DiagnosticBundle(
       schemaVersion: schemaVersion,
-      generatedAt: generatedAt,
+      generatedAt: validDate(generatedAt),
       appVersion: appVersion,
       appBuild: appBuild,
       osVersion: osVersion,
       architecture: architecture,
-      systemUptimeSeconds: max(0, systemUptimeSeconds),
+      systemUptimeSeconds: finiteNonnegative(systemUptimeSeconds),
       snapshot: DiagnosticSnapshotRedactor.redact(snapshot),
       samplingHealth: samplingHealth,
       privacyNotice:
-        "Redacted: no username, home path, serial numbers, stable GPU registry identifiers, Apple ID, documents, or network data")
+        "Redacted: no username, home path, serial numbers, stable GPU registry identifiers, Apple ID, documents, or network data"
+    )
+  }
+
+  private static func validDate(_ value: Date) -> Date {
+    value.timeIntervalSinceReferenceDate.isFinite
+      ? value
+      : Date(timeIntervalSinceReferenceDate: 0)
+  }
+
+  private static func finiteNonnegative(_ value: TimeInterval) -> TimeInterval {
+    value.isFinite ? max(0, value) : 0
+  }
+}
+
+nonisolated enum DiagnosticReportFilename {
+  static func make(for date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+    return "MacVitals-Support-\(formatter.string(from: date)).json"
   }
 }
 
@@ -50,8 +72,7 @@ enum DiagnosticReportBuilder {
     samplingHealth: SamplingHealth? = nil
   ) {
     let panel = NSSavePanel()
-    panel.nameFieldStringValue =
-      "MacVitals-Support-\(ISO8601DateFormatter().string(from: Date())).json"
+    panel.nameFieldStringValue = DiagnosticReportFilename.make(for: Date())
     panel.allowedContentTypes = [.json]
     guard panel.runModal() == .OK, let url = panel.url else { return }
 
