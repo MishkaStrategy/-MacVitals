@@ -66,12 +66,12 @@ jobs:
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
-        run: bash scripts/package_release.sh "pr-${GITHUB_RUN_NUMBER}"
+        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
 
       - name: Upload release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: MacVitals-pr-${{ github.run_number }}-unsigned
+          name: MacVitals-0.0.${{ github.run_number }}-unsigned
           path: dist/
           if-no-files-found: error
 
