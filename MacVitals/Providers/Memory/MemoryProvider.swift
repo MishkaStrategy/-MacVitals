@@ -37,6 +37,12 @@ private nonisolated struct SwapSnapshot: Sendable, Equatable {
 }
 
 struct MemoryProvider: Sendable {
+  private let pressureProvider: any MemoryPressureProviding
+
+  init(pressureProvider: any MemoryPressureProviding = MemoryPressureMonitor()) {
+    self.pressureProvider = pressureProvider
+  }
+
   func sample() -> MetricValue<MemoryStats> {
     let timestamp = Date()
     var stats = vm_statistics64_data_t()
@@ -75,6 +81,7 @@ struct MemoryProvider: Sendable {
     let used = min(physical, calculatedUsed)
     let available = MemoryMath.availableBytes(physical: physical, used: used)
     let swap = readSwapSnapshot()
+    let pressureLevel = pressureProvider.currentLevel()
 
     let value = MemoryStats(
       physicalBytes: physical,
@@ -90,7 +97,7 @@ struct MemoryProvider: Sendable {
       swapTotalBytes: swap?.totalBytes,
       swapUsedBytes: swap?.usedBytes,
       swapFreeBytes: swap?.freeBytes,
-      pressure: nil,
+      pressureLevel: pressureLevel,
       usedPercent: MemoryMath.percent(used: used, physical: physical))
 
     return MetricValue(
@@ -101,7 +108,7 @@ struct MemoryProvider: Sendable {
       source: .machHostStatistics,
       timestamp: timestamp,
       isEstimated: false,
-      message: telemetryMessage(swapAvailable: swap != nil))
+      message: telemetryMessage(swapAvailable: swap != nil, pressureLevel: pressureLevel))
   }
 
   private func readSwapSnapshot() -> SwapSnapshot? {
@@ -117,8 +124,11 @@ struct MemoryProvider: Sendable {
       freeBytes: usage.xsu_avail)
   }
 
-  private func telemetryMessage(swapAvailable: Bool) -> String {
+  private func telemetryMessage(
+    swapAvailable: Bool,
+    pressureLevel: MemoryPressureLevel
+  ) -> String {
     let swapStatus = swapAvailable ? "swap available" : "swap unavailable"
-    return "Used memory is active + wired + compressed; \(swapStatus); memory pressure is not inferred from usage percentage"
+    return "Used memory is active + wired + compressed; \(swapStatus); pressure \(pressureLevel.rawValue) from DispatchSourceMemoryPressure"
   }
 }
