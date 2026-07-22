@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
     statusController = StatusItemController(coordinator: coordinator, settings: settings)
 
+    notificationCoordinator.onAuthorizationStateChange = { [weak self] state in
+      self?.settings.setNotificationAuthorizationState(state)
+    }
+
     settings.$notificationsEnabled
       .combineLatest(settings.$memoryAlertThreshold, settings.$lowBatteryAlertThreshold)
       .sink { [weak self] enabled, memoryThreshold, batteryThreshold in
@@ -32,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lowBatteryThreshold: settings.lowBatteryAlertThreshold)
     }
 
+    Task { [weak self] in
+      await self?.notificationCoordinator.refreshAuthorizationState()
+    }
+
     coordinator.start()
     LifecycleMonitor.shared.start(coordinator: coordinator)
     Logger.lifecycle.info("MacVitals started")
@@ -39,11 +47,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidBecomeActive(_ notification: Notification) {
     settings.refreshLaunchAtLoginState()
+    Task { [weak self] in
+      await self?.notificationCoordinator.refreshAuthorizationState()
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
     coordinator.stop()
     coordinator.onSnapshot = nil
+    notificationCoordinator.onAuthorizationStateChange = nil
     LifecycleMonitor.shared.stop()
     cancellables.removeAll()
     Logger.lifecycle.info("MacVitals stopped")
