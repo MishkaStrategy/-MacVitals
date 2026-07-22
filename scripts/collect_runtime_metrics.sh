@@ -4,6 +4,7 @@ set -euo pipefail
 DURATION_SECONDS="${1:-${DURATION_SECONDS:-300}}"
 INTERVAL_SECONDS="${2:-${INTERVAL_SECONDS:-2}}"
 PROCESS_NAME="${PROCESS_NAME:-MacVitals}"
+PROCESS_ID="${PROCESS_ID:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-performance-results}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 OUTPUT_DIR="${OUTPUT_ROOT}/${RUN_ID}"
@@ -30,8 +31,17 @@ for command in pgrep ps date sleep awk python3 sw_vers uname sysctl; do
   }
 done
 
-pid="$(pgrep -x "${PROCESS_NAME}" | head -n 1 || true)"
-[[ -n "${pid}" ]] || {
+if [[ -n "${PROCESS_ID}" ]]; then
+  [[ "${PROCESS_ID}" =~ ^[0-9]+$ ]] || {
+    echo "PROCESS_ID must be numeric: ${PROCESS_ID}" >&2
+    exit 2
+  }
+  pid="${PROCESS_ID}"
+else
+  pid="$(pgrep -x "${PROCESS_NAME}" | head -n 1 || true)"
+fi
+
+[[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1 || {
   echo "${PROCESS_NAME} is not running. Launch the packaged app before collecting metrics." >&2
   exit 1
 }
@@ -70,10 +80,19 @@ while kill -0 "${pid}" >/dev/null 2>&1; do
   sleep "${INTERVAL_SECONDS}"
 done
 
+finished_epoch="$(date +%s)"
+process_alive_at_end=false
+if kill -0 "${pid}" >/dev/null 2>&1; then
+  process_alive_at_end=true
+fi
+
 PROCESS_NAME="${PROCESS_NAME}" \
 PROCESS_ID="${pid}" \
 DURATION_SECONDS="${DURATION_SECONDS}" \
 INTERVAL_SECONDS="${INTERVAL_SECONDS}" \
+START_EPOCH="${start_epoch}" \
+FINISHED_EPOCH="${finished_epoch}" \
+PROCESS_ALIVE_AT_END="${process_alive_at_end}" \
 CSV_PATH="${CSV_PATH}" \
 SUMMARY_PATH="${SUMMARY_PATH}" \
 python3 - <<'PY'
@@ -102,25 +121,56 @@ def percentile(values: list[float], probability: float) -> float | None:
     return ordered[index]
 
 
+def finite_nonnegative(value: str, field: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise SystemExit(f"Invalid {field} sample: {value!r}")
+    return parsed
+
+
 csv_path = Path(os.environ["CSV_PATH"])
 rows = list(csv.DictReader(csv_path.open(encoding="utf-8")))
 if not rows:
     raise SystemExit("No process samples were collected")
 
-cpu = [float(row["cpu_percent"]) for row in rows]
-rss = [float(row["rss_kib"]) for row in rows]
-vsz = [float(row["vsz_kib"]) for row in rows]
-threads = [float(row["threads"]) for row in rows if row["threads"].strip()]
+elapsed = [finite_nonnegative(row["elapsed_seconds"], "elapsed") for row in rows]
+cpu = [finite_nonnegative(row["cpu_percent"], "CPU") for row in rows]
+rss = [finite_nonnegative(row["rss_kib"], "RSS") for row in rows]
+vsz = [finite_nonnegative(row["vsz_kib"], "VSZ") for row in rows]
+threads = [
+    finite_nonnegative(row["threads"], "thread count")
+    for row in rows
+    if row["threads"].strip()
+]
+intervals = [later - earlier for earlier, later in zip(elapsed, elapsed[1:])]
+if any(value < 0 for value in intervals):
+    raise SystemExit("Elapsed sample times are not monotonic")
 
+observed_duration = max(
+    0,
+    int(os.environ["FINISHED_EPOCH"]) - int(os.environ["START_EPOCH"]),
+)
 summary = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "process": {
         "name": os.environ["PROCESS_NAME"],
         "pidAtStart": int(os.environ["PROCESS_ID"]),
+        "aliveAtEnd": os.environ["PROCESS_ALIVE_AT_END"] == "true",
     },
     "requested": {
         "durationSeconds": float(os.environ["DURATION_SECONDS"]),
         "intervalSeconds": float(os.environ["INTERVAL_SECONDS"]),
+    },
+    "observed": {
+        "durationSeconds": observed_duration,
+        "firstSampleElapsedSeconds": elapsed[0],
+        "lastSampleElapsedSeconds": elapsed[-1],
+        "sampleCount": len(rows),
+        "sampleIntervalSeconds": {
+            "mean": statistics.fmean(intervals) if intervals else None,
+            "p95": percentile(intervals, 0.95),
+            "max": max(intervals) if intervals else None,
+        },
     },
     "environment": {
         "architecture": platform.machine(),
@@ -130,7 +180,6 @@ summary = {
         "logicalCPUCount": command("sysctl", "-n", "hw.logicalcpu"),
         "physicalMemoryBytes": command("sysctl", "-n", "hw.memsize"),
     },
-    "sampleCount": len(rows),
     "metrics": {
         "cpuPercent": {
             "mean": statistics.fmean(cpu),
@@ -138,11 +187,18 @@ summary = {
             "max": max(cpu),
         },
         "residentMemoryKiB": {
+            "first": rss[0],
+            "last": rss[-1],
+            "growth": rss[-1] - rss[0],
+            "range": max(rss) - min(rss),
             "mean": statistics.fmean(rss),
             "p95": percentile(rss, 0.95),
             "max": max(rss),
         },
         "virtualMemoryKiB": {
+            "first": vsz[0],
+            "last": vsz[-1],
+            "growth": vsz[-1] - vsz[0],
             "mean": statistics.fmean(vsz),
             "p95": percentile(vsz, 0.95),
             "max": max(vsz),
@@ -156,6 +212,7 @@ summary = {
     "limitations": [
         "This is process sampling from ps, not an Instruments energy or wakeup trace.",
         "Values are evidence for the recorded machine and workload only.",
+        "CI thresholds are broad regression guardrails, not product performance claims.",
         "No administrator privileges, network access, serial numbers, or user documents are used.",
     ],
 }
