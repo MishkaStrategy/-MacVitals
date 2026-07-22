@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import MacVitals
 
 final class AlertPolicyTests: XCTestCase {
@@ -28,8 +29,27 @@ final class AlertPolicyTests: XCTestCase {
       policy.evaluate(snapshot: snapshot(memoryPercent: 40), now: now.addingTimeInterval(70)).count,
       0)
     XCTAssertEqual(
-      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(71)).count,
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(71))
+        .count,
       1)
+  }
+
+  func testClockRollbackDoesNotSuppressRecoveredAlert() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
+    let first = Date(timeIntervalSince1970: 1_000)
+
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: first).map(\.kind),
+      [.highMemory])
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 40), now: first.addingTimeInterval(1))
+        .isEmpty)
+
+    let rolledBack = Date(timeIntervalSince1970: 900)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: rolledBack).map(\.kind),
+      [.highMemory])
   }
 
   func testConfigurationUpdatePreservesActiveStateAndCooldown() {
@@ -155,31 +175,69 @@ final class AlertPolicyTests: XCTestCase {
       cpu: .unavailable(unit: .percent),
       memory: MetricValue(
         value: MemoryStats(
-          physicalBytes: 100, usedBytes: 50, freeBytes: 0,
-          availableBytes: 0, activeBytes: 0, inactiveBytes: 0, wiredBytes: 0,
-          compressedBytes: 0, purgeableBytes: 0, speculativeBytes: 0,
-          swapTotalBytes: nil, swapUsedBytes: nil, swapFreeBytes: nil,
-          pressureLevel: memoryPressure, usedPercent: memoryPercent),
-        unit: .bytes, availability: .available, quality: .derived,
-        source: .machHostStatistics, timestamp: now, isEstimated: false, message: nil),
+          physicalBytes: 100,
+          usedBytes: 50,
+          freeBytes: 0,
+          availableBytes: 0,
+          activeBytes: 0,
+          inactiveBytes: 0,
+          wiredBytes: 0,
+          compressedBytes: 0,
+          purgeableBytes: 0,
+          speculativeBytes: 0,
+          swapTotalBytes: nil,
+          swapUsedBytes: nil,
+          swapFreeBytes: nil,
+          pressureLevel: memoryPressure,
+          usedPercent: memoryPercent),
+        unit: .bytes,
+        availability: .available,
+        quality: .derived,
+        source: .machHostStatistics,
+        timestamp: now,
+        isEstimated: false,
+        message: nil),
       battery: MetricValue(
         value: BatteryStats(
-          present: true, percentage: batteryPercent, state: batteryState,
+          present: true,
+          percentage: batteryPercent,
+          state: batteryState,
           externalPowerConnected: batteryState != .discharging,
-          timeRemainingMinutes: nil, timeToFullMinutes: nil, cycleCount: nil,
-          condition: nil, currentCapacityMah: nil, maxCapacityMah: nil,
-          designCapacityMah: nil, healthPercent: nil, temperatureCelsius: nil,
-          voltageVolts: nil, currentAmperes: nil, batteryPowerWatts: nil),
-        unit: .percent, availability: .available, quality: .direct,
-        source: .iokitPowerSources, timestamp: now, isEstimated: false, message: nil),
+          timeRemainingMinutes: nil,
+          timeToFullMinutes: nil,
+          cycleCount: nil,
+          condition: nil,
+          currentCapacityMah: nil,
+          maxCapacityMah: nil,
+          designCapacityMah: nil,
+          healthPercent: nil,
+          temperatureCelsius: nil,
+          voltageVolts: nil,
+          currentAmperes: nil,
+          batteryPowerWatts: nil),
+        unit: .percent,
+        availability: .available,
+        quality: .direct,
+        source: .iokitPowerSources,
+        timestamp: now,
+        isEstimated: false,
+        message: nil),
       adapter: .unavailable(unit: .watts),
       gpu: .unavailable(unit: .percent),
       power: MetricValue(
         value: PowerAssessment(
-          status: powerStatus, confidence: powerConfidence, batteryPowerWatts: nil,
-          estimatedSystemPowerWatts: nil, powerBalanceWatts: nil,
+          status: powerStatus,
+          confidence: powerConfidence,
+          batteryPowerWatts: nil,
+          estimatedSystemPowerWatts: nil,
+          powerBalanceWatts: nil,
           explanation: "Power assessment"),
-        unit: .watts, availability: .available, quality: .derived,
-        source: .derivedPowerModel, timestamp: now, isEstimated: false, message: nil))
+        unit: .watts,
+        availability: .available,
+        quality: .derived,
+        source: .derivedPowerModel,
+        timestamp: now,
+        isEstimated: false,
+        message: nil))
   }
 }
