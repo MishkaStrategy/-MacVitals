@@ -111,7 +111,7 @@ struct PreferencesView: View {
     VStack(alignment: .leading, spacing: 12) {
       Picker("Preset", selection: $settings.selectedPreset) {
         ForEach(MenuPreset.allCases) { preset in
-          Text(preset.rawValue.capitalized).tag(preset)
+          Text(preset.displayName).tag(preset)
         }
       }
       .accessibilityIdentifier("menuPresetPicker")
@@ -128,8 +128,8 @@ struct PreferencesView: View {
                 Image(systemName: "eye.slash")
               }
               .buttonStyle(.borderless)
-              .help("Hide metric")
-              .accessibilityLabel("Hide \(metric.displayName)")
+              .help(L10n.string("Hide metric"))
+              .accessibilityLabel(L10n.format("Hide %@", metric.displayName))
               .accessibilityIdentifier("hideMetric.\(metric.rawValue)")
             }
             .accessibilityIdentifier("shownMetric.\(metric.rawValue)")
@@ -150,7 +150,7 @@ struct PreferencesView: View {
                 }
               }
               .buttonStyle(.plain)
-              .accessibilityLabel("Show \(metric.displayName)")
+              .accessibilityLabel(L10n.format("Show %@", metric.displayName))
               .accessibilityIdentifier("showMetric.\(metric.rawValue)")
             }
           }
@@ -180,7 +180,7 @@ struct PreferencesView: View {
         "MacVitals has no accounts, telemetry, analytics, ads, or network backend. Measurements and preferences remain on this Mac."
       )
       Text(
-        "The support bundle redacts home paths and does not include serial numbers, Apple ID, user documents, or network data."
+        "The support bundle redacts home paths and does not include serial numbers, Apple ID, user documents, network data, or stable GPU registry identifiers."
       )
       Spacer()
     }
