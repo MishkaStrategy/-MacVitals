@@ -18,9 +18,10 @@ nonisolated enum LaunchAtLoginState: Equatable, Sendable {
     case .disabled, .enabled:
       return nil
     case .requiresApproval:
-      return "Approval is required in System Settings › General › Login Items."
+      return L10n.string("Approval is required in System Settings › General › Login Items.")
     case .unavailable:
-      return "Launch at login is unavailable for this app installation. Move MacVitals to Applications and try again."
+      return L10n.string(
+        "Launch at login is unavailable for this app installation. Move MacVitals to Applications and try again.")
     case .failed(let message):
       return message
     }
