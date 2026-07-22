@@ -122,9 +122,10 @@ final class NotificationCoordinator {
 
       center.add(request) { [weak self] error in
         guard let error else { return }
+        let message = error.localizedDescription
         Task { @MainActor [weak self] in
           self?.authorizationState = .failed(
-            "Could not deliver a notification: \(error.localizedDescription)")
+            "Could not deliver a notification: \(message)")
         }
       }
     }
@@ -132,12 +133,13 @@ final class NotificationCoordinator {
 
   private func requestAuthorization() async throws {
     let center = self.center
-    try await withCheckedThrowingContinuation { continuation in
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, Error>) in
       center.requestAuthorization(options: [.alert, .sound]) { _, error in
         if let error {
           continuation.resume(throwing: error)
         } else {
-          continuation.resume()
+          continuation.resume(returning: ())
         }
       }
     }
