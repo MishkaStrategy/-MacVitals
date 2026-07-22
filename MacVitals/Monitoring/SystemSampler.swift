@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 
 actor SystemSampler {
@@ -13,12 +14,13 @@ actor SystemSampler {
     evaluator.reset()
   }
 
-  func sample() -> SystemSnapshot {
-    let cpu = cpuProvider.sample()
-    let memory = memoryProvider.sample()
-    let battery = batteryProvider.sample()
-    let adapter = adapterProvider.sample()
-    let gpu = gpuProvider.sample()
+  func sample() -> SampleResult {
+    let totalStart = DispatchTime.now().uptimeNanoseconds
+    let (cpu, cpuMilliseconds) = measure { cpuProvider.sample() }
+    let (memory, memoryMilliseconds) = measure { memoryProvider.sample() }
+    let (battery, batteryMilliseconds) = measure { batteryProvider.sample() }
+    let (adapter, adapterMilliseconds) = measure { adapterProvider.sample() }
+    let (gpu, gpuMilliseconds) = measure { gpuProvider.sample() }
     let batteryValue = battery.value
     let adapterValue = adapter.value
     let now = Date()
@@ -32,7 +34,7 @@ actor SystemSampler {
       batteryPercent: batteryValue?.percentage,
       batteryTimestamp: battery.timestamp,
       adapterTimestamp: adapter.timestamp)
-    let assessment = evaluator.evaluate(powerSample)
+    let (assessment, powerModelMilliseconds) = measure { evaluator.evaluate(powerSample) }
     let power = MetricValue(
       value: assessment,
       unit: .watts,
@@ -43,7 +45,7 @@ actor SystemSampler {
       isEstimated: assessment.estimatedSystemPowerWatts != nil,
       message: assessment.explanation)
 
-    return SystemSnapshot(
+    let snapshot = SystemSnapshot(
       timestamp: now,
       cpu: cpu,
       memory: memory,
@@ -51,5 +53,27 @@ actor SystemSampler {
       adapter: adapter,
       gpu: gpu,
       power: power)
+    let totalEnd = DispatchTime.now().uptimeNanoseconds
+    let timings = SamplingTimings(
+      cpuMilliseconds: cpuMilliseconds,
+      memoryMilliseconds: memoryMilliseconds,
+      batteryMilliseconds: batteryMilliseconds,
+      adapterMilliseconds: adapterMilliseconds,
+      gpuMilliseconds: gpuMilliseconds,
+      powerModelMilliseconds: powerModelMilliseconds,
+      totalMilliseconds: SamplingTimingMath.milliseconds(
+        startNanoseconds: totalStart,
+        endNanoseconds: totalEnd))
+
+    return SampleResult(snapshot: snapshot, timings: timings)
+  }
+
+  private func measure<Value>(_ operation: () -> Value) -> (Value, Double) {
+    let start = DispatchTime.now().uptimeNanoseconds
+    let value = operation()
+    let end = DispatchTime.now().uptimeNanoseconds
+    return (
+      value,
+      SamplingTimingMath.milliseconds(startNanoseconds: start, endNanoseconds: end))
   }
 }
