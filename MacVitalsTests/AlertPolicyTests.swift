@@ -1,0 +1,102 @@
+import XCTest
+@testable import MacVitals
+
+final class AlertPolicyTests: XCTestCase {
+  func testHighMemoryEmitsOnlyOnTransition() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
+    let now = Date(timeIntervalSince1970: 1_000)
+    let high = snapshot(memoryPercent: 95)
+
+    XCTAssertEqual(policy.evaluate(snapshot: high, now: now).map(\.kind), [.highMemory])
+    XCTAssertTrue(policy.evaluate(snapshot: high, now: now.addingTimeInterval(10)).isEmpty)
+  }
+
+  func testHighMemoryCanEmitAgainAfterRecoveryAndCooldown() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
+    let now = Date(timeIntervalSince1970: 2_000)
+
+    XCTAssertEqual(policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now).count, 1)
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 40), now: now.addingTimeInterval(10))
+        .isEmpty)
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(30))
+        .isEmpty)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 40), now: now.addingTimeInterval(70)).count,
+      0)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(71)).count,
+      1)
+  }
+
+  func testInsufficientPowerRequiresConfidence() {
+    var policy = AlertPolicy(
+      configuration: .init(powerConfidenceThreshold: 0.8, cooldown: 0))
+
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(powerStatus: .insufficient, powerConfidence: 0.5))
+        .isEmpty)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(powerStatus: .sufficient, powerConfidence: 1)).count,
+      0)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(powerStatus: .insufficient, powerConfidence: 0.9))
+        .map(\.kind),
+      [.insufficientPower])
+  }
+
+  func testLowBatteryRequiresDischargingState() {
+    var policy = AlertPolicy(configuration: .init(lowBatteryThresholdPercent: 15, cooldown: 0))
+
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(batteryPercent: 10, batteryState: .charging)).isEmpty)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(batteryPercent: 10, batteryState: .discharging))
+        .map(\.kind),
+      [.lowBattery])
+  }
+
+  private func snapshot(
+    memoryPercent: Double = 50,
+    batteryPercent: Double = 80,
+    batteryState: BatteryState = .charging,
+    powerStatus: PowerSufficiencyStatus = .sufficient,
+    powerConfidence: Double = 1
+  ) -> SystemSnapshot {
+    let now = Date(timeIntervalSince1970: 100)
+    return SystemSnapshot(
+      timestamp: now,
+      cpu: .unavailable(unit: .percent),
+      memory: MetricValue(
+        value: MemoryStats(
+          physicalBytes: 100, usedBytes: UInt64(memoryPercent), freeBytes: 0,
+          availableBytes: 0, activeBytes: 0, inactiveBytes: 0, wiredBytes: 0,
+          compressedBytes: 0, purgeableBytes: 0, speculativeBytes: 0,
+          swapTotalBytes: nil, swapUsedBytes: nil, swapFreeBytes: nil,
+          pressure: nil, usedPercent: memoryPercent),
+        unit: .bytes, availability: .available, quality: .derived,
+        source: .machHostStatistics, timestamp: now, isEstimated: false, message: nil),
+      battery: MetricValue(
+        value: BatteryStats(
+          present: true, percentage: batteryPercent, state: batteryState,
+          externalPowerConnected: batteryState != .discharging,
+          timeRemainingMinutes: nil, timeToFullMinutes: nil, cycleCount: nil,
+          condition: nil, currentCapacityMah: nil, maxCapacityMah: nil,
+          designCapacityMah: nil, healthPercent: nil, temperatureCelsius: nil,
+          voltageVolts: nil, currentAmperes: nil, batteryPowerWatts: nil),
+        unit: .percent, availability: .available, quality: .direct,
+        source: .iokitPowerSources, timestamp: now, isEstimated: false, message: nil),
+      adapter: .unavailable(unit: .watts),
+      gpu: .unavailable(unit: .percent),
+      power: MetricValue(
+        value: PowerAssessment(
+          status: powerStatus, confidence: powerConfidence, batteryPowerWatts: nil,
+          estimatedSystemPowerWatts: nil, powerBalanceWatts: nil,
+          explanation: "Power assessment"),
+        unit: .watts, availability: .available, quality: .derived,
+        source: .derivedPowerModel, timestamp: now, isEstimated: false, message: nil))
+  }
+}
