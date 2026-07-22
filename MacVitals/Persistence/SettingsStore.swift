@@ -105,6 +105,21 @@ final class SettingsStore: ObservableObject {
   @Published var reducedMotion: Bool {
     didSet { UserDefaults.standard.set(reducedMotion, forKey: Keys.reducedMotion) }
   }
+  @Published var notificationsEnabled: Bool {
+    didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
+  }
+  @Published var memoryAlertThreshold: Double {
+    didSet {
+      memoryAlertThreshold = min(100, max(50, memoryAlertThreshold))
+      UserDefaults.standard.set(memoryAlertThreshold, forKey: Keys.memoryAlertThreshold)
+    }
+  }
+  @Published var lowBatteryAlertThreshold: Double {
+    didSet {
+      lowBatteryAlertThreshold = min(50, max(5, lowBatteryAlertThreshold))
+      UserDefaults.standard.set(lowBatteryAlertThreshold, forKey: Keys.lowBatteryAlertThreshold)
+    }
+  }
   @Published var launchAtLogin: Bool = false
 
   var hiddenMetrics: [MenuMetric] {
@@ -116,6 +131,9 @@ final class SettingsStore: ObservableObject {
     samplingInterval = defaults.double(forKey: Keys.samplingInterval).nonZero ?? 2
     showInDock = defaults.bool(forKey: Keys.showInDock)
     reducedMotion = defaults.bool(forKey: Keys.reducedMotion)
+    notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
+    memoryAlertThreshold = defaults.double(forKey: Keys.memoryAlertThreshold).nonZero ?? 90
+    lowBatteryAlertThreshold = defaults.double(forKey: Keys.lowBatteryAlertThreshold).nonZero ?? 15
 
     let initialPreset: MenuPreset
     if let rawPreset = defaults.string(forKey: Keys.selectedPreset),
@@ -177,6 +195,9 @@ final class SettingsStore: ObservableObject {
     enabledMetrics = MenuPreset.performance.metrics
     samplingInterval = 2
     reducedMotion = false
+    notificationsEnabled = false
+    memoryAlertThreshold = 90
+    lowBatteryAlertThreshold = 15
   }
 
   private func persistMenuConfiguration() {
@@ -192,6 +213,9 @@ final class SettingsStore: ObservableObject {
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
     static let reducedMotion = "reducedMotion"
+    static let notificationsEnabled = "notificationsEnabled"
+    static let memoryAlertThreshold = "memoryAlertThreshold"
+    static let lowBatteryAlertThreshold = "lowBatteryAlertThreshold"
   }
 }
 
