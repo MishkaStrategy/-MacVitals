@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate localizations
+        run: |
+          python3 -m py_compile scripts/validate_localizations.py
+          python3 scripts/validate_localizations.py
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
