@@ -47,15 +47,35 @@ plutil -lint "${INFO_PLIST}" >/dev/null
   exit 1
 }
 
-bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${INFO_PLIST}")"
-package_type="$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "${INFO_PLIST}")"
-ui_element="$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "${INFO_PLIST}")"
+plist_value() {
+  /usr/libexec/PlistBuddy -c "Print :$1" "${INFO_PLIST}"
+}
+
+bundle_id="$(plist_value CFBundleIdentifier)"
+package_type="$(plist_value CFBundlePackageType)"
+short_version="$(plist_value CFBundleShortVersionString)"
+build_version="$(plist_value CFBundleVersion)"
+executable_name="$(plist_value CFBundleExecutable)"
+ui_element="$(plist_value LSUIElement)"
+
 [[ "${bundle_id}" == "com.mishkacher.MacVitals" ]] || {
   echo "Unexpected bundle identifier: ${bundle_id}" >&2
   exit 1
 }
 [[ "${package_type}" == "APPL" ]] || {
   echo "Unexpected bundle package type: ${package_type}" >&2
+  exit 1
+}
+[[ "${short_version}" == "${VERSION}" ]] || {
+  echo "Embedded version ${short_version} does not match package version ${VERSION}" >&2
+  exit 1
+}
+[[ "${build_version}" =~ ^[0-9]+([.][0-9]+)*$ ]] || {
+  echo "Invalid embedded build number: ${build_version}" >&2
+  exit 1
+}
+[[ "${executable_name}" == "MacVitals" ]] || {
+  echo "Unexpected executable name: ${executable_name}" >&2
   exit 1
 }
 [[ "${ui_element}" == "true" ]] || {
@@ -79,4 +99,4 @@ ATTACHED=1
 grep -q '^Signing status:' "${STATUS_PATH}"
 grep -q '^Notarization status:' "${STATUS_PATH}"
 
-echo "Verified MacVitals ${VERSION}: bundle metadata, ZIP, DMG and checksums are valid"
+echo "Verified MacVitals ${VERSION} (${build_version}): bundle metadata, ZIP, DMG and checksums are valid"
