@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import MacVitals
 
 final class DiagnosticBundleFactoryTests: XCTestCase {
@@ -32,6 +33,31 @@ final class DiagnosticBundleFactoryTests: XCTestCase {
     XCTAssertEqual(bundle.systemUptimeSeconds, 0)
     XCTAssertEqual(bundle.samplingHealth, health)
     XCTAssertTrue(bundle.privacyNotice.contains("no username"))
+  }
+
+  func testFactorySanitizesNonFiniteMetadataAndRemainsJSONEncodable() throws {
+    let bundle = DiagnosticBundleFactory.make(
+      snapshot: .empty,
+      generatedAt: Date(timeIntervalSinceReferenceDate: .infinity),
+      appVersion: "1.0.0",
+      appBuild: "7",
+      osVersion: "macOS Test",
+      architecture: "arm64",
+      systemUptimeSeconds: .infinity)
+
+    XCTAssertEqual(bundle.generatedAt, Date(timeIntervalSinceReferenceDate: 0))
+    XCTAssertEqual(bundle.systemUptimeSeconds, 0)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    XCTAssertNoThrow(try encoder.encode(bundle))
+  }
+
+  func testDiagnosticFilenameIsPortableDeterministicUTC() {
+    let date = Date(timeIntervalSince1970: 1_700_000_000)
+    XCTAssertEqual(
+      DiagnosticReportFilename.make(for: date),
+      "MacVitals-Support-20231114T221320Z.json")
+    XCTAssertFalse(DiagnosticReportFilename.make(for: date).contains(":"))
   }
 
   func testFactoryRedactsStableGPURegistryIdentifierWithoutMutatingRuntimeSnapshot() {
