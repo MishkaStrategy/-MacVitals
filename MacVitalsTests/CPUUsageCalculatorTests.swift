@@ -22,7 +22,7 @@ final class CPUUsageCalculatorTests: XCTestCase {
         idle: UInt64.max,
         nice: UInt64.max))
 
-    XCTAssertEqual(result.total, 50, accuracy: 0.001)
+    XCTAssertEqual(result.total, 75, accuracy: 0.001)
     XCTAssertEqual(result.user, 50, accuracy: 0.001)
     XCTAssertEqual(result.system, 25, accuracy: 0.001)
     XCTAssertEqual(result.idle, 25, accuracy: 0.001)
