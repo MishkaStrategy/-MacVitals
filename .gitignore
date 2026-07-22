@@ -1,7 +1,12 @@
 .DS_Store
 DerivedData/
 build/
+build-intel/
+build-intel-tests/
 dist/
+runtime-smoke-results/
+runtime-intel-results/
+performance-results/
 *.xcuserstate
 xcuserdata/
 MacVitals.xcodeproj/
