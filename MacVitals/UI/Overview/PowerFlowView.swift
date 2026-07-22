@@ -20,7 +20,7 @@ struct PowerFlowView: View {
       if let battery = snapshot.battery.value, battery.present {
         HStack(spacing: 8) {
           node("Battery", detail: batteryPower, symbol: "battery.75percent")
-          Image(systemName: battery.batteryPowerWatts ?? 0 < 0 ? "arrow.right" : "arrow.left")
+          Image(systemName: batteryFlowSymbol)
             .accessibilityHidden(true)
           Text(batteryFlowText)
             .font(.caption)
@@ -45,48 +45,41 @@ struct PowerFlowView: View {
   }
 
   private var ratedPower: String {
-    snapshot.adapter.value?.ratedPowerWatts.map {
-      L10n.format("Rated %d W", Int($0.rounded()))
-    } ?? "—"
+    MetricNumberFormatter.ratedWatts(snapshot.adapter.value?.ratedPowerWatts) ?? "—"
   }
 
   private var systemPower: String {
-    snapshot.power.value?.estimatedSystemPowerWatts.map {
-      L10n.format("~%.1f W", $0)
-    } ?? L10n.string("Not measured")
+    MetricNumberFormatter.decimalWatts(
+      snapshot.power.value?.estimatedSystemPowerWatts,
+      estimated: true)
+      ?? L10n.string("Not measured")
   }
 
   private var batteryPower: String {
-    snapshot.battery.value?.batteryPowerWatts.map {
-      L10n.format("%.1f W", abs($0))
-    } ?? "—"
+    MetricNumberFormatter.decimalWatts(
+      snapshot.battery.value?.batteryPowerWatts,
+      absolute: true)
+      ?? "—"
+  }
+
+  private var batteryIsDischarging: Bool? {
+    MetricNumberFormatter.isNegative(snapshot.battery.value?.batteryPowerWatts)
+  }
+
+  private var batteryFlowSymbol: String {
+    guard let batteryIsDischarging else { return "arrow.left.and.right" }
+    return batteryIsDischarging ? "arrow.right" : "arrow.left"
   }
 
   private var batteryFlowText: String {
-    let discharging = snapshot.battery.value?.batteryPowerWatts ?? 0 < 0
-    return L10n.string(discharging ? "Supporting system" : "Charging")
+    guard let batteryIsDischarging else { return L10n.string("Unknown") }
+    return L10n.string(batteryIsDischarging ? "Supporting system" : "Charging")
   }
 
   private var statusLabel: some View {
     let status = snapshot.power.value?.status ?? .unknown
-    return Label(
-      statusText(status),
-      systemImage: status == .insufficient
-        ? "exclamationmark.triangle.fill"
-        : "checkmark.circle")
+    return Label(status.displayName, systemImage: status.symbolName)
       .font(.caption.bold())
-      .accessibilityLabel(statusText(status))
-  }
-
-  private func statusText(_ status: PowerSufficiencyStatus) -> String {
-    switch status {
-    case .sufficient: return L10n.string("Sufficient")
-    case .insufficient: return L10n.string("Insufficient")
-    case .borderline: return L10n.string("Borderline")
-    case .chargingBattery: return L10n.string("Charging")
-    case .notConnected: return L10n.string("On battery")
-    case .sensorConflict: return L10n.string("Sensor conflict")
-    default: return L10n.string("Unknown")
-    }
+      .accessibilityLabel(status.displayName)
   }
 }
