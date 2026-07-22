@@ -44,6 +44,7 @@ final class MetricsCoordinator: ObservableObject {
   private func start(resetBeforeSampling: Bool) {
     guard samplingTask == nil else { return }
     isRunning = true
+    let sampler = self.sampler
     samplingTask = Task { [weak self, sampler] in
       if resetBeforeSampling {
         await sampler.resetForDiscontinuity()
