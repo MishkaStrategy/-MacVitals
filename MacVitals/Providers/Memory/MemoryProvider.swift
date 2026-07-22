@@ -1,3 +1,4 @@
+import Darwin
 import Darwin.Mach
 import Foundation
 
@@ -47,16 +48,26 @@ struct MemoryProvider: Sendable {
       physical,
       MemoryMath.usedBytes(active: active, inactive: inactive, wired: wired, compressed: compressed)
     )
-    let pressure = MemoryMath.percent(used: used, physical: physical)
+    let usedPercent = MemoryMath.percent(used: used, physical: physical)
     let value = MemoryStats(
       physicalBytes: physical, usedBytes: used, freeBytes: free,
       activeBytes: active, inactiveBytes: inactive, wiredBytes: wired,
-      compressedBytes: compressed, swapUsedBytes: 0,
-      pressure: pressure, usedPercent: pressure)
+      compressedBytes: compressed, swapUsedBytes: readSwapUsedBytes(),
+      pressure: nil, usedPercent: usedPercent)
     return MetricValue(
       value: value, unit: .bytes, availability: .available,
       quality: .derived, source: .machHostStatistics,
       timestamp: Date(), isEstimated: false,
-      message: "Used = active + wired + compressed; differs from Activity Monitor")
+      message: "Used = active + wired + compressed; pressure is unavailable until a reliable source is active")
+  }
+
+  private func readSwapUsedBytes() -> UInt64? {
+    var usage = xsw_usage()
+    var size = MemoryLayout<xsw_usage>.size
+    let result = withUnsafeMutablePointer(to: &usage) { pointer in
+      sysctlbyname("vm.swapusage", pointer, &size, nil, 0)
+    }
+    guard result == 0 else { return nil }
+    return usage.xsu_used
   }
 }
