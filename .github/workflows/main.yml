@@ -19,9 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate localization and runtime tooling
+      - name: Validate localization, app icon and runtime tooling
         run: |
-          python3 -m py_compile scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+          python3 scripts/materialize_app_icon.py --self-test
+          python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
           python3 scripts/validate_runtime_metrics.py --self-test
           bash -n \
