@@ -33,4 +33,47 @@ final class DiagnosticBundleFactoryTests: XCTestCase {
     XCTAssertEqual(bundle.samplingHealth, health)
     XCTAssertTrue(bundle.privacyNotice.contains("no username"))
   }
+
+  func testFactoryRedactsStableGPURegistryIdentifierWithoutMutatingRuntimeSnapshot() {
+    let now = Date(timeIntervalSince1970: 456)
+    let runtimeGPU = GPUStats(
+      name: "Test GPU",
+      metalAvailable: true,
+      registryID: 123_456,
+      hasUnifiedMemory: true,
+      isLowPower: true,
+      isRemovable: false,
+      recommendedWorkingSetBytes: 1_024,
+      systemUtilizationPercent: nil,
+      utilizationAvailability: .unsupported)
+    let runtimeSnapshot = SystemSnapshot(
+      timestamp: now,
+      cpu: .unavailable(unit: .percent),
+      memory: .unavailable(unit: .bytes),
+      battery: .unavailable(unit: .percent),
+      adapter: .unavailable(unit: .watts),
+      gpu: MetricValue(
+        value: runtimeGPU,
+        unit: .percent,
+        availability: .available,
+        quality: .direct,
+        source: .metal,
+        timestamp: now,
+        isEstimated: false,
+        message: nil),
+      power: .unavailable(unit: .watts))
+
+    let bundle = DiagnosticBundleFactory.make(
+      snapshot: runtimeSnapshot,
+      appVersion: "1.0.0",
+      appBuild: "7",
+      osVersion: "macOS Test",
+      architecture: "arm64",
+      systemUptimeSeconds: 10)
+
+    XCTAssertEqual(runtimeSnapshot.gpu.value?.registryID, 123_456)
+    XCTAssertNil(bundle.snapshot.gpu.value?.registryID)
+    XCTAssertEqual(bundle.snapshot.gpu.value?.name, "Test GPU")
+    XCTAssertTrue(bundle.privacyNotice.contains("GPU registry"))
+  }
 }
