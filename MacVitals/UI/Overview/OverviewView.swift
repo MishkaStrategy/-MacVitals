@@ -134,7 +134,9 @@ struct OverviewView: View {
   }
 
   private func exportDiagnostics() {
-    DiagnosticReportBuilder.export(snapshot: coordinator.snapshot)
+    DiagnosticReportBuilder.export(
+      snapshot: coordinator.snapshot,
+      samplingHealth: coordinator.samplingHealth)
   }
 }
 
