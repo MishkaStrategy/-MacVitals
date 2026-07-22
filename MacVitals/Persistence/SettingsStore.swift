@@ -127,22 +127,22 @@ final class SettingsStore: ObservableObject {
   }
   @Published var memoryAlertThreshold: Double {
     didSet {
-      let clamped = min(100, max(50, memoryAlertThreshold))
-      if clamped != memoryAlertThreshold {
-        memoryAlertThreshold = clamped
+      let normalized = SettingsNumericPolicy.memoryAlertThreshold(memoryAlertThreshold)
+      if normalized != memoryAlertThreshold {
+        memoryAlertThreshold = normalized
         return
       }
-      UserDefaults.standard.set(memoryAlertThreshold, forKey: Keys.memoryAlertThreshold)
+      UserDefaults.standard.set(normalized, forKey: Keys.memoryAlertThreshold)
     }
   }
   @Published var lowBatteryAlertThreshold: Double {
     didSet {
-      let clamped = min(50, max(5, lowBatteryAlertThreshold))
-      if clamped != lowBatteryAlertThreshold {
-        lowBatteryAlertThreshold = clamped
+      let normalized = SettingsNumericPolicy.lowBatteryAlertThreshold(lowBatteryAlertThreshold)
+      if normalized != lowBatteryAlertThreshold {
+        lowBatteryAlertThreshold = normalized
         return
       }
-      UserDefaults.standard.set(lowBatteryAlertThreshold, forKey: Keys.lowBatteryAlertThreshold)
+      UserDefaults.standard.set(normalized, forKey: Keys.lowBatteryAlertThreshold)
     }
   }
   @Published private(set) var launchAtLoginState: LaunchAtLoginState = .disabled
@@ -165,8 +165,10 @@ final class SettingsStore: ObservableObject {
     showInDock = defaults.bool(forKey: Keys.showInDock)
     reducedMotion = defaults.bool(forKey: Keys.reducedMotion)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
-    memoryAlertThreshold = defaults.double(forKey: Keys.memoryAlertThreshold).nonZero ?? 90
-    lowBatteryAlertThreshold = defaults.double(forKey: Keys.lowBatteryAlertThreshold).nonZero ?? 15
+    memoryAlertThreshold = SettingsNumericPolicy.memoryAlertThreshold(
+      defaults.double(forKey: Keys.memoryAlertThreshold))
+    lowBatteryAlertThreshold = SettingsNumericPolicy.lowBatteryAlertThreshold(
+      defaults.double(forKey: Keys.lowBatteryAlertThreshold))
 
     let initialPreset: MenuPreset
     if let rawPreset = defaults.string(forKey: Keys.selectedPreset),
@@ -234,8 +236,8 @@ final class SettingsStore: ObservableObject {
     samplingInterval = SamplingIntervalPolicy.defaultValue
     reducedMotion = false
     notificationsEnabled = false
-    memoryAlertThreshold = 90
-    lowBatteryAlertThreshold = 15
+    memoryAlertThreshold = SettingsNumericPolicy.defaultMemoryAlertThreshold
+    lowBatteryAlertThreshold = SettingsNumericPolicy.defaultLowBatteryAlertThreshold
   }
 
   private func persistMenuConfiguration() {
@@ -255,8 +257,4 @@ final class SettingsStore: ObservableObject {
     static let memoryAlertThreshold = "memoryAlertThreshold"
     static let lowBatteryAlertThreshold = "lowBatteryAlertThreshold"
   }
-}
-
-extension Double {
-  fileprivate var nonZero: Double? { self > 0 ? self : nil }
 }
