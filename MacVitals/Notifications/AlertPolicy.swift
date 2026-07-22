@@ -13,21 +13,47 @@ nonisolated struct AlertEvent: Equatable, Sendable {
 }
 
 nonisolated struct AlertPolicyConfiguration: Equatable, Sendable {
+  static let defaultMemoryThresholdPercent = 90.0
+  static let defaultLowBatteryThresholdPercent = 15.0
+  static let defaultPowerConfidenceThreshold = 0.8
+  static let defaultCooldown: TimeInterval = 15 * 60
+
   var memoryThresholdPercent: Double
   var lowBatteryThresholdPercent: Double
   var powerConfidenceThreshold: Double
   var cooldown: TimeInterval
 
   init(
-    memoryThresholdPercent: Double = 90,
-    lowBatteryThresholdPercent: Double = 15,
-    powerConfidenceThreshold: Double = 0.8,
-    cooldown: TimeInterval = 15 * 60
+    memoryThresholdPercent: Double = defaultMemoryThresholdPercent,
+    lowBatteryThresholdPercent: Double = defaultLowBatteryThresholdPercent,
+    powerConfidenceThreshold: Double = defaultPowerConfidenceThreshold,
+    cooldown: TimeInterval = defaultCooldown
   ) {
-    self.memoryThresholdPercent = min(100, max(1, memoryThresholdPercent))
-    self.lowBatteryThresholdPercent = min(100, max(1, lowBatteryThresholdPercent))
-    self.powerConfidenceThreshold = min(1, max(0, powerConfidenceThreshold))
-    self.cooldown = max(0, cooldown)
+    self.memoryThresholdPercent = Self.bounded(
+      memoryThresholdPercent,
+      defaultValue: Self.defaultMemoryThresholdPercent,
+      range: 1...100)
+    self.lowBatteryThresholdPercent = Self.bounded(
+      lowBatteryThresholdPercent,
+      defaultValue: Self.defaultLowBatteryThresholdPercent,
+      range: 1...100)
+    self.powerConfidenceThreshold = Self.bounded(
+      powerConfidenceThreshold,
+      defaultValue: Self.defaultPowerConfidenceThreshold,
+      range: 0...1)
+    self.cooldown = Self.bounded(
+      cooldown,
+      defaultValue: Self.defaultCooldown,
+      range: 0...TimeInterval.greatestFiniteMagnitude)
+  }
+
+  private static func bounded(
+    _ value: Double,
+    defaultValue: Double,
+    range: ClosedRange<Double>
+  ) -> Double {
+    guard value.isFinite else { return defaultValue }
+    return min(range.upperBound, max(range.lowerBound, value))
   }
 }
 
@@ -63,8 +89,10 @@ nonisolated struct AlertPolicy: Sendable {
     events: inout [AlertEvent]
   ) {
     let assessment = snapshot.power.value
+    let confidence = assessment?.confidence
+    let validConfidence = confidence?.isFinite == true ? confidence : nil
     let active = assessment?.status == .insufficient
-      && (assessment?.confidence ?? 0) >= configuration.powerConfidenceThreshold
+      && (validConfidence ?? 0) >= configuration.powerConfidenceThreshold
 
     transition(
       kind: .insufficientPower,
@@ -84,9 +112,8 @@ nonisolated struct AlertPolicy: Sendable {
     events: inout [AlertEvent]
   ) {
     let memory = snapshot.memory.value
-    let thresholdExceeded = memory.map {
-      $0.usedPercent >= configuration.memoryThresholdPercent
-    } ?? false
+    let usedPercent = validPercentage(memory?.usedPercent)
+    let thresholdExceeded = (usedPercent ?? -1) >= configuration.memoryThresholdPercent
     let pressureActive = memory.map {
       $0.pressureLevel == .warning || $0.pressureLevel == .critical
     } ?? false
@@ -98,7 +125,7 @@ nonisolated struct AlertPolicy: Sendable {
       event: AlertEvent(
         kind: .highMemory,
         title: memoryAlertTitle(memory?.pressureLevel),
-        message: memoryAlertMessage(memory)),
+        message: memoryAlertMessage(memory, validUsedPercent: usedPercent)),
       events: &events)
   }
 
@@ -110,7 +137,10 @@ nonisolated struct AlertPolicy: Sendable {
     }
   }
 
-  private func memoryAlertMessage(_ memory: MemoryStats?) -> String {
+  private func memoryAlertMessage(
+    _ memory: MemoryStats?,
+    validUsedPercent: Double?
+  ) -> String {
     switch memory?.pressureLevel {
     case .critical:
       return L10n.string(
@@ -119,9 +149,10 @@ nonisolated struct AlertPolicy: Sendable {
       return L10n.string(
         "macOS reports elevated memory pressure. Performance may degrade.")
     default:
-      return memory.map {
-        L10n.format("Memory usage reached %d%%", Int($0.usedPercent.rounded()))
-      } ?? L10n.string("Memory usage is above the configured threshold")
+      if let percent = roundedPercentage(validUsedPercent) {
+        return L10n.format("Memory usage reached %d%%", percent)
+      }
+      return L10n.string("Memory usage is above the configured threshold")
     }
   }
 
@@ -131,8 +162,9 @@ nonisolated struct AlertPolicy: Sendable {
     events: inout [AlertEvent]
   ) {
     let battery = snapshot.battery.value
+    let percentage = validPercentage(battery?.percentage)
     let active = battery?.state == .discharging
-      && (battery?.percentage ?? 101) <= configuration.lowBatteryThresholdPercent
+      && (percentage ?? 101) <= configuration.lowBatteryThresholdPercent
 
     transition(
       kind: .lowBattery,
@@ -141,10 +173,20 @@ nonisolated struct AlertPolicy: Sendable {
       event: AlertEvent(
         kind: .lowBattery,
         title: L10n.string("Low battery"),
-        message: battery?.percentage.map {
-          L10n.format("Battery level is %d%%", Int($0.rounded()))
+        message: roundedPercentage(percentage).map {
+          L10n.format("Battery level is %d%%", $0)
         } ?? L10n.string("Battery level is low")),
       events: &events)
+  }
+
+  private func validPercentage(_ value: Double?) -> Double? {
+    guard let value, value.isFinite, (0...100).contains(value) else { return nil }
+    return value
+  }
+
+  private func roundedPercentage(_ value: Double?) -> Int? {
+    guard let value = validPercentage(value) else { return nil }
+    return Int(value.rounded())
   }
 
   private mutating func transition(
