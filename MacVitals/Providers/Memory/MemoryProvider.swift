@@ -79,8 +79,8 @@ struct MemoryProvider: Sendable {
     let value = MemoryStats(
       physicalBytes: physical,
       usedBytes: used,
-      availableBytes: available,
       freeBytes: free,
+      availableBytes: available,
       activeBytes: active,
       inactiveBytes: inactive,
       wiredBytes: wired,
