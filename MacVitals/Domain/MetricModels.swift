@@ -74,12 +74,17 @@ nonisolated struct CPUStats: Codable, Sendable, Equatable {
 nonisolated struct MemoryStats: Codable, Sendable, Equatable {
   let physicalBytes: UInt64
   let usedBytes: UInt64
+  let availableBytes: UInt64
   let freeBytes: UInt64
   let activeBytes: UInt64
   let inactiveBytes: UInt64
   let wiredBytes: UInt64
   let compressedBytes: UInt64
+  let purgeableBytes: UInt64
+  let speculativeBytes: UInt64
+  let swapTotalBytes: UInt64?
   let swapUsedBytes: UInt64?
+  let swapFreeBytes: UInt64?
   let pressure: Double?
   let usedPercent: Double
 }
