@@ -91,7 +91,8 @@ nonisolated struct AlertPolicy: Sendable {
     let assessment = snapshot.power.value
     let confidence = assessment?.confidence
     let validConfidence = confidence?.isFinite == true ? confidence : nil
-    let active = assessment?.status == .insufficient
+    let active =
+      assessment?.status == .insufficient
       && (validConfidence ?? 0) >= configuration.powerConfidenceThreshold
 
     transition(
@@ -114,9 +115,10 @@ nonisolated struct AlertPolicy: Sendable {
     let memory = snapshot.memory.value
     let usedPercent = validPercentage(memory?.usedPercent)
     let thresholdExceeded = (usedPercent ?? -1) >= configuration.memoryThresholdPercent
-    let pressureActive = memory.map {
-      $0.pressureLevel == .warning || $0.pressureLevel == .critical
-    } ?? false
+    let pressureActive =
+      memory.map {
+        $0.pressureLevel == .warning || $0.pressureLevel == .critical
+      } ?? false
 
     transition(
       kind: .highMemory,
@@ -163,7 +165,8 @@ nonisolated struct AlertPolicy: Sendable {
   ) {
     let battery = snapshot.battery.value
     let percentage = validPercentage(battery?.percentage)
-    let active = battery?.state == .discharging
+    let active =
+      battery?.state == .discharging
       && (percentage ?? 101) <= configuration.lowBatteryThresholdPercent
 
     transition(
@@ -204,8 +207,11 @@ nonisolated struct AlertPolicy: Sendable {
     guard !activeKinds.contains(kind) else { return }
     activeKinds.insert(kind)
 
-    if let last = lastEmission[kind], now.timeIntervalSince(last) < configuration.cooldown {
-      return
+    if let last = lastEmission[kind] {
+      let elapsed = now.timeIntervalSince(last)
+      if elapsed.isFinite, elapsed >= 0, elapsed < configuration.cooldown {
+        return
+      }
     }
 
     lastEmission[kind] = now
