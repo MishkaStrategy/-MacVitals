@@ -59,6 +59,8 @@ final class NotificationCoordinator {
 
   private var enabled = false
   private var policy = AlertPolicy()
+  private var authorizationFlowTask: Task<Void, Never>?
+  private var authorizationRequestInFlight = false
   private let center: UNUserNotificationCenter
 
   init(center: UNUserNotificationCenter = .current()) {
@@ -70,30 +72,24 @@ final class NotificationCoordinator {
     memoryThreshold: Double,
     lowBatteryThreshold: Double
   ) {
+    let wasEnabled = self.enabled
     self.enabled = enabled
-    policy = AlertPolicy(
-      configuration: .init(
+    policy.updateConfiguration(
+      .init(
         memoryThresholdPercent: memoryThreshold,
         lowBatteryThresholdPercent: lowBatteryThreshold))
 
     guard enabled else {
+      authorizationFlowTask?.cancel()
+      authorizationFlowTask = nil
+      authorizationRequestInFlight = false
+      policy.reset()
       authorizationState = .unknown
       return
     }
 
-    Task { [weak self] in
-      guard let self else { return }
-      await refreshAuthorizationState()
-      guard authorizationState == .notDetermined else { return }
-
-      do {
-        try await requestAuthorization()
-        await refreshAuthorizationState()
-      } catch {
-        authorizationState = .failed(
-          "Could not request notification permission: \(error.localizedDescription)")
-      }
-    }
+    guard !wasEnabled else { return }
+    startAuthorizationFlow()
   }
 
   func refreshAuthorizationState() async {
@@ -109,14 +105,11 @@ final class NotificationCoordinator {
           returning: NotificationAuthorizationMapper.state(for: settings.authorizationStatus))
       }
     }
+    guard enabled, !Task.isCancelled else { return }
     authorizationState = state
   }
 
-  func process(
-    snapshot: SystemSnapshot,
-    memoryThreshold: Double,
-    lowBatteryThreshold: Double
-  ) {
+  func process(snapshot: SystemSnapshot) {
     guard enabled, authorizationState.canDeliver else { return }
 
     let events = policy.evaluate(snapshot: snapshot)
@@ -134,9 +127,35 @@ final class NotificationCoordinator {
         guard let error else { return }
         let message = error.localizedDescription
         Task { @MainActor [weak self] in
+          guard self?.enabled == true else { return }
           self?.authorizationState = .failed(
             "Could not deliver a notification: \(message)")
         }
+      }
+    }
+  }
+
+  private func startAuthorizationFlow() {
+    authorizationFlowTask?.cancel()
+    authorizationFlowTask = Task { [weak self] in
+      guard let self else { return }
+      await refreshAuthorizationState()
+      guard enabled, !Task.isCancelled,
+        authorizationState == .notDetermined,
+        !authorizationRequestInFlight
+      else { return }
+
+      authorizationRequestInFlight = true
+      defer { authorizationRequestInFlight = false }
+
+      do {
+        try await requestAuthorization()
+        guard enabled, !Task.isCancelled else { return }
+        await refreshAuthorizationState()
+      } catch {
+        guard enabled, !Task.isCancelled else { return }
+        authorizationState = .failed(
+          "Could not request notification permission: \(error.localizedDescription)")
       }
     }
   }
