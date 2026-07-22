@@ -108,6 +108,39 @@ final class AlertPolicyTests: XCTestCase {
       [.lowBattery])
   }
 
+  func testConfigurationUsesDefaultsForNonFiniteValues() {
+    let configuration = AlertPolicyConfiguration(
+      memoryThresholdPercent: .nan,
+      lowBatteryThresholdPercent: .infinity,
+      powerConfidenceThreshold: -.infinity,
+      cooldown: .nan)
+
+    XCTAssertEqual(
+      configuration.memoryThresholdPercent,
+      AlertPolicyConfiguration.defaultMemoryThresholdPercent)
+    XCTAssertEqual(
+      configuration.lowBatteryThresholdPercent,
+      AlertPolicyConfiguration.defaultLowBatteryThresholdPercent)
+    XCTAssertEqual(
+      configuration.powerConfidenceThreshold,
+      AlertPolicyConfiguration.defaultPowerConfidenceThreshold)
+    XCTAssertEqual(configuration.cooldown, AlertPolicyConfiguration.defaultCooldown)
+  }
+
+  func testInvalidSnapshotNumbersDoNotEmitOrTrap() {
+    var policy = AlertPolicy(configuration: .init(cooldown: 0))
+
+    let events = policy.evaluate(
+      snapshot: snapshot(
+        memoryPercent: .infinity,
+        batteryPercent: .nan,
+        batteryState: .discharging,
+        powerStatus: .insufficient,
+        powerConfidence: .nan))
+
+    XCTAssertTrue(events.isEmpty)
+  }
+
   private func snapshot(
     memoryPercent: Double = 50,
     memoryPressure: MemoryPressureLevel = .normal,
@@ -122,7 +155,7 @@ final class AlertPolicyTests: XCTestCase {
       cpu: .unavailable(unit: .percent),
       memory: MetricValue(
         value: MemoryStats(
-          physicalBytes: 100, usedBytes: UInt64(memoryPercent), freeBytes: 0,
+          physicalBytes: 100, usedBytes: 50, freeBytes: 0,
           availableBytes: 0, activeBytes: 0, inactiveBytes: 0, wiredBytes: 0,
           compressedBytes: 0, purgeableBytes: 0, speculativeBytes: 0,
           swapTotalBytes: nil, swapUsedBytes: nil, swapFreeBytes: nil,
