@@ -15,7 +15,9 @@ struct PreferencesView: View {
       menuBarTab
         .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
 
-      DiagnosticsView(snapshot: coordinator.snapshot)
+      DiagnosticsView(
+        snapshot: coordinator.snapshot,
+        samplingHealth: coordinator.samplingHealth)
         .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
 
       privacyTab
