@@ -140,7 +140,7 @@ jobs:
 
       - name: Validate YAML, plist XML, localizations and scripts
         run: |
-          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/main.yml'); YAML.load_file('.github/workflows/release.yml')"
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/main.yml'); YAML.load_file('.github/workflows/release.yml'); YAML.load_file('.github/workflows/intel.yml')"
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
