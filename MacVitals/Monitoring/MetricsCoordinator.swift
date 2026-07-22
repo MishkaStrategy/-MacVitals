@@ -7,6 +7,7 @@ final class MetricsCoordinator: ObservableObject {
   @Published private(set) var snapshot: SystemSnapshot = .empty
   @Published private(set) var cpuHistory: [TimedPoint] = []
   @Published private(set) var memoryHistory: [TimedPoint] = []
+  @Published private(set) var samplingHealth: SamplingHealth?
   @Published private(set) var isRunning = false
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
@@ -51,18 +52,27 @@ final class MetricsCoordinator: ObservableObject {
       }
 
       while !Task.isCancelled {
-        let newSnapshot = await sampler.sample()
+        let result = await sampler.sample()
         guard !Task.isCancelled else { break }
-        self?.consume(newSnapshot)
 
-        let nanos = UInt64(max(0.5, self?.currentInterval ?? 2) * 1_000_000_000)
+        let interval = self?.currentInterval ?? 2
+        self?.consume(result, configuredInterval: interval)
+
+        let delay = SamplingTimingMath.remainingDelaySeconds(
+          intervalSeconds: interval,
+          elapsedMilliseconds: result.timings.totalMilliseconds)
+        let nanos = UInt64(delay * 1_000_000_000)
         try? await Task.sleep(nanoseconds: nanos)
       }
     }
   }
 
-  private func consume(_ newSnapshot: SystemSnapshot) {
+  private func consume(_ result: SampleResult, configuredInterval: TimeInterval) {
+    let newSnapshot = result.snapshot
     snapshot = newSnapshot
+    samplingHealth = SamplingHealth(
+      timings: result.timings,
+      configuredIntervalSeconds: configuredInterval)
     onSnapshot?(newSnapshot)
     cpuBuffer.append(TimedPoint(value: newSnapshot.cpu.value?.total))
     memoryBuffer.append(TimedPoint(value: newSnapshot.memory.value?.usedPercent))
