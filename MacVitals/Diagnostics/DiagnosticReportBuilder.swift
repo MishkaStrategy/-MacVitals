@@ -37,10 +37,10 @@ nonisolated enum DiagnosticBundleFactory {
       osVersion: osVersion,
       architecture: architecture,
       systemUptimeSeconds: max(0, systemUptimeSeconds),
-      snapshot: snapshot,
+      snapshot: DiagnosticSnapshotRedactor.redact(snapshot),
       samplingHealth: samplingHealth,
       privacyNotice:
-        "Redacted: no username, home path, serial numbers, Apple ID, documents, or network data")
+        "Redacted: no username, home path, serial numbers, stable GPU registry identifiers, Apple ID, documents, or network data")
   }
 }
 
