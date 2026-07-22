@@ -19,13 +19,11 @@ struct PreferencesView: View {
         snapshot: coordinator.snapshot,
         samplingHealth: coordinator.samplingHealth
       )
-      .accessibilityIdentifier("preferencesDiagnosticsTab")
       .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
 
       privacyTab
         .tabItem { Label("Privacy", systemImage: "hand.raised") }
     }
-    .accessibilityIdentifier("preferencesTabView")
     .frame(minWidth: 620, minHeight: 520)
   }
 
@@ -62,7 +60,6 @@ struct PreferencesView: View {
       Toggle("Reduce motion", isOn: $settings.reducedMotion)
         .accessibilityIdentifier("reduceMotionToggle")
     }
-    .accessibilityIdentifier("preferencesGeneralTab")
     .padding()
   }
 
@@ -110,7 +107,6 @@ struct PreferencesView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
     }
-    .accessibilityIdentifier("preferencesAlertsTab")
     .padding()
   }
 
@@ -177,7 +173,6 @@ struct PreferencesView: View {
           .accessibilityIdentifier("restoreDefaultsButton")
       }
     }
-    .accessibilityIdentifier("preferencesMenuBarTab")
     .padding()
   }
 
@@ -194,7 +189,6 @@ struct PreferencesView: View {
       .accessibilityIdentifier("privacySupportBundleSummary")
       Spacer()
     }
-    .accessibilityIdentifier("preferencesPrivacyTab")
     .padding()
   }
 }
