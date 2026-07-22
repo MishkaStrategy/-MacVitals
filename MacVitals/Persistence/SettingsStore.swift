@@ -21,12 +21,12 @@ nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendab
 
   var displayName: String {
     switch self {
-    case .cpu: return "CPU"
-    case .gpu: return "GPU"
-    case .memory: return "Memory"
-    case .battery: return "Battery"
-    case .adapterPower: return "Adapter power"
-    case .powerStatus: return "Power status"
+    case .cpu: return L10n.string("CPU")
+    case .gpu: return L10n.string("GPU")
+    case .memory: return L10n.string("Memory")
+    case .battery: return L10n.string("Battery")
+    case .adapterPower: return L10n.string("Adapter power")
+    case .powerStatus: return L10n.string("Power status")
     }
   }
 }
@@ -35,6 +35,17 @@ nonisolated enum MenuPreset: String, Codable, CaseIterable, Identifiable, Sendab
   case minimal, performance, power, battery, everything, custom
 
   var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .minimal: return L10n.string("Minimal")
+    case .performance: return L10n.string("Performance")
+    case .power: return L10n.string("Power")
+    case .battery: return L10n.string("Battery")
+    case .everything: return L10n.string("Everything")
+    case .custom: return L10n.string("Custom")
+    }
+  }
 
   var metrics: [MenuMetric] {
     switch self {
@@ -196,7 +207,8 @@ final class SettingsStore: ObservableObject {
       try launchAtLoginManager.setEnabled(enabled)
       refreshLaunchAtLoginState()
     } catch {
-      launchAtLoginState = .failed("Could not update launch at login: \(error.localizedDescription)")
+      launchAtLoginState = .failed(
+        L10n.format("Could not update launch at login: %@", error.localizedDescription))
     }
   }
 
