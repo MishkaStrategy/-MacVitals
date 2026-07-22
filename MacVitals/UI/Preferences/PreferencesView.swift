@@ -17,12 +17,15 @@ struct PreferencesView: View {
 
       DiagnosticsView(
         snapshot: coordinator.snapshot,
-        samplingHealth: coordinator.samplingHealth)
-        .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
+        samplingHealth: coordinator.samplingHealth
+      )
+      .accessibilityIdentifier("preferencesDiagnosticsTab")
+      .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
 
       privacyTab
         .tabItem { Label("Privacy", systemImage: "hand.raised") }
     }
+    .accessibilityIdentifier("preferencesTabView")
     .frame(minWidth: 620, minHeight: 520)
   }
 
@@ -59,6 +62,7 @@ struct PreferencesView: View {
       Toggle("Reduce motion", isOn: $settings.reducedMotion)
         .accessibilityIdentifier("reduceMotionToggle")
     }
+    .accessibilityIdentifier("preferencesGeneralTab")
     .padding()
   }
 
@@ -79,6 +83,7 @@ struct PreferencesView: View {
       LabeledContent("Memory threshold") {
         HStack {
           Slider(value: $settings.memoryAlertThreshold, in: 50...100, step: 5)
+            .accessibilityIdentifier("memoryAlertThresholdSlider")
             .frame(width: 220)
           Text("\(Int(settings.memoryAlertThreshold))%")
             .monospacedDigit()
@@ -90,6 +95,7 @@ struct PreferencesView: View {
       LabeledContent("Low battery threshold") {
         HStack {
           Slider(value: $settings.lowBatteryAlertThreshold, in: 5...50, step: 5)
+            .accessibilityIdentifier("lowBatteryAlertThresholdSlider")
             .frame(width: 220)
           Text("\(Int(settings.lowBatteryAlertThreshold))%")
             .monospacedDigit()
@@ -104,6 +110,7 @@ struct PreferencesView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
     }
+    .accessibilityIdentifier("preferencesAlertsTab")
     .padding()
   }
 
@@ -170,6 +177,7 @@ struct PreferencesView: View {
           .accessibilityIdentifier("restoreDefaultsButton")
       }
     }
+    .accessibilityIdentifier("preferencesMenuBarTab")
     .padding()
   }
 
@@ -179,11 +187,14 @@ struct PreferencesView: View {
       Text(
         "MacVitals has no accounts, telemetry, analytics, ads, or network backend. Measurements and preferences remain on this Mac."
       )
+      .accessibilityIdentifier("privacyLocalOnlySummary")
       Text(
         "The support bundle redacts home paths and does not include serial numbers, Apple ID, user documents, network data, or stable GPU registry identifiers."
       )
+      .accessibilityIdentifier("privacySupportBundleSummary")
       Spacer()
     }
+    .accessibilityIdentifier("preferencesPrivacyTab")
     .padding()
   }
 }
