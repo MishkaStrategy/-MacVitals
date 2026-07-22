@@ -35,6 +35,7 @@ targets:
         CFBundleDevelopmentRegion: en
         CFBundleDisplayName: MacVitals
         CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIconFile: AppIcon.icns
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleName: $(PRODUCT_NAME)
@@ -53,7 +54,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals
         PRODUCT_NAME: MacVitals
         INFOPLIST_FILE: MacVitals/Resources/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
         CODE_SIGN_ENTITLEMENTS: MacVitals/Resources/MacVitals.entitlements
         ENABLE_APP_SANDBOX: NO
     dependencies:
