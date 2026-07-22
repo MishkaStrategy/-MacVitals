@@ -15,21 +15,37 @@ nonisolated enum MenuBarRenderer {
   private static func render(metric: MenuMetric, snapshot: SystemSnapshot) -> String {
     switch metric {
     case .cpu:
-      return snapshot.cpu.value.map { "CPU \(Int($0.total.rounded()))%" } ?? "CPU —"
+      return percentage(snapshot.cpu.value?.total).map { "CPU \($0)%" } ?? "CPU —"
     case .gpu:
-      if let utilization = snapshot.gpu.value?.systemUtilizationPercent {
-        return "GPU \(Int(utilization.rounded()))%"
+      if let utilization = percentage(snapshot.gpu.value?.systemUtilizationPercent) {
+        return "GPU \(utilization)%"
       }
       return snapshot.gpu.value?.metalAvailable == true ? "GPU Metal" : "GPU —"
     case .memory:
-      return snapshot.memory.value.map { "RAM \(Int($0.usedPercent.rounded()))%" } ?? "RAM —"
+      return percentage(snapshot.memory.value?.usedPercent).map { "RAM \($0)%" } ?? "RAM —"
     case .battery:
-      return snapshot.battery.value?.percentage.map { "🔋 \(Int($0.rounded()))%" } ?? "🔋 —"
+      return percentage(snapshot.battery.value?.percentage).map { "🔋 \($0)%" } ?? "🔋 —"
     case .adapterPower:
-      return snapshot.adapter.value?.ratedPowerWatts.map { "⚡ \(Int($0.rounded())) W" } ?? "⚡ —"
+      return watts(snapshot.adapter.value?.ratedPowerWatts).map { "⚡ \($0) W" } ?? "⚡ —"
     case .powerStatus:
       return powerIcon(snapshot.power.value?.status)
     }
+  }
+
+  private static func percentage(_ value: Double?) -> Int? {
+    boundedInteger(value, range: 0...100)
+  }
+
+  private static func watts(_ value: Double?) -> Int? {
+    boundedInteger(value, range: 0...10_000)
+  }
+
+  private static func boundedInteger(
+    _ value: Double?,
+    range: ClosedRange<Double>
+  ) -> Int? {
+    guard let value, value.isFinite, range.contains(value) else { return nil }
+    return Int(value.rounded())
   }
 
   private static func powerIcon(_ status: PowerSufficiencyStatus?) -> String {
