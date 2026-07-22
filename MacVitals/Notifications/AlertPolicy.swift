@@ -78,19 +78,43 @@ nonisolated struct AlertPolicy: Sendable {
     now: Date,
     events: inout [AlertEvent]
   ) {
-    let usedPercent = snapshot.memory.value?.usedPercent
-    let active = usedPercent.map { $0 >= configuration.memoryThresholdPercent } ?? false
+    let memory = snapshot.memory.value
+    let thresholdExceeded = memory.map {
+      $0.usedPercent >= configuration.memoryThresholdPercent
+    } ?? false
+    let pressureActive = memory.map {
+      $0.pressureLevel == .warning || $0.pressureLevel == .critical
+    } ?? false
 
     transition(
       kind: .highMemory,
-      isActive: active,
+      isActive: thresholdExceeded || pressureActive,
       now: now,
       event: AlertEvent(
         kind: .highMemory,
-        title: "High memory usage",
-        message: usedPercent.map { "Memory usage reached \(Int($0.rounded()))%" }
-          ?? "Memory usage is above the configured threshold"),
+        title: memoryAlertTitle(memory?.pressureLevel),
+        message: memoryAlertMessage(memory)),
       events: &events)
+  }
+
+  private func memoryAlertTitle(_ level: MemoryPressureLevel?) -> String {
+    switch level {
+    case .critical: return "Critical memory pressure"
+    case .warning: return "Memory pressure warning"
+    default: return "High memory usage"
+    }
+  }
+
+  private func memoryAlertMessage(_ memory: MemoryStats?) -> String {
+    switch memory?.pressureLevel {
+    case .critical:
+      return "macOS reports critical memory pressure. Close memory-intensive applications."
+    case .warning:
+      return "macOS reports elevated memory pressure. Performance may degrade."
+    default:
+      return memory.map { "Memory usage reached \(Int($0.usedPercent.rounded()))%" }
+        ?? "Memory usage is above the configured threshold"
+    }
   }
 
   private mutating func evaluateBattery(
