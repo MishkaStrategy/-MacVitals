@@ -24,7 +24,7 @@ is_positive_number "${INTERVAL_SECONDS}" || {
   exit 2
 }
 
-for command in pgrep ps date sleep awk python3 sw_vers uname sysctl; do
+for command in pgrep ps date sleep awk python3 sw_vers sysctl; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "Required command is unavailable: ${command}" >&2
     exit 127
@@ -49,9 +49,12 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 echo "timestamp_utc,elapsed_seconds,cpu_percent,rss_kib,vsz_kib,threads" > "${CSV_PATH}"
 
-thread_field_available=0
-if ps -p "${pid}" -o thcount= >/dev/null 2>&1; then
-  thread_field_available=1
+thread_mode="unavailable"
+initial_thread_count="$(ps -p "${pid}" -o thcount= 2>/dev/null | awk '{$1=$1; print}' || true)"
+if [[ "${initial_thread_count}" =~ ^[0-9]+$ ]] && (( initial_thread_count > 0 )); then
+  thread_mode="thcount"
+elif ps -M -p "${pid}" >/dev/null 2>&1; then
+  thread_mode="thread-list"
 fi
 
 start_epoch="$(date +%s)"
@@ -67,9 +70,14 @@ while kill -0 "${pid}" >/dev/null 2>&1; do
   rss="$(ps -p "${pid}" -o rss= | awk '{$1=$1; print}')"
   vsz="$(ps -p "${pid}" -o vsz= | awk '{$1=$1; print}')"
   threads=""
-  if [[ "${thread_field_available}" -eq 1 ]]; then
-    threads="$(ps -p "${pid}" -o thcount= | awk '{$1=$1; print}')"
-  fi
+  case "${thread_mode}" in
+    thcount)
+      threads="$(ps -p "${pid}" -o thcount= 2>/dev/null | awk '{$1=$1; print}' || true)"
+      ;;
+    thread-list)
+      threads="$(ps -M -p "${pid}" 2>/dev/null | awk 'NR > 1 { count += 1 } END { if (count > 0) print count }')"
+      ;;
+  esac
 
   if [[ -n "${cpu}" && -n "${rss}" && -n "${vsz}" ]]; then
     elapsed="$((now_epoch - start_epoch))"
@@ -93,6 +101,7 @@ INTERVAL_SECONDS="${INTERVAL_SECONDS}" \
 START_EPOCH="${start_epoch}" \
 FINISHED_EPOCH="${finished_epoch}" \
 PROCESS_ALIVE_AT_END="${process_alive_at_end}" \
+THREAD_COUNT_SOURCE="${thread_mode}" \
 CSV_PATH="${CSV_PATH}" \
 SUMMARY_PATH="${SUMMARY_PATH}" \
 python3 - <<'PY'
@@ -179,6 +188,7 @@ summary = {
         "hardwareModel": command("sysctl", "-n", "hw.model"),
         "logicalCPUCount": command("sysctl", "-n", "hw.logicalcpu"),
         "physicalMemoryBytes": command("sysctl", "-n", "hw.memsize"),
+        "threadCountSource": os.environ["THREAD_COUNT_SOURCE"],
     },
     "metrics": {
         "cpuPercent": {
@@ -213,7 +223,7 @@ summary = {
         "This is process sampling from ps, not an Instruments energy or wakeup trace.",
         "Values are evidence for the recorded machine and workload only.",
         "CI thresholds are broad regression guardrails, not product performance claims.",
-        "No administrator privileges, network access, serial numbers, or user documents are used.",
+        "No administrator privileges, network access, serial numbers, usernames, home paths, or user documents are used.",
     ],
 }
 Path(os.environ["SUMMARY_PATH"]).write_text(
@@ -222,5 +232,5 @@ Path(os.environ["SUMMARY_PATH"]).write_text(
 )
 PY
 
-echo "Runtime samples: ${CSV_PATH}"
-echo "Runtime summary: ${SUMMARY_PATH}"
+echo "Runtime metrics collection completed."
+echo "Runtime summary generation completed."
