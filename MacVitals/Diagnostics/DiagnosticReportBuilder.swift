@@ -12,14 +12,16 @@ nonisolated struct DiagnosticBundle: Codable, Sendable, Equatable {
   let architecture: String
   let systemUptimeSeconds: TimeInterval
   let snapshot: SystemSnapshot
+  let samplingHealth: SamplingHealth?
   let privacyNotice: String
 }
 
 nonisolated enum DiagnosticBundleFactory {
-  static let schemaVersion = 1
+  static let schemaVersion = 2
 
   static func make(
     snapshot: SystemSnapshot,
+    samplingHealth: SamplingHealth? = nil,
     generatedAt: Date = Date(),
     appVersion: String,
     appBuild: String,
@@ -36,13 +38,17 @@ nonisolated enum DiagnosticBundleFactory {
       architecture: architecture,
       systemUptimeSeconds: max(0, systemUptimeSeconds),
       snapshot: snapshot,
+      samplingHealth: samplingHealth,
       privacyNotice:
         "Redacted: no username, home path, serial numbers, Apple ID, documents, or network data")
   }
 }
 
 enum DiagnosticReportBuilder {
-  @MainActor static func export(snapshot: SystemSnapshot) {
+  @MainActor static func export(
+    snapshot: SystemSnapshot,
+    samplingHealth: SamplingHealth? = nil
+  ) {
     let panel = NSSavePanel()
     panel.nameFieldStringValue =
       "MacVitals-Support-\(ISO8601DateFormatter().string(from: Date())).json"
@@ -52,6 +58,7 @@ enum DiagnosticReportBuilder {
     let info = Bundle.main.infoDictionary
     let bundle = DiagnosticBundleFactory.make(
       snapshot: snapshot,
+      samplingHealth: samplingHealth,
       appVersion: info?["CFBundleShortVersionString"] as? String ?? "unknown",
       appBuild: info?["CFBundleVersion"] as? String ?? "unknown",
       osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
