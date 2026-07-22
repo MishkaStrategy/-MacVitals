@@ -24,6 +24,10 @@
 "Memory, swap and pressure details" = "Сведения о памяти, свопе и давлении";
 "GPU details" = "Сведения о GPU";
 "CPU history" = "История CPU";
+"Time" = "Время";
+"Normal" = "Нормальное";
+"Warning" = "Предупреждение";
+"Critical" = "Критическое";
 
 "Power flow" = "Поток энергии";
 "Adapter" = "Адаптер";
@@ -111,7 +115,14 @@
 "Battery level is low" = "Низкий уровень заряда батареи";
 
 "External power is not connected" = "Внешнее питание не подключено";
+"Collecting enough battery-power samples" = "Сбор достаточного количества показаний мощности батареи";
+"Waiting for the confirmation window to complete" = "Ожидание завершения окна подтверждения";
 "Battery power direction is unavailable" = "Направление потока энергии батареи недоступно";
+"Battery percentage is outside the valid range" = "Процент заряда батареи находится вне допустимого диапазона";
+"Battery power is outside the plausible range" = "Мощность батареи находится вне правдоподобного диапазона";
+"Measured adapter power is invalid" = "Измеренная мощность адаптера недопустима";
+"Rated adapter power is invalid" = "Номинальная мощность адаптера недопустима";
+"Adapter and battery samples were not aligned, so system power was not estimated." = "Показания адаптера и батареи не были синхронизированы, поэтому мощность системы не оценивалась.";
 "Battery is continuously discharging while external power is connected (median %.1f W)" = "Батарея непрерывно разряжается при подключённом внешнем питании (медиана %.1f Вт)";
 "Power is near the configured boundary" = "Мощность находится около заданной границы";
 "External power supports the system and charges the battery" = "Внешнее питание обеспечивает систему и заряжает батарею";
