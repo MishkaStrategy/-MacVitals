@@ -31,6 +31,8 @@
 "Supporting system" = "Питает систему";
 "Charging" = "Зарядка";
 "Rated %d W" = "Номинал %d Вт";
+"~%.1f W" = "~%.1f Вт";
+"%.1f W" = "%.1f Вт";
 "Not measured" = "Не измеряется";
 "Sufficient" = "Достаточно";
 "Insufficient" = "Недостаточно";
