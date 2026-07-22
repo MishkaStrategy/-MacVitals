@@ -43,11 +43,11 @@ final class MacVitalsUITests: XCTestCase {
       "Preferences window did not open for \(language)",
       file: file,
       line: line)
+    selectTab(labels.general, language: language, in: app, file: file, line: line)
     assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
     assertElementExists("launchAtLoginToggle", in: app, file: file, line: line)
     assertElementExists("reduceMotionToggle", in: app, file: file, line: line)
-    assertLocalizedTabLabel(labels.general, language: language, in: app, file: file, line: line)
 
     selectTab(labels.alerts, language: language, in: app, file: file, line: line)
     assertElementExists("notificationsEnabledToggle", in: app, file: file, line: line)
@@ -83,21 +83,6 @@ final class MacVitalsUITests: XCTestCase {
       file: file,
       line: line)
     element.click()
-  }
-
-  private func assertLocalizedTabLabel(
-    _ localizedLabel: String,
-    language: String,
-    in app: XCUIApplication,
-    file: StaticString,
-    line: UInt
-  ) {
-    let element = app.descendants(matching: .any)[localizedLabel]
-    XCTAssertTrue(
-      element.waitForExistence(timeout: 3),
-      "Missing localized tab label for \(language): \(localizedLabel)",
-      file: file,
-      line: line)
   }
 
   private func assertElementExists(
