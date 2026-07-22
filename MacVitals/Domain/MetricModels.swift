@@ -71,6 +71,13 @@ nonisolated struct CPUStats: Codable, Sendable, Equatable {
   let activeProcessors: Int
 }
 
+nonisolated enum MemoryPressureLevel: String, Codable, Sendable {
+  case normal
+  case warning
+  case critical
+  case unknown
+}
+
 nonisolated struct MemoryStats: Codable, Sendable, Equatable {
   let physicalBytes: UInt64
   let usedBytes: UInt64
@@ -85,7 +92,7 @@ nonisolated struct MemoryStats: Codable, Sendable, Equatable {
   let swapTotalBytes: UInt64?
   let swapUsedBytes: UInt64?
   let swapFreeBytes: UInt64?
-  let pressure: Double?
+  let pressureLevel: MemoryPressureLevel
   let usedPercent: Double
 }
 
