@@ -40,6 +40,7 @@ rm -rf "${ARCHIVE_PATH}" "${DMG_ROOT}" "${DIST_DIR}"
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}" "${DMG_ROOT}"
 
 cd "${ROOT_DIR}"
+python3 scripts/materialize_app_icon.py
 xcodegen generate
 xcodebuild \
   -project MacVitals.xcodeproj \
