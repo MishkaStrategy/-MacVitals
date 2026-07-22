@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="${1:-${APP_PATH:-${ROOT_DIR}/build/MacVitals.xcarchive/Products/Applications/MacVitals.app}}"
 EXECUTABLE_PATH="${APP_PATH}/Contents/MacOS/MacVitals"
+WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
 DURATION_SECONDS="${CI_RUNTIME_DURATION_SECONDS:-45}"
 INTERVAL_SECONDS="${CI_RUNTIME_INTERVAL_SECONDS:-2}"
 OUTPUT_ROOT="${CI_RUNTIME_OUTPUT_ROOT:-${ROOT_DIR}/runtime-smoke-results}"
@@ -26,6 +27,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+for command in find head tee tr wc python3; do
+  command -v "${command}" >/dev/null 2>&1 || {
+    echo "Required runtime-smoke command is unavailable: ${command}" >&2
+    exit 127
+  }
+done
+
+[[ "${WARMUP_SECONDS}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+  echo "Warmup duration must be a non-negative number: ${WARMUP_SECONDS}" >&2
+  exit 2
+}
 [[ -d "${APP_PATH}" ]] || {
   echo "Packaged application is missing: ${APP_PATH}" >&2
   exit 1
@@ -40,6 +52,7 @@ mkdir -p "${OUTPUT_ROOT}"
 
 "${EXECUTABLE_PATH}" \
   -AppleLanguages '(en)' \
+  -AppleLocale en_US \
   -notificationsEnabled NO \
   -showInDock NO \
   -samplingInterval 2 \
@@ -54,6 +67,13 @@ for _ in {1..40}; do
 done
 kill -0 "${app_pid}" >/dev/null 2>&1 || {
   echo "MacVitals exited during startup" >&2
+  cat "${APP_LOG}" >&2 || true
+  exit 1
+}
+
+sleep "${WARMUP_SECONDS}"
+kill -0 "${app_pid}" >/dev/null 2>&1 || {
+  echo "MacVitals exited during the runtime warmup" >&2
   cat "${APP_LOG}" >&2 || true
   exit 1
 }
@@ -85,7 +105,7 @@ python3 "${ROOT_DIR}/scripts/validate_runtime_metrics.py" \
   | tee "${VALIDATION_LOG}"
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  SUMMARY_PATH="${summary_path}" python3 - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
+  SUMMARY_PATH="${summary_path}" WARMUP_SECONDS="${WARMUP_SECONDS}" python3 - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
 import json
 import os
 from pathlib import Path
@@ -96,6 +116,7 @@ observed = summary["observed"]
 print("## Runtime smoke guardrail")
 print()
 print("Hosted-runner regression evidence only; this is not a physical-device benchmark.")
+print(f"A {float(os.environ['WARMUP_SECONDS']):.1f}-second warmup preceded measurement.")
 print()
 print("| Metric | Observed |")
 print("|---|---:|")
@@ -110,4 +131,4 @@ print(f"| Peak threads | {threads:.0f} |" if threads is not None else "| Peak th
 PY
 fi
 
-echo "Runtime smoke artifacts: ${OUTPUT_ROOT}"
+echo "Runtime smoke artifacts were generated."
