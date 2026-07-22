@@ -6,9 +6,11 @@ nonisolated enum MenuBarRenderer {
     metrics: [MenuMetric],
     maximumCharacters: Int = 80
   ) -> String {
+    guard maximumCharacters > 0 else { return "" }
     let parts = MenuLayoutRules.normalized(metrics).map { render(metric: $0, snapshot: snapshot) }
     let joined = parts.isEmpty ? "◉" : parts.joined(separator: " · ")
-    guard maximumCharacters > 1, joined.count > maximumCharacters else { return joined }
+    guard joined.count > maximumCharacters else { return joined }
+    guard maximumCharacters > 1 else { return "…" }
     return String(joined.prefix(maximumCharacters - 1)) + "…"
   }
 
