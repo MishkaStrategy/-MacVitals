@@ -61,7 +61,9 @@ struct DiagnosticsView: View {
           snapshot: snapshot,
           samplingHealth: samplingHealth)
       }
+      .accessibilityIdentifier("exportDiagnosticsButton")
     }
+    .accessibilityIdentifier("diagnosticsList")
     .padding()
   }
 
@@ -81,9 +83,10 @@ struct DiagnosticsView: View {
         L10n.format(
           "%@ · %@",
           source.displayName,
-          date.formatted()))
-        .font(.caption)
-        .foregroundStyle(.tertiary)
+          date.formatted())
+      )
+      .font(.caption)
+      .foregroundStyle(.tertiary)
     }
   }
 
