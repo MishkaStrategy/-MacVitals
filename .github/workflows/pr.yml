@@ -35,7 +35,22 @@ jobs:
             native-build-diagnostics.txt
           if-no-files-found: error
       - name: Unit tests
-        run: xcodebuild -quiet -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+        run: |
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests > native-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-tests.log | tail -n 400 > native-test-diagnostics.txt || true
+          cat native-test-diagnostics.txt
+          exit $status
+      - name: Upload native test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-diagnostics
+          path: |
+            native-tests.log
+            native-test-diagnostics.txt
+          if-no-files-found: error
   repository-safety:
     runs-on: ubuntu-latest
     steps:
