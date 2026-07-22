@@ -91,6 +91,27 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      - name: Packaged runtime smoke guardrail
+        timeout-minutes: 5
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            > runtime-smoke-run.log 2>&1
+          status=$?
+          cat runtime-smoke-run.log
+          exit $status
+
+      - name: Upload runtime smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-smoke-evidence
+          path: |
+            runtime-smoke-run.log
+            runtime-smoke-results/
+          if-no-files-found: ignore
+
       - name: UI smoke test
         run: |
           set +e
@@ -126,9 +147,14 @@ jobs:
           for path in pathlib.Path('.').rglob('*.plist'):
               ET.parse(path)
           PY
-          python3 -m py_compile scripts/validate_localizations.py
+          python3 -m py_compile scripts/validate_localizations.py scripts/validate_runtime_metrics.py
           python3 scripts/validate_localizations.py
-          bash -n scripts/package_release.sh scripts/verify_release.sh
+          python3 scripts/validate_runtime_metrics.py --self-test
+          bash -n \
+            scripts/package_release.sh \
+            scripts/verify_release.sh \
+            scripts/collect_runtime_metrics.sh \
+            scripts/run_ci_runtime_smoke.sh
 
       - uses: gitleaks/gitleaks-action@v2
         env:
