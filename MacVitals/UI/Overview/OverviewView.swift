@@ -31,7 +31,7 @@ struct OverviewView: View {
       PowerFlowView(snapshot: coordinator.snapshot)
       history
       HStack {
-        Text(coordinator.snapshot.power.value?.explanation ?? "Collecting data")
+        Text(coordinator.snapshot.power.value?.explanation ?? L10n.string("Collecting data"))
           .font(.caption).foregroundStyle(.secondary).lineLimit(2)
         Spacer()
       }
@@ -87,11 +87,18 @@ struct OverviewView: View {
   }
 
   private var memorySummaryText: String {
-    guard let memory = coordinator.snapshot.memory.value else { return "Memory data unavailable" }
+    guard let memory = coordinator.snapshot.memory.value else {
+      return L10n.string("Memory data unavailable")
+    }
     let used = formattedBytes(memory.usedBytes)
     let physical = formattedBytes(memory.physicalBytes)
-    let swap = memory.swapUsedBytes.map(formattedBytes) ?? "unavailable"
-    return "RAM \(used) / \(physical) · Swap \(swap)\nPressure: \(memory.pressureLevel.rawValue)"
+    let swap = memory.swapUsedBytes.map(formattedBytes) ?? L10n.string("Unavailable")
+    return L10n.format(
+      "RAM %@ / %@ · Swap %@\nPressure: %@",
+      used,
+      physical,
+      swap,
+      memoryPressureText(memory.pressureLevel))
   }
 
   private var memoryPressureSymbol: String {
@@ -103,21 +110,34 @@ struct OverviewView: View {
     }
   }
 
+  private func memoryPressureText(_ level: MemoryPressureLevel) -> String {
+    switch level {
+    case .normal: return L10n.string("Normal")
+    case .warning: return L10n.string("Warning")
+    case .critical: return L10n.string("Critical")
+    case .unknown: return L10n.string("Unknown")
+    }
+  }
+
   private var gpuText: String {
-    guard let gpu = coordinator.snapshot.gpu.value else { return "Unavailable" }
+    guard let gpu = coordinator.snapshot.gpu.value else { return L10n.string("Unavailable") }
     if let utilization = gpu.systemUtilizationPercent { return percent(utilization) }
-    return gpu.metalAvailable ? "Metal" : "Unavailable"
+    return L10n.string(gpu.metalAvailable ? "Metal" : "Unavailable")
   }
 
   private var gpuSummaryText: String {
-    guard let gpu = coordinator.snapshot.gpu.value else { return "GPU data unavailable" }
-    let name = gpu.name ?? "Unknown GPU"
-    let memory = gpu.hasUnifiedMemory == true ? "unified memory" : "discrete memory"
-    return "\(name) · \(memory) · utilization unavailable"
+    guard let gpu = coordinator.snapshot.gpu.value else {
+      return L10n.string("GPU data unavailable")
+    }
+    let name = gpu.name ?? L10n.string("Unknown GPU")
+    let memory = L10n.string(
+      gpu.hasUnifiedMemory == true ? "unified memory" : "discrete memory")
+    return L10n.format("%@ · %@ · utilization unavailable", name, memory)
   }
 
   private var batteryText: String {
-    coordinator.snapshot.battery.value?.percentage.map(percent) ?? "No battery"
+    coordinator.snapshot.battery.value?.percentage.map(percent)
+      ?? L10n.string("No battery")
   }
 
   private func percent(_ value: Double?) -> String {
