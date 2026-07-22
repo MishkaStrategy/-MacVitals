@@ -92,7 +92,12 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
 
     guard sample.externalPower else {
       lastStableStatus = .notConnected
-      return assessment(.notConnected, 1, sample, nil, "External power is not connected")
+      return assessment(
+        .notConnected,
+        1,
+        sample,
+        nil,
+        L10n.string("External power is not connected"))
     }
 
     if let conflict = validationConflict(in: sample) {
@@ -113,7 +118,7 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
         confidence,
         sample,
         nil,
-        "Collecting enough battery-power samples"
+        L10n.string("Collecting enough battery-power samples")
       )
     }
 
@@ -128,13 +133,18 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
         min(0.49, durationFactor * 0.49),
         sample,
         nil,
-        "Waiting for the confirmation window to complete"
+        L10n.string("Waiting for the confirmation window to complete")
       )
     }
 
     let powers = window.compactMap(\.batteryPowerWatts).sorted()
     guard let medianPower = median(powers) else {
-      return assessment(.unknown, 0, sample, nil, "Battery power direction is unavailable")
+      return assessment(
+        .unknown,
+        0,
+        sample,
+        nil,
+        L10n.string("Battery power direction is unavailable"))
     }
 
     let status = classify(medianPower: medianPower, batteryPercent: sample.batteryPercent)
@@ -164,18 +174,18 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
 
   private func validationConflict(in sample: PowerSample) -> String? {
     if let percent = sample.batteryPercent, !(0...100).contains(percent) {
-      return "Battery percentage is outside the valid range"
+      return L10n.string("Battery percentage is outside the valid range")
     }
     if let power = sample.batteryPowerWatts,
       !power.isFinite || abs(power) > configuration.maximumPlausibleBatteryPowerWatts
     {
-      return "Battery power is outside the plausible range"
+      return L10n.string("Battery power is outside the plausible range")
     }
     if let measured = sample.adapterMeasuredPowerWatts, !measured.isFinite || measured < 0 {
-      return "Measured adapter power is invalid"
+      return L10n.string("Measured adapter power is invalid")
     }
     if let rated = sample.adapterRatedPowerWatts, !rated.isFinite || rated <= 0 {
-      return "Rated adapter power is invalid"
+      return L10n.string("Rated adapter power is invalid")
     }
     return nil
   }
@@ -230,10 +240,10 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
       systemPower = nil
     }
 
-    let alignmentNote =
-      timestampsAligned
+    let alignmentNote = timestampsAligned
       ? ""
-      : " Adapter and battery samples were not aligned, so system power was not estimated."
+      : " " + L10n.string(
+        "Adapter and battery samples were not aligned, so system power was not estimated.")
 
     return PowerAssessment(
       status: status,
@@ -265,18 +275,19 @@ nonisolated struct ChargerSufficiencyEvaluator: Sendable {
   private func explanation(_ status: PowerSufficiencyStatus, _ power: Double) -> String {
     switch status {
     case .insufficient:
-      return
-        "Battery is continuously discharging while external power is connected (median \(String(format: "%.1f", power)) W)"
+      return L10n.format(
+        "Battery is continuously discharging while external power is connected (median %.1f W)",
+        power)
     case .borderline:
-      return "Power is near the configured boundary"
+      return L10n.string("Power is near the configured boundary")
     case .chargingBattery:
-      return "External power supports the system and charges the battery"
+      return L10n.string("External power supports the system and charges the battery")
     case .powerAdapterOnly:
-      return "The Mac is on adapter power and the battery is effectively full"
+      return L10n.string("The Mac is on adapter power and the battery is effectively full")
     case .sufficient:
-      return "No sustained battery discharge is detected"
+      return L10n.string("No sustained battery discharge is detected")
     default:
-      return "Power state cannot be determined"
+      return L10n.string("Power state cannot be determined")
     }
   }
 }
