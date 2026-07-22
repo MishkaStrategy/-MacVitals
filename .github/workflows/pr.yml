@@ -1,22 +1,29 @@
 name: Pull Request
+
 on:
   pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
   pull-requests: read
+
 jobs:
   native:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+
       - name: Install XcodeGen
         run: brew install xcodegen
+
       - name: Generate project
         run: xcodegen generate
+
       - name: Swift format lint
         run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
       - name: Build
         run: |
           set +e
@@ -25,6 +32,7 @@ jobs:
           grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' native-build.log | tail -n 300 > native-build-diagnostics.txt || true
           cat native-build-diagnostics.txt
           exit $status
+
       - name: Upload native build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -34,6 +42,7 @@ jobs:
             native-build.log
             native-build-diagnostics.txt
           if-no-files-found: error
+
       - name: Unit tests
         run: |
           set +e
@@ -42,6 +51,7 @@ jobs:
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-tests.log | tail -n 400 > native-test-diagnostics.txt || true
           cat native-test-diagnostics.txt
           exit $status
+
       - name: Upload native test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,8 +61,20 @@ jobs:
             native-tests.log
             native-test-diagnostics.txt
           if-no-files-found: error
-      - name: Release build
-        run: xcodebuild -quiet -project MacVitals.xcodeproj -scheme MacVitals -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+
+      - name: Package and verify release candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "pr-${GITHUB_RUN_NUMBER}"
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacVitals-pr-${{ github.run_number }}-unsigned
+          path: dist/
+          if-no-files-found: error
+
       - name: UI smoke test
         run: |
           set +e
@@ -61,6 +83,7 @@ jobs:
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
           cat native-ui-test-diagnostics.txt
           exit $status
+
       - name: Upload native UI test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,19 +93,25 @@ jobs:
             native-ui-tests.log
             native-ui-test-diagnostics.txt
           if-no-files-found: error
+
   repository-safety:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Validate YAML and plist XML
+
+      - name: Validate YAML, plist XML and shell syntax
         run: |
-          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml')"
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/release.yml')"
           python3 - <<'PY'
-          import pathlib, xml.etree.ElementTree as ET
-          for path in pathlib.Path('.').rglob('*.plist'): ET.parse(path)
+          import pathlib
+          import xml.etree.ElementTree as ET
+          for path in pathlib.Path('.').rglob('*.plist'):
+              ET.parse(path)
           PY
+          bash -n scripts/package_release.sh scripts/verify_release.sh
+
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
