@@ -1,6 +1,8 @@
-.PHONY: bootstrap build test format lint package verify-package clean
+.PHONY: bootstrap build test format lint validate-tooling package verify-package runtime-smoke collect-runtime clean
 
 VERSION ?= 0.0.0
+RUNTIME_DURATION ?= 300
+RUNTIME_INTERVAL ?= 2
 
 bootstrap:
 	command -v xcodegen >/dev/null || brew install xcodegen
@@ -18,11 +20,23 @@ format:
 lint:
 	swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
-package:
+validate-tooling:
+	python3 -m py_compile scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+	python3 scripts/validate_localizations.py
+	python3 scripts/validate_runtime_metrics.py --self-test
+	bash -n scripts/package_release.sh scripts/verify_release.sh scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
+
+package: validate-tooling
 	bash scripts/package_release.sh "$(VERSION)"
 
-verify-package:
+verify-package: validate-tooling
 	bash scripts/verify_release.sh "$(VERSION)"
 
+runtime-smoke: package
+	bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+
+collect-runtime:
+	bash scripts/collect_runtime_metrics.sh "$(RUNTIME_DURATION)" "$(RUNTIME_INTERVAL)"
+
 clean:
-	rm -rf MacVitals.xcodeproj build dist
+	rm -rf MacVitals.xcodeproj build build-intel build-intel-tests dist runtime-smoke-results runtime-intel-results performance-results
