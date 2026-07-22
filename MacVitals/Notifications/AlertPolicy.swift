@@ -72,8 +72,9 @@ nonisolated struct AlertPolicy: Sendable {
       now: now,
       event: AlertEvent(
         kind: .insufficientPower,
-        title: "Power adapter may be insufficient",
-        message: assessment?.explanation ?? "Battery discharge continues while connected to power"),
+        title: L10n.string("Power adapter may be insufficient"),
+        message: assessment?.explanation
+          ?? L10n.string("Battery discharge continues while connected to power")),
       events: &events)
   }
 
@@ -103,21 +104,24 @@ nonisolated struct AlertPolicy: Sendable {
 
   private func memoryAlertTitle(_ level: MemoryPressureLevel?) -> String {
     switch level {
-    case .critical: return "Critical memory pressure"
-    case .warning: return "Memory pressure warning"
-    default: return "High memory usage"
+    case .critical: return L10n.string("Critical memory pressure")
+    case .warning: return L10n.string("Memory pressure warning")
+    default: return L10n.string("High memory usage")
     }
   }
 
   private func memoryAlertMessage(_ memory: MemoryStats?) -> String {
     switch memory?.pressureLevel {
     case .critical:
-      return "macOS reports critical memory pressure. Close memory-intensive applications."
+      return L10n.string(
+        "macOS reports critical memory pressure. Close memory-intensive applications.")
     case .warning:
-      return "macOS reports elevated memory pressure. Performance may degrade."
+      return L10n.string(
+        "macOS reports elevated memory pressure. Performance may degrade.")
     default:
-      return memory.map { "Memory usage reached \(Int($0.usedPercent.rounded()))%" }
-        ?? "Memory usage is above the configured threshold"
+      return memory.map {
+        L10n.format("Memory usage reached %d%%", Int($0.usedPercent.rounded()))
+      } ?? L10n.string("Memory usage is above the configured threshold")
     }
   }
 
@@ -136,9 +140,10 @@ nonisolated struct AlertPolicy: Sendable {
       now: now,
       event: AlertEvent(
         kind: .lowBattery,
-        title: "Low battery",
-        message: battery?.percentage.map { "Battery level is \(Int($0.rounded()))%" }
-          ?? "Battery level is low"),
+        title: L10n.string("Low battery"),
+        message: battery?.percentage.map {
+          L10n.format("Battery level is %d%%", Int($0.rounded()))
+        } ?? L10n.string("Battery level is low")),
       events: &events)
   }
 
