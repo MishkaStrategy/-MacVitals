@@ -80,7 +80,7 @@ private struct StoredMenuConfiguration: Codable {
   }
 
   var metrics: [MenuMetric] {
-    MenuLayoutRules.normalized(enabledMetricIDs.compactMap(MenuMetric.init(rawValue:)))
+    MenuLayoutRules.normalized(enabledMetricIDs.compactMap { MenuMetric(rawValue: $0) })
   }
 }
 
@@ -117,25 +117,29 @@ final class SettingsStore: ObservableObject {
     showInDock = defaults.bool(forKey: Keys.showInDock)
     reducedMotion = defaults.bool(forKey: Keys.reducedMotion)
 
+    let initialPreset: MenuPreset
     if let rawPreset = defaults.string(forKey: Keys.selectedPreset),
       let preset = MenuPreset(rawValue: rawPreset)
     {
-      selectedPreset = preset
+      initialPreset = preset
     } else {
-      selectedPreset = .performance
+      initialPreset = .performance
     }
 
+    let initialMetrics: [MenuMetric]
     if let data = defaults.data(forKey: Keys.menuConfiguration),
       let stored = try? JSONDecoder().decode(StoredMenuConfiguration.self, from: data)
     {
-      enabledMetrics = stored.metrics
+      initialMetrics = stored.metrics
     } else {
-      enabledMetrics =
-        selectedPreset == .custom
+      initialMetrics =
+        initialPreset == .custom
         ? MenuPreset.performance.metrics
-        : selectedPreset.metrics
+        : initialPreset.metrics
     }
 
+    selectedPreset = initialPreset
+    enabledMetrics = initialMetrics
     launchAtLogin = SMAppService.mainApp.status == .enabled
   }
 
