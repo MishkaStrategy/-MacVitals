@@ -32,6 +32,34 @@ final class AlertPolicyTests: XCTestCase {
       1)
   }
 
+  func testConfigurationUpdatePreservesActiveStateAndCooldown() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
+    let now = Date(timeIntervalSince1970: 3_000)
+
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now).map(\.kind),
+      [.highMemory])
+
+    policy.updateConfiguration(.init(memoryThresholdPercent: 100, cooldown: 60))
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(10))
+        .isEmpty)
+
+    policy.updateConfiguration(.init(memoryThresholdPercent: 90, cooldown: 60))
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(20))
+        .isEmpty)
+
+    XCTAssertTrue(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 40), now: now.addingTimeInterval(61))
+        .isEmpty)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: snapshot(memoryPercent: 95), now: now.addingTimeInterval(62))
+        .map(\.kind),
+      [.highMemory])
+  }
+
   func testNativeMemoryPressureOverridesPercentageThreshold() {
     var policy = AlertPolicy(
       configuration: .init(memoryThresholdPercent: 95, cooldown: 0))
