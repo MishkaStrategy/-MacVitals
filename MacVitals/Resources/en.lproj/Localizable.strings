@@ -81,6 +81,20 @@
 "Within interval" = "Within interval";
 "Waiting for the first sampling cycle" = "Waiting for the first sampling cycle";
 "Export redacted support bundle" = "Export redacted support bundle";
+"Available" = "Available";
+"Temporarily unavailable" = "Temporarily unavailable";
+"Unsupported" = "Unsupported";
+"Permission required" = "Permission required";
+"Provider error" = "Provider error";
+"Stale" = "Stale";
+"Estimated" = "Estimated";
+"Mach host statistics" = "Mach host statistics";
+"IOKit power sources" = "IOKit power sources";
+"IOKit registry" = "IOKit registry";
+"Derived power model" = "Derived power model";
+"%.2f s" = "%.2f s";
+"%.3f ms" = "%.3f ms";
+"%@ · %@" = "%@ · %@";
 
 "Adapter power" = "Adapter power";
 "Power status" = "Power status";
