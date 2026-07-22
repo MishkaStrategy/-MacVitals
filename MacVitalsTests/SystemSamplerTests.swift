@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import MacVitals
 
 final class SystemSamplerTests: XCTestCase {
@@ -24,5 +25,67 @@ final class SystemSamplerTests: XCTestCase {
     let maximumSkew: TimeInterval = 5
     XCTAssertLessThan(abs(second.timestamp.timeIntervalSince(second.memory.timestamp)), maximumSkew)
     XCTAssertLessThan(abs(second.timestamp.timeIntervalSince(second.power.timestamp)), maximumSkew)
+  }
+
+  func testLaptopBatterySignalRemainsAuthoritative() {
+    XCTAssertFalse(
+      ExternalPowerResolver.isConnected(
+        battery: battery(present: true, externalPower: false),
+        adapter: adapter(connected: true)))
+    XCTAssertTrue(
+      ExternalPowerResolver.isConnected(
+        battery: battery(present: true, externalPower: true),
+        adapter: adapter(connected: false)))
+  }
+
+  func testBatterylessMacFallsBackToAdapterSignal() {
+    XCTAssertTrue(
+      ExternalPowerResolver.isConnected(
+        battery: battery(present: false, externalPower: false),
+        adapter: adapter(connected: true)))
+    XCTAssertFalse(
+      ExternalPowerResolver.isConnected(
+        battery: battery(present: false, externalPower: false),
+        adapter: adapter(connected: false)))
+  }
+
+  func testUnavailableBatteryFallsBackToAdapterAndMissingInputsAreSafe() {
+    XCTAssertTrue(
+      ExternalPowerResolver.isConnected(
+        battery: nil,
+        adapter: adapter(connected: true)))
+    XCTAssertFalse(ExternalPowerResolver.isConnected(battery: nil, adapter: nil))
+  }
+
+  private func battery(present: Bool, externalPower: Bool) -> BatteryStats {
+    BatteryStats(
+      present: present,
+      percentage: present ? 50 : nil,
+      state: present ? (externalPower ? .adapterPower : .discharging) : .absent,
+      externalPowerConnected: externalPower,
+      timeRemainingMinutes: nil,
+      timeToFullMinutes: nil,
+      cycleCount: nil,
+      condition: nil,
+      currentCapacityMah: nil,
+      maxCapacityMah: nil,
+      designCapacityMah: nil,
+      healthPercent: nil,
+      temperatureCelsius: nil,
+      voltageVolts: nil,
+      currentAmperes: nil,
+      batteryPowerWatts: nil)
+  }
+
+  private func adapter(connected: Bool) -> AdapterStats {
+    AdapterStats(
+      connected: connected,
+      manufacturer: nil,
+      model: nil,
+      transport: nil,
+      ratedPowerWatts: connected ? 67 : nil,
+      voltageVolts: nil,
+      currentAmperes: nil,
+      measuredPowerWatts: nil)
   }
 }
