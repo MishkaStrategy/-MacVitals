@@ -104,7 +104,14 @@ final class SettingsStore: ObservableObject {
     }
   }
   @Published var samplingInterval: Double {
-    didSet { UserDefaults.standard.set(samplingInterval, forKey: Keys.samplingInterval) }
+    didSet {
+      let normalized = SamplingIntervalPolicy.normalized(samplingInterval)
+      if normalized != samplingInterval {
+        samplingInterval = normalized
+        return
+      }
+      UserDefaults.standard.set(normalized, forKey: Keys.samplingInterval)
+    }
   }
   @Published var showInDock: Bool {
     didSet {
@@ -153,7 +160,8 @@ final class SettingsStore: ObservableObject {
     self.launchAtLoginManager = launchAtLoginManager
 
     let defaults = UserDefaults.standard
-    samplingInterval = defaults.double(forKey: Keys.samplingInterval).nonZero ?? 2
+    samplingInterval = SamplingIntervalPolicy.normalized(
+      defaults.double(forKey: Keys.samplingInterval))
     showInDock = defaults.bool(forKey: Keys.showInDock)
     reducedMotion = defaults.bool(forKey: Keys.reducedMotion)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
@@ -223,7 +231,7 @@ final class SettingsStore: ObservableObject {
   func reset() {
     selectedPreset = .performance
     enabledMetrics = MenuPreset.performance.metrics
-    samplingInterval = 2
+    samplingInterval = SamplingIntervalPolicy.defaultValue
     reducedMotion = false
     notificationsEnabled = false
     memoryAlertThreshold = 90
