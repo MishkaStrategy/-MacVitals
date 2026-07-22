@@ -32,11 +32,15 @@ nonisolated struct AlertPolicyConfiguration: Equatable, Sendable {
 }
 
 nonisolated struct AlertPolicy: Sendable {
-  private let configuration: AlertPolicyConfiguration
+  private var configuration: AlertPolicyConfiguration
   private var activeKinds = Set<AlertKind>()
   private var lastEmission = [AlertKind: Date]()
 
   init(configuration: AlertPolicyConfiguration = .init()) {
+    self.configuration = configuration
+  }
+
+  mutating func updateConfiguration(_ configuration: AlertPolicyConfiguration) {
     self.configuration = configuration
   }
 
