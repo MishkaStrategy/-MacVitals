@@ -6,17 +6,27 @@ final class MacVitalsUITests: XCTestCase {
     assertPreferencesLaunch(
       language: "en",
       locale: "en_US",
-      localizedGeneralLabel: "General")
+      labels: .init(
+        general: "General",
+        alerts: "Alerts",
+        menuBar: "Menu Bar",
+        diagnostics: "Diagnostics",
+        privacy: "Privacy"))
     assertPreferencesLaunch(
       language: "ru",
       locale: "ru_RU",
-      localizedGeneralLabel: "Основные")
+      labels: .init(
+        general: "Основные",
+        alerts: "Уведомления",
+        menuBar: "Строка меню",
+        diagnostics: "Диагностика",
+        privacy: "Приватность"))
   }
 
   private func assertPreferencesLaunch(
     language: String,
     locale: String,
-    localizedGeneralLabel: String,
+    labels: TabLabels,
     file: StaticString = #filePath,
     line: UInt = #line
   ) {
@@ -33,19 +43,68 @@ final class MacVitalsUITests: XCTestCase {
       "Preferences window did not open for \(language)",
       file: file,
       line: line)
+    assertElementExists("preferencesTabView", in: app, file: file, line: line)
+    assertElementExists("preferencesGeneralTab", in: app, file: file, line: line)
     assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
     assertElementExists("launchAtLoginToggle", in: app, file: file, line: line)
     assertElementExists("reduceMotionToggle", in: app, file: file, line: line)
+    assertLocalizedTabLabel(labels.general, language: language, in: app, file: file, line: line)
 
-    let localizedLabel = app.descendants(matching: .any)[localizedGeneralLabel]
-    XCTAssertTrue(
-      localizedLabel.waitForExistence(timeout: 3),
-      "Missing localized General label for \(language): \(localizedGeneralLabel)",
-      file: file,
-      line: line)
+    selectTab(labels.alerts, language: language, in: app, file: file, line: line)
+    assertElementExists("preferencesAlertsTab", in: app, file: file, line: line)
+    assertElementExists("notificationsEnabledToggle", in: app, file: file, line: line)
+    assertElementExists("memoryAlertThresholdSlider", in: app, file: file, line: line)
+    assertElementExists("lowBatteryAlertThresholdSlider", in: app, file: file, line: line)
+
+    selectTab(labels.menuBar, language: language, in: app, file: file, line: line)
+    assertElementExists("preferencesMenuBarTab", in: app, file: file, line: line)
+    assertElementExists("menuPresetPicker", in: app, file: file, line: line)
+    assertElementExists("menuMetricLayoutList", in: app, file: file, line: line)
+    assertElementExists("restoreDefaultsButton", in: app, file: file, line: line)
+
+    selectTab(labels.diagnostics, language: language, in: app, file: file, line: line)
+    assertElementExists("preferencesDiagnosticsTab", in: app, file: file, line: line)
+    assertElementExists("diagnosticsList", in: app, file: file, line: line)
+    assertElementExists("exportDiagnosticsButton", in: app, file: file, line: line)
+
+    selectTab(labels.privacy, language: language, in: app, file: file, line: line)
+    assertElementExists("preferencesPrivacyTab", in: app, file: file, line: line)
+    assertElementExists("privacyLocalOnlySummary", in: app, file: file, line: line)
+    assertElementExists("privacySupportBundleSummary", in: app, file: file, line: line)
 
     app.terminate()
+  }
+
+  private func selectTab(
+    _ localizedLabel: String,
+    language: String,
+    in app: XCUIApplication,
+    file: StaticString,
+    line: UInt
+  ) {
+    let element = app.descendants(matching: .any)[localizedLabel]
+    XCTAssertTrue(
+      element.waitForExistence(timeout: 3),
+      "Missing localized tab label for \(language): \(localizedLabel)",
+      file: file,
+      line: line)
+    element.click()
+  }
+
+  private func assertLocalizedTabLabel(
+    _ localizedLabel: String,
+    language: String,
+    in app: XCUIApplication,
+    file: StaticString,
+    line: UInt
+  ) {
+    let element = app.descendants(matching: .any)[localizedLabel]
+    XCTAssertTrue(
+      element.waitForExistence(timeout: 3),
+      "Missing localized tab label for \(language): \(localizedLabel)",
+      file: file,
+      line: line)
   }
 
   private func assertElementExists(
@@ -60,5 +119,13 @@ final class MacVitalsUITests: XCTestCase {
       "Missing accessibility element: \(identifier)",
       file: file,
       line: line)
+  }
+
+  private struct TabLabels {
+    let general: String
+    let alerts: String
+    let menuBar: String
+    let diagnostics: String
+    let privacy: String
   }
 }
