@@ -7,4 +7,6 @@
 - Charger sufficiency evaluator with rolling median and conflict detection
 - Customizable combined menu bar presets and ordering
 - Diagnostics export, localization resources and privacy documentation
+- Project-owned reproducible macOS application icon
+- Bilingual five-tab Preferences accessibility smoke coverage
 - macOS CI and unsigned release packaging fallback
