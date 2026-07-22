@@ -63,7 +63,6 @@ struct DiagnosticsView: View {
       }
       .accessibilityIdentifier("exportDiagnosticsButton")
     }
-    .accessibilityIdentifier("diagnosticsList")
     .padding()
   }
 
