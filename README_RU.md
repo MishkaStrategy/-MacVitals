@@ -15,8 +15,9 @@ MacVitals — лёгкая нативная утилита для строки �
 - короткий runtime guardrail по CPU, RSS, периодичности сэмплов и числу потоков;
 - universal unsigned Release archive;
 - создание и проверку ZIP и DMG;
+- production app icon и его совпадение в ZIP/DMG;
 - совпадение содержимого приложений в ZIP и DMG;
-- EN/RU ресурсы и двуязычный UI smoke;
+- EN/RU ресурсы и двуязычный accessibility smoke всех пяти вкладок настроек;
 - SHA-256 контрольные суммы;
 - `BUILD_MANIFEST.json` с версией, commit, Xcode, архитектурами и состоянием подписи/нотаризации.
 
@@ -81,6 +82,6 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 - физические сценарии батареи и адаптеров на Apple Silicon MacBook;
 - физический Intel Mac для сохраняемых sensor-claims либо явное сужение поддержки;
 - Instruments и многочасовой stability run;
-- финальные скриншоты, accessibility review и production icon.
+- финальные скриншоты, VoiceOver review и визуальная проверка на физическом оборудовании.
 
-Подробности: [архитектура](ARCHITECTURE.md), [модель питания](docs/POWER_MODEL.md), [совместимость датчиков](docs/SENSOR_COMPATIBILITY.md), [provenance сборки](docs/BUILD_PROVENANCE.md), [процесс релиза](docs/RELEASE.md), [приватность](PRIVACY.md).
+Подробности: [архитектура](ARCHITECTURE.md), [иконка приложения](docs/APP_ICON.md), [модель питания](docs/POWER_MODEL.md), [совместимость датчиков](docs/SENSOR_COMPATIBILITY.md), [provenance сборки](docs/BUILD_PROVENANCE.md), [процесс релиза](docs/RELEASE.md), [приватность](PRIVACY.md).
