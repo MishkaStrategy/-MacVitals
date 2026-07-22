@@ -117,15 +117,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate YAML, plist XML and shell syntax
+      - name: Validate YAML, plist XML, localizations and scripts
         run: |
-          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/release.yml')"
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/main.yml'); YAML.load_file('.github/workflows/release.yml')"
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
           for path in pathlib.Path('.').rglob('*.plist'):
               ET.parse(path)
           PY
+          python3 -m py_compile scripts/validate_localizations.py
+          python3 scripts/validate_localizations.py
           bash -n scripts/package_release.sh scripts/verify_release.sh
 
       - uses: gitleaks/gitleaks-action@v2
