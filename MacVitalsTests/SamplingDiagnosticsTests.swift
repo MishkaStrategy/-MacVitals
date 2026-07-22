@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import MacVitals
 
 final class SamplingDiagnosticsTests: XCTestCase {
@@ -48,6 +49,18 @@ final class SamplingDiagnosticsTests: XCTestCase {
         elapsedMilliseconds: 800),
       0.05,
       accuracy: 0.000_001)
+  }
+
+  func testRemainingDelaySanitizesInvalidMinimumDelay() {
+    for minimum in [Double.nan, .infinity, -.infinity, -1, 0] {
+      XCTAssertEqual(
+        SamplingTimingMath.remainingDelaySeconds(
+          intervalSeconds: 0.5,
+          elapsedMilliseconds: 800,
+          minimumDelaySeconds: minimum),
+        0.05,
+        accuracy: 0.000_001)
+    }
   }
 
   func testNanosecondConversionHandlesClockRegression() {
