@@ -1,6 +1,6 @@
 # Physical Hardware Validation
 
-Hosted macOS CI proves compilation, deterministic logic, provider smoke behavior and packaging. It does not prove MacBook battery semantics, real adapter behavior, Intel compatibility, long-duration stability or process energy impact. This protocol defines the remaining physical validation evidence.
+Hosted macOS CI proves compilation, deterministic logic, provider smoke behavior, packaged-process stability and packaging. It does not prove MacBook battery semantics, real adapter behavior, thermal behavior, physical-device energy impact or long-duration stability. This protocol defines the remaining physical validation evidence.
 
 ## Evidence rules
 
@@ -11,6 +11,16 @@ Hosted macOS CI proves compilation, deterministic logic, provider smoke behavior
 - Do not record serial numbers, Apple ID, usernames, home paths or user documents.
 - Mark a scenario `not tested`, `unsupported`, `unavailable` or `failed`; do not silently omit it.
 - Attach the package `BUILD_MANIFEST.json`, `BUILD_STATUS.txt` and `SHA256SUMS.txt` to every validation set.
+- Keep hosted-runner, emulated and physical-device evidence clearly separated.
+
+## Hosted architecture evidence
+
+The automated workflows currently provide two architecture checks:
+
+- `macos-15`: universal packaging plus arm64 unit/provider tests and packaged-app runtime smoke;
+- `macos-15-intel`: native x86_64 Release build, x86_64 unit/provider tests and packaged-app runtime smoke on an Intel-hosted runner.
+
+This materially reduces architecture and compiler risk. It does **not** count as physical Intel MacBook validation because hosted runners do not expose a representative internal battery, charger transition matrix, thermals or real laptop sleep/wake behavior.
 
 ## Required hardware matrix
 
@@ -20,7 +30,7 @@ At minimum, validate:
 |---|---|
 | Apple Silicon laptop | M1 Pro MacBook Pro, internal display, battery and USB-C/MagSafe adapters |
 | Newer Apple Silicon laptop | At least one M2/M3/M4-family MacBook when available |
-| Intel laptop | One supported Intel MacBook or an explicit decision to drop the Intel claim |
+| Intel laptop | One supported Intel MacBook for battery/adapter semantics, or an explicit decision to narrow Intel sensor claims |
 | Desktop | One battery-less Mac to confirm graceful unsupported battery behavior |
 
 For every machine record only:
@@ -36,12 +46,13 @@ For every machine record only:
 
 1. Verify every SHA-256 entry.
 2. Confirm `BUILD_STATUS.txt` accurately describes signing and notarization.
-3. Install from the DMG into Applications.
-4. Confirm menu-bar-only launch with `LSUIElement` behavior.
-5. Open Preferences with Command–Comma.
-6. Validate English and Russian interfaces.
-7. Enable and disable Launch at Login; record whether macOS requires approval.
-8. Restart the user session and confirm the actual launch state.
+3. Confirm `BUILD_MANIFEST.json` matches the tested ZIP/DMG and commit.
+4. Install from the DMG into Applications.
+5. Confirm menu-bar-only launch with `LSUIElement` behavior.
+6. Open Preferences with Command–Comma.
+7. Validate English and Russian interfaces.
+8. Enable and disable Launch at Login; record whether macOS requires approval.
+9. Restart the user session and confirm the actual launch state.
 
 ## Provider scenarios
 
@@ -101,7 +112,7 @@ For each adapter/load combination:
 
 ## Runtime performance collection
 
-Launch the packaged app, leave the popover closed, and run:
+Launch the packaged app, allow initialization to settle, leave the popover closed, and run:
 
 ```bash
 bash scripts/collect_runtime_metrics.sh 900 2
@@ -117,7 +128,9 @@ Repeat with:
 - sleep/wake cycle;
 - six-hour stability run when feasible.
 
-The script creates CSV samples and a JSON summary without administrator privileges. It measures process CPU, RSS, VSZ and thread count. It does not replace Instruments measurements of wakeups or Energy Impact.
+The script creates CSV samples and a JSON summary without administrator privileges. It measures process CPU, RSS, VSZ and thread count when supported by the host `ps`. It does not replace Instruments measurements of wakeups or Energy Impact.
+
+The automated `run_ci_runtime_smoke.sh` is only a short hosted-runner regression guardrail. Do not substitute it for the scenarios above.
 
 ## Instruments pass
 
@@ -153,6 +166,8 @@ Export a support bundle for each major scenario and verify:
 - no Apple ID or documents;
 - no network data;
 - no stable GPU registry identifier.
+
+Inspect runtime evidence and verify that its JSON and logs also omit usernames, home paths, serial numbers and user documents.
 
 ## Acceptance record
 
