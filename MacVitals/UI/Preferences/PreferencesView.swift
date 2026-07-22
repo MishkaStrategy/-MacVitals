@@ -36,14 +36,23 @@ struct PreferencesView: View {
       Toggle("Show in Dock", isOn: $settings.showInDock)
         .accessibilityIdentifier("showInDockToggle")
 
-      Toggle(
-        "Launch at login",
-        isOn: Binding(
-          get: { settings.launchAtLogin },
-          set: { enabled in settings.setLaunchAtLogin(enabled) }
+      VStack(alignment: .leading, spacing: 4) {
+        Toggle(
+          "Launch at login",
+          isOn: Binding(
+            get: { settings.launchAtLogin },
+            set: { enabled in settings.setLaunchAtLogin(enabled) }
+          )
         )
-      )
-      .accessibilityIdentifier("launchAtLoginToggle")
+        .accessibilityIdentifier("launchAtLoginToggle")
+
+        if let message = settings.launchAtLoginState.message {
+          Text(message)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("launchAtLoginStatusMessage")
+        }
+      }
 
       Toggle("Reduce motion", isOn: $settings.reducedMotion)
         .accessibilityIdentifier("reduceMotionToggle")
@@ -79,7 +88,7 @@ struct PreferencesView: View {
       .disabled(!settings.notificationsEnabled)
 
       Text(
-        "Alerts are generated only on state transitions and use a cooldown to prevent repeated notifications. System permission is requested only when local alerts are enabled."
+        "Alerts are generated only on state transitions and use a cooldown to prevent repeated notifications. System permission is requested only when local alerts are enabled. Native macOS memory pressure can trigger an alert before the percentage threshold is reached."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
