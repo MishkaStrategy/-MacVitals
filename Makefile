@@ -1,10 +1,13 @@
-.PHONY: bootstrap build test format lint validate-tooling package verify-package runtime-smoke collect-runtime clean
+.PHONY: prepare-assets bootstrap build test format lint validate-tooling package verify-package runtime-smoke collect-runtime clean
 
 VERSION ?= 0.0.0
 RUNTIME_DURATION ?= 300
 RUNTIME_INTERVAL ?= 2
 
-bootstrap:
+prepare-assets:
+	python3 scripts/materialize_app_icon.py
+
+bootstrap: prepare-assets
 	command -v xcodegen >/dev/null || brew install xcodegen
 	xcodegen generate
 
@@ -21,7 +24,9 @@ lint:
 	swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
 validate-tooling:
-	python3 -m py_compile scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+	python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+	python3 scripts/materialize_app_icon.py --self-test
+	python3 scripts/materialize_app_icon.py --check-only
 	python3 scripts/validate_localizations.py
 	python3 scripts/validate_runtime_metrics.py --self-test
 	bash -n scripts/package_release.sh scripts/verify_release.sh scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
@@ -40,3 +45,4 @@ collect-runtime:
 
 clean:
 	rm -rf MacVitals.xcodeproj build build-intel build-intel-tests dist runtime-smoke-results runtime-intel-results performance-results
+	rm -f MacVitals/Resources/AppIcon.icns
