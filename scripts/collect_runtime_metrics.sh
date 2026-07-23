@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DURATION_SECONDS="${1:-${DURATION_SECONDS:-300}}"
 INTERVAL_SECONDS="${2:-${INTERVAL_SECONDS:-2}}"
 PROCESS_NAME="${PROCESS_NAME:-MacVitals}"
 PROCESS_ID="${PROCESS_ID:-}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-performance-results}"
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${ROOT_DIR}/performance-results}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 OUTPUT_DIR="${OUTPUT_ROOT}/${RUN_ID}"
 CSV_PATH="${OUTPUT_DIR}/samples.csv"
 SUMMARY_PATH="${OUTPUT_DIR}/summary.json"
+
+is_positive_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 > 0 ))
+}
 
 is_positive_number() {
   [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v value="$1" 'BEGIN { exit !(value > 0) }'
 }
 
-is_positive_number "${DURATION_SECONDS}" || {
-  echo "Duration must be a positive number of seconds: ${DURATION_SECONDS}" >&2
+is_positive_integer "${DURATION_SECONDS}" || {
+  echo "Duration must be a positive whole number of seconds: ${DURATION_SECONDS}" >&2
   exit 2
 }
 is_positive_number "${INTERVAL_SECONDS}" || {
@@ -46,7 +51,7 @@ fi
   exit 1
 }
 
-mkdir -p "${OUTPUT_DIR}"
+mkdir -p -- "${OUTPUT_DIR}"
 echo "timestamp_utc,elapsed_seconds,cpu_percent,rss_kib,vsz_kib,threads" > "${CSV_PATH}"
 
 thread_mode="unavailable"
@@ -58,7 +63,7 @@ elif ps -M -p "${pid}" >/dev/null 2>&1; then
 fi
 
 start_epoch="$(date +%s)"
-end_epoch="$(awk -v start="${start_epoch}" -v duration="${DURATION_SECONDS}" 'BEGIN { printf "%.0f", start + duration }')"
+end_epoch="$((start_epoch + 10#${DURATION_SECONDS}))"
 
 while kill -0 "${pid}" >/dev/null 2>&1; do
   now_epoch="$(date +%s)"
