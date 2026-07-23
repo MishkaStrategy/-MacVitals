@@ -110,13 +110,6 @@ jobs:
             release-package-diagnostics.txt
           if-no-files-found: ignore
 
-      - name: Upload release candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: MacVitals-0.0.${{ github.run_number }}-unsigned
-          path: dist/
-          if-no-files-found: error
-
       - name: Packaged runtime smoke guardrail
         timeout-minutes: 5
         run: |
@@ -137,6 +130,13 @@ jobs:
             runtime-smoke-run.log
             runtime-smoke-results/
           if-no-files-found: ignore
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacVitals-0.0.${{ github.run_number }}-unsigned
+          path: dist/
+          if-no-files-found: error
 
   repository-safety:
     runs-on: ubuntu-latest
