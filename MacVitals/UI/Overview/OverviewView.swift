@@ -1,6 +1,11 @@
 import Charts
 import SwiftUI
 
+nonisolated enum OverviewLayout {
+  static let width: CGFloat = 390
+  static let height: CGFloat = 630
+}
+
 struct OverviewView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
@@ -50,7 +55,7 @@ struct OverviewView: View {
       }
     }
     .padding(16)
-    .frame(width: 390, height: 630)
+    .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
   }
 
