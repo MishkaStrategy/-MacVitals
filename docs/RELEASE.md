@@ -49,7 +49,7 @@ Current CI candidates are intentionally unsigned and not notarized. Runtime evid
 
 ## Output-path safety
 
-Packaging and CI runtime scripts normalize their output paths and require them to be strict descendants of the repository root. Repository-root, parent-traversal, external and symlink-escape paths are rejected before destructive cleanup.
+Packaging and CI runtime scripts normalize their output paths and require them to be strict descendants of the repository root. Repository-root, parent-traversal, external and symlink-escape paths are rejected. Packaging additionally requires `BUILD_DIR` and `DIST_DIR` to be non-overlapping.
 
 `DIST_DIR` is treated as a dedicated MacVitals artifact directory. Before packaging, the script performs a two-phase inspection:
 
@@ -58,7 +58,9 @@ Packaging and CI runtime scripts normalize their output paths and require them t
 
 This prevents an incorrect environment variable from deleting arbitrary user data and prevents unrelated files from being included in a workflow release artifact. `BUILD_DIR`, `DIST_DIR` and `CI_RUNTIME_OUTPUT_ROOT` may be relative, but they are resolved relative to the repository root.
 
-Runtime collection durations are positive whole seconds. Concurrent direct collectors include their process ID in the evidence directory name to avoid same-second collisions.
+Runtime smoke does not delete its output base. Each invocation creates a unique `run-<UTC>-<PID>` directory. An existing output base is accepted only when every entry is a previous non-symlink run directory with that exact naming contract; source-like or contaminated directories are rejected before the application launches. This preserves prior evidence and prevents `CI_RUNTIME_OUTPUT_ROOT` from erasing source or build data.
+
+Runtime collection durations are positive whole seconds. Direct collectors include their process ID in the evidence directory name to avoid same-second collisions.
 
 ## Publication safety
 
