@@ -141,8 +141,9 @@ final class NotificationCoordinator {
         guard let error else { return }
         let message = error.localizedDescription
         Task { @MainActor [weak self] in
-          guard self?.enabled == true else { return }
-          self?.authorizationState = .failed(
+          guard let self, self.enabled else { return }
+          self.policy.markDeliveryFailed(event.kind)
+          self.authorizationState = .failed(
             L10n.format("Could not deliver a notification: %@", message))
         }
       }
