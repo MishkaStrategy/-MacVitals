@@ -13,6 +13,37 @@ final class AlertPolicyTests: XCTestCase {
     XCTAssertTrue(policy.evaluate(snapshot: high, now: now.addingTimeInterval(10)).isEmpty)
   }
 
+  func testFailedDeliveryCanRetryWhileConditionRemainsActive() {
+    var policy = AlertPolicy(
+      configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
+    let now = Date(timeIntervalSince1970: 1_500)
+    let high = snapshot(memoryPercent: 95)
+
+    XCTAssertEqual(policy.evaluate(snapshot: high, now: now).map(\.kind), [.highMemory])
+    policy.markDeliveryFailed(.highMemory)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: high, now: now.addingTimeInterval(1)).map(\.kind),
+      [.highMemory])
+    XCTAssertTrue(policy.evaluate(snapshot: high, now: now.addingTimeInterval(2)).isEmpty)
+  }
+
+  func testFailedDeliveryClearsOnlyTheFailedKind() {
+    var policy = AlertPolicy(configuration: .init(cooldown: 60))
+    let now = Date(timeIntervalSince1970: 1_700)
+    let combined = snapshot(
+      memoryPercent: 95,
+      batteryPercent: 10,
+      batteryState: .discharging)
+
+    XCTAssertEqual(
+      Set(policy.evaluate(snapshot: combined, now: now).map(\.kind)),
+      Set([.highMemory, .lowBattery]))
+    policy.markDeliveryFailed(.highMemory)
+    XCTAssertEqual(
+      policy.evaluate(snapshot: combined, now: now.addingTimeInterval(1)).map(\.kind),
+      [.highMemory])
+  }
+
   func testHighMemoryCanEmitAgainAfterRecoveryAndCooldown() {
     var policy = AlertPolicy(
       configuration: .init(memoryThresholdPercent: 90, cooldown: 60))
