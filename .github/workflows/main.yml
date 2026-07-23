@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate localization, app icon and runtime tooling
         run: |
@@ -26,14 +26,16 @@ jobs:
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
           python3 scripts/validate_runtime_metrics.py --self-test
+          bash scripts/install_xcodegen.sh --self-test
           bash -n \
+            scripts/install_xcodegen.sh \
             scripts/package_release.sh \
             scripts/verify_release.sh \
             scripts/collect_runtime_metrics.sh \
             scripts/run_ci_runtime_smoke.sh
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: bash scripts/install_xcodegen.sh
 
       - name: Generate project
         run: xcodegen generate
@@ -61,14 +63,14 @@ jobs:
 
       - name: Upload runtime smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-smoke-evidence
           path: runtime-smoke-results/
           if-no-files-found: ignore
 
       - name: Upload verified unsigned candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: MacVitals-main-0.0.${{ github.run_number }}-unsigned
           path: dist/
