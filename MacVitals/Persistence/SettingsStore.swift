@@ -270,14 +270,8 @@ final class SettingsStore: ObservableObject {
     notificationAuthorizationState = state
   }
 
-  func reset() {
+  func resetMenuLayout() {
     selectedPreset = .performance
-    enabledMetrics = MenuPreset.performance.metrics
-    samplingInterval = SamplingIntervalPolicy.defaultValue
-    reducedMotion = false
-    notificationsEnabled = false
-    memoryAlertThreshold = SettingsNumericPolicy.defaultMemoryAlertThreshold
-    lowBatteryAlertThreshold = SettingsNumericPolicy.defaultLowBatteryAlertThreshold
   }
 
   private func persistMenuConfiguration() {
