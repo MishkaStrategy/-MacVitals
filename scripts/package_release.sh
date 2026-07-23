@@ -6,6 +6,25 @@ VERSION="${1:-${VERSION:-0.0.0}}"
 BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+
+if [[ ! "${VERSION}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || (( ${#VERSION} > 64 )); then
+  echo "Invalid release version: ${VERSION}. Use one to three numeric components (64 characters maximum)." >&2
+  exit 2
+fi
+if [[ ! "${BUILD_NUMBER}" =~ ^[0-9]+([.][0-9]+)*$ ]] || (( ${#BUILD_NUMBER} > 64 )); then
+  echo "Invalid build number: ${BUILD_NUMBER}" >&2
+  exit 2
+fi
+
+for command in xcodegen xcodebuild ditto hdiutil plutil shasum codesign lipo xcrun python3 git; do
+  command -v "${command}" >/dev/null 2>&1 || {
+    echo "Required command is unavailable: ${command}" >&2
+    exit 127
+  }
+done
+
+BUILD_DIR="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${BUILD_DIR}")"
+DIST_DIR="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${DIST_DIR}")"
 ARCHIVE_PATH="${BUILD_DIR}/MacVitals.xcarchive"
 APP_PATH="${ARCHIVE_PATH}/Products/Applications/MacVitals.app"
 EXECUTABLE_PATH="${APP_PATH}/Contents/MacOS/MacVitals"
@@ -20,24 +39,30 @@ MANIFEST_PATH="${DIST_DIR}/BUILD_MANIFEST.json"
 CHECKSUM_PATH="${DIST_DIR}/SHA256SUMS.txt"
 CODE_SIGNING_ALLOWED_VALUE="${CODE_SIGNING_ALLOWED:-NO}"
 
-if [[ ! "${VERSION}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]; then
-  echo "Invalid release version: ${VERSION}. Use one to three numeric components." >&2
-  exit 2
-fi
-if [[ ! "${BUILD_NUMBER}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-  echo "Invalid build number: ${BUILD_NUMBER}" >&2
-  exit 2
-fi
+rm -rf -- "${ARCHIVE_PATH}" "${DMG_ROOT}"
+mkdir -p -- "${BUILD_DIR}" "${DIST_DIR}" "${DMG_ROOT}"
+DIST_DIR="${DIST_DIR}" python3 - <<'PY'
+import os
+import re
+from pathlib import Path
 
-for command in xcodegen xcodebuild ditto hdiutil plutil shasum codesign lipo xcrun python3 git; do
-  command -v "${command}" >/dev/null 2>&1 || {
-    echo "Required command is unavailable: ${command}" >&2
-    exit 127
-  }
-done
-
-rm -rf "${ARCHIVE_PATH}" "${DMG_ROOT}" "${DIST_DIR}"
-mkdir -p "${BUILD_DIR}" "${DIST_DIR}" "${DMG_ROOT}"
+directory = Path(os.environ["DIST_DIR"])
+release_name = re.compile(r"MacVitals-[0-9]+(?:[.][0-9]+){0,2}[.](?:zip|dmg)\Z")
+metadata_names = {"BUILD_STATUS.txt", "BUILD_MANIFEST.json", "SHA256SUMS.txt"}
+entries = list(directory.iterdir())
+unexpected = [
+    entry.name
+    for entry in entries
+    if not (entry.is_file() and (entry.name in metadata_names or release_name.fullmatch(entry.name)))
+]
+if unexpected:
+    raise SystemExit(
+        "Refusing to clean DIST_DIR because it contains unexpected entries: "
+        + ", ".join(sorted(unexpected))
+    )
+for entry in entries:
+    entry.unlink()
+PY
 
 cd "${ROOT_DIR}"
 python3 scripts/materialize_app_icon.py
