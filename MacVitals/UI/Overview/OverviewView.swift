@@ -145,10 +145,7 @@ struct OverviewView: View {
   }
 
   private var batteryText: String {
-    guard let battery = coordinator.snapshot.battery.value, battery.present else {
-      return L10n.string("No battery")
-    }
-    return MetricNumberFormatter.percentage(battery.percentage)
+    BatteryDisplayText.summary(coordinator.snapshot.battery)
   }
 
   private func formattedBytes(_ bytes: UInt64) -> String {
