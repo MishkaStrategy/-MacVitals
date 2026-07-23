@@ -17,7 +17,9 @@ final class StatusItemController: NSObject {
     let root = OverviewView().environmentObject(coordinator).environmentObject(settings)
     popover.contentViewController = NSHostingController(rootView: root)
     popover.behavior = .transient
-    popover.contentSize = NSSize(width: 390, height: 615)
+    popover.contentSize = NSSize(
+      width: OverviewLayout.width,
+      height: OverviewLayout.height)
     if let button = statusItem.button {
       button.target = self
       button.action = #selector(togglePopover)
@@ -41,8 +43,7 @@ final class StatusItemController: NSObject {
     if popover.isShown {
       popover.performClose(nil)
     } else {
-      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-      NSApp.activate(ignoringOtherApps: true)
+      showPopover(relativeTo: button)
     }
   }
 
@@ -58,14 +59,22 @@ final class StatusItemController: NSObject {
     menu.addItem(
       withTitle: NSLocalizedString("Quit MacVitals", comment: ""),
       action: #selector(quit), keyEquivalent: "q")
-    menu.items.forEach { $0.target = self }
+    for item in menu.items { item.target = self }
     statusItem.menu = menu
     statusItem.button?.performClick(nil)
     statusItem.menu = nil
   }
 
   @objc private func openPopover() {
-    togglePopover()
+    guard let button = statusItem.button else { return }
+    statusItem.menu = nil
+    showPopover(relativeTo: button)
+  }
+
+  private func showPopover(relativeTo button: NSStatusBarButton) {
+    guard !popover.isShown else { return }
+    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    NSApp.activate(ignoringOtherApps: true)
   }
 
   @objc private func openPreferences() {
