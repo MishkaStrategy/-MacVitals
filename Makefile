@@ -1,3 +1,5 @@
+ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+
 .PHONY: prepare-assets bootstrap build test format lint validate-tooling package verify-package runtime-smoke collect-runtime clean
 
 VERSION ?= 0.0.0
@@ -5,45 +7,46 @@ RUNTIME_DURATION ?= 300
 RUNTIME_INTERVAL ?= 2
 
 prepare-assets:
-	python3 scripts/materialize_app_icon.py
+	cd "$(ROOT_DIR)" && python3 scripts/materialize_app_icon.py
 
 bootstrap: prepare-assets
 	command -v xcodegen >/dev/null || brew install xcodegen
-	xcodegen generate
+	cd "$(ROOT_DIR)" && xcodegen generate
 
 build: bootstrap
-	xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' build
+	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' build
 
 test: bootstrap
-	xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsTests
+	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsTests
 
 format:
-	swift format format --in-place --recursive MacVitals MacVitalsTests MacVitalsUITests
+	cd "$(ROOT_DIR)" && swift format format --in-place --recursive MacVitals MacVitalsTests MacVitalsUITests
 
 lint:
-	swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+	cd "$(ROOT_DIR)" && swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
 validate-tooling:
-	python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_release_metadata.py scripts/validate_runtime_metrics.py
-	python3 scripts/materialize_app_icon.py --self-test
-	python3 scripts/materialize_app_icon.py --check-only
-	python3 scripts/validate_localizations.py
-	python3 scripts/validate_release_metadata.py --self-test
-	python3 scripts/validate_runtime_metrics.py --self-test
-	bash -n scripts/package_release.sh scripts/verify_release.sh scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
+	cd "$(ROOT_DIR)" && python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/validate_runtime_metrics.py
+	cd "$(ROOT_DIR)" && python3 scripts/materialize_app_icon.py --self-test
+	cd "$(ROOT_DIR)" && python3 scripts/materialize_app_icon.py --check-only
+	cd "$(ROOT_DIR)" && python3 scripts/validate_localizations.py
+	cd "$(ROOT_DIR)" && python3 scripts/validate_output_path.py --self-test
+	cd "$(ROOT_DIR)" && python3 scripts/validate_release_metadata.py --self-test
+	cd "$(ROOT_DIR)" && python3 scripts/validate_runtime_metrics.py --self-test
+	cd "$(ROOT_DIR)" && bash -n scripts/package_release.sh scripts/verify_release.sh scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
 
 package: validate-tooling
-	bash scripts/package_release.sh "$(VERSION)"
+	cd "$(ROOT_DIR)" && bash scripts/package_release.sh "$(VERSION)"
 
 verify-package: validate-tooling
-	bash scripts/verify_release.sh "$(VERSION)"
+	cd "$(ROOT_DIR)" && bash scripts/verify_release.sh "$(VERSION)"
 
 runtime-smoke: package
-	bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+	cd "$(ROOT_DIR)" && bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
 
 collect-runtime:
-	bash scripts/collect_runtime_metrics.sh "$(RUNTIME_DURATION)" "$(RUNTIME_INTERVAL)"
+	cd "$(ROOT_DIR)" && bash scripts/collect_runtime_metrics.sh "$(RUNTIME_DURATION)" "$(RUNTIME_INTERVAL)"
 
 clean:
-	rm -rf MacVitals.xcodeproj build build-intel build-intel-tests dist runtime-smoke-results runtime-intel-results performance-results
-	rm -f MacVitals/Resources/AppIcon.icns
+	rm -rf -- "$(ROOT_DIR)/MacVitals.xcodeproj" "$(ROOT_DIR)/build" "$(ROOT_DIR)/build-intel" "$(ROOT_DIR)/build-intel-tests" "$(ROOT_DIR)/dist" "$(ROOT_DIR)/runtime-smoke-results" "$(ROOT_DIR)/runtime-intel-results" "$(ROOT_DIR)/performance-results"
+	rm -f -- "$(ROOT_DIR)/MacVitals/Resources/AppIcon.icns"
