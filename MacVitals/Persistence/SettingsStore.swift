@@ -78,19 +78,28 @@ nonisolated enum MenuLayoutRules {
   }
 }
 
-private struct StoredMenuConfiguration: Codable {
+nonisolated enum MenuConfigurationPersistence {
   static let currentSchemaVersion = 1
 
-  let schemaVersion: Int
-  let enabledMetricIDs: [String]
-
-  init(metrics: [MenuMetric]) {
-    schemaVersion = Self.currentSchemaVersion
-    enabledMetricIDs = MenuLayoutRules.normalized(metrics).map(\.rawValue)
+  private struct StoredMenuConfiguration: Codable {
+    let schemaVersion: Int
+    let enabledMetricIDs: [String]
   }
 
-  var metrics: [MenuMetric] {
-    MenuLayoutRules.normalized(enabledMetricIDs.compactMap { MenuMetric(rawValue: $0) })
+  static func decode(_ data: Data) -> [MenuMetric]? {
+    guard let stored = try? JSONDecoder().decode(StoredMenuConfiguration.self, from: data),
+      stored.schemaVersion == currentSchemaVersion
+    else { return nil }
+
+    return MenuLayoutRules.normalized(
+      stored.enabledMetricIDs.compactMap { MenuMetric(rawValue: $0) })
+  }
+
+  static func encode(_ metrics: [MenuMetric]) -> Data? {
+    let stored = StoredMenuConfiguration(
+      schemaVersion: currentSchemaVersion,
+      enabledMetricIDs: MenuLayoutRules.normalized(metrics).map(\.rawValue))
+    return try? JSONEncoder().encode(stored)
   }
 }
 
@@ -146,7 +155,8 @@ final class SettingsStore: ObservableObject {
     }
   }
   @Published private(set) var launchAtLoginState: LaunchAtLoginState = .disabled
-  @Published private(set) var notificationAuthorizationState: NotificationAuthorizationState = .unknown
+  @Published private(set) var notificationAuthorizationState: NotificationAuthorizationState =
+    .unknown
 
   private let launchAtLoginManager: any LaunchAtLoginManaging
 
@@ -181,9 +191,9 @@ final class SettingsStore: ObservableObject {
 
     let initialMetrics: [MenuMetric]
     if let data = defaults.data(forKey: Keys.menuConfiguration),
-      let stored = try? JSONDecoder().decode(StoredMenuConfiguration.self, from: data)
+      let storedMetrics = MenuConfigurationPersistence.decode(data)
     {
-      initialMetrics = stored.metrics
+      initialMetrics = storedMetrics
     } else {
       initialMetrics =
         initialPreset == .custom
@@ -241,8 +251,7 @@ final class SettingsStore: ObservableObject {
   }
 
   private func persistMenuConfiguration() {
-    let stored = StoredMenuConfiguration(metrics: enabledMetrics)
-    if let data = try? JSONEncoder().encode(stored) {
+    if let data = MenuConfigurationPersistence.encode(enabledMetrics) {
       UserDefaults.standard.set(data, forKey: Keys.menuConfiguration)
     }
   }
