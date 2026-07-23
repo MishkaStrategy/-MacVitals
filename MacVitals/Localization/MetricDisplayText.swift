@@ -55,6 +55,14 @@ extension PowerSufficiencyStatus {
   }
 }
 
+nonisolated enum BatteryDisplayText {
+  static func summary(_ metric: MetricValue<BatteryStats>) -> String {
+    guard let battery = metric.value else { return metric.availability.displayName }
+    guard battery.present else { return L10n.string("No battery") }
+    return MetricNumberFormatter.percentage(battery.percentage)
+  }
+}
+
 nonisolated enum MetricNumberFormatter {
   static func percentage(_ value: Double?) -> String {
     boundedRoundedInteger(value, range: 0...100).map { "\($0)%" } ?? "—"
