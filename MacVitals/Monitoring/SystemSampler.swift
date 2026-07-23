@@ -13,6 +13,19 @@ nonisolated enum ExternalPowerResolver {
   }
 }
 
+nonisolated enum BatterylessPowerAssessment {
+  static func make(battery: BatteryStats?) -> PowerAssessment? {
+    guard battery?.present == false else { return nil }
+    return PowerAssessment(
+      status: .powerAdapterOnly,
+      confidence: 1,
+      batteryPowerWatts: nil,
+      estimatedSystemPowerWatts: nil,
+      powerBalanceWatts: nil,
+      explanation: L10n.string("No battery"))
+  }
+}
+
 actor SystemSampler {
   private let cpuProvider = CPUProvider()
   private let memoryProvider = MemoryProvider()
@@ -36,19 +49,26 @@ actor SystemSampler {
     let batteryValue = battery.value
     let adapterValue = adapter.value
     let now = Date()
+    let externalPower = ExternalPowerResolver.isConnected(
+      battery: batteryValue,
+      adapter: adapterValue)
 
     let powerSample = PowerSample(
       timestamp: now,
-      externalPower: ExternalPowerResolver.isConnected(
-        battery: batteryValue,
-        adapter: adapterValue),
+      externalPower: externalPower,
       batteryPowerWatts: batteryValue?.batteryPowerWatts,
       adapterRatedPowerWatts: adapterValue?.ratedPowerWatts,
       adapterMeasuredPowerWatts: adapterValue?.measuredPowerWatts,
       batteryPercent: batteryValue?.percentage,
       batteryTimestamp: battery.timestamp,
       adapterTimestamp: adapter.timestamp)
-    let (assessment, powerModelMilliseconds) = measure { evaluator.evaluate(powerSample) }
+    let (assessment, powerModelMilliseconds) = measure {
+      if let directAssessment = BatterylessPowerAssessment.make(battery: batteryValue) {
+        evaluator.reset()
+        return directAssessment
+      }
+      return evaluator.evaluate(powerSample)
+    }
     let power = MetricValue(
       value: assessment,
       unit: .watts,
