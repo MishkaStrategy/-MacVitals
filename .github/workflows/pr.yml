@@ -69,6 +69,25 @@ jobs:
             native-test-diagnostics.txt
           if-no-files-found: ignore
 
+      - name: Bilingual preferences accessibility smoke test
+        run: |
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
+          cat native-ui-test-diagnostics.txt
+          exit $status
+
+      - name: Upload native UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-test-diagnostics
+          path: |
+            native-ui-tests.log
+            native-ui-test-diagnostics.txt
+          if-no-files-found: ignore
+
       - name: Package and verify release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
@@ -119,25 +138,6 @@ jobs:
             runtime-smoke-results/
           if-no-files-found: ignore
 
-      - name: Bilingual preferences accessibility smoke test
-        run: |
-          set +e
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
-          status=$?
-          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
-          cat native-ui-test-diagnostics.txt
-          exit $status
-
-      - name: Upload native UI test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-ui-test-diagnostics
-          path: |
-            native-ui-tests.log
-            native-ui-test-diagnostics.txt
-          if-no-files-found: ignore
-
   repository-safety:
     runs-on: ubuntu-latest
     steps:
@@ -154,10 +154,11 @@ jobs:
           for path in pathlib.Path('.').rglob('*.plist'):
               ET.parse(path)
           PY
-          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_release_metadata.py scripts/validate_runtime_metrics.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/validate_runtime_metrics.py
           python3 scripts/materialize_app_icon.py --self-test
           python3 scripts/materialize_app_icon.py --check-only
           python3 scripts/validate_localizations.py
+          python3 scripts/validate_output_path.py --self-test
           python3 scripts/validate_release_metadata.py --self-test
           python3 scripts/validate_runtime_metrics.py --self-test
           bash -n \
