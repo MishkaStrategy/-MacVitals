@@ -47,6 +47,20 @@ nonisolated enum NotificationAuthorizationMapper {
   }
 }
 
+nonisolated struct NotificationAuthorizationRequestGate: Sendable {
+  private(set) var isInFlight = false
+
+  mutating func begin() -> Bool {
+    guard !isInFlight else { return false }
+    isInFlight = true
+    return true
+  }
+
+  mutating func finish() {
+    isInFlight = false
+  }
+}
+
 @MainActor
 final class NotificationCoordinator {
   var onAuthorizationStateChange: ((NotificationAuthorizationState) -> Void)?
@@ -61,7 +75,7 @@ final class NotificationCoordinator {
   private var enabled = false
   private var policy = AlertPolicy()
   private var authorizationFlowTask: Task<Void, Never>?
-  private var authorizationRequestInFlight = false
+  private var authorizationRequestGate = NotificationAuthorizationRequestGate()
   private let center: UNUserNotificationCenter
 
   init(center: UNUserNotificationCenter = .current()) {
@@ -83,7 +97,6 @@ final class NotificationCoordinator {
     guard enabled else {
       authorizationFlowTask?.cancel()
       authorizationFlowTask = nil
-      authorizationRequestInFlight = false
       policy.reset()
       authorizationState = .unknown
       return
@@ -106,7 +119,7 @@ final class NotificationCoordinator {
           returning: NotificationAuthorizationMapper.state(for: settings.authorizationStatus))
       }
     }
-    guard enabled, !Task.isCancelled else { return }
+    guard enabled else { return }
     authorizationState = state
   }
 
@@ -143,18 +156,17 @@ final class NotificationCoordinator {
       await refreshAuthorizationState()
       guard enabled, !Task.isCancelled,
         authorizationState == .notDetermined,
-        !authorizationRequestInFlight
+        authorizationRequestGate.begin()
       else { return }
 
-      authorizationRequestInFlight = true
-      defer { authorizationRequestInFlight = false }
+      defer { authorizationRequestGate.finish() }
 
       do {
         try await requestAuthorization()
-        guard enabled, !Task.isCancelled else { return }
+        guard enabled else { return }
         await refreshAuthorizationState()
       } catch {
-        guard enabled, !Task.isCancelled else { return }
+        guard enabled else { return }
         authorizationState = .failed(
           L10n.format("Could not request notification permission: %@", error.localizedDescription))
       }
