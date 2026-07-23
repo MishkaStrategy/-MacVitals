@@ -18,6 +18,9 @@ final class SystemSamplerTests: XCTestCase {
     XCTAssertNotEqual(second.cpu.availability, .providerError)
     XCTAssertNotEqual(second.gpu.availability, .providerError)
     XCTAssertNotNil(second.power.value)
+    if second.battery.value?.present == false {
+      XCTAssertEqual(second.power.value?.status, .powerAdapterOnly)
+    }
     XCTAssertGreaterThanOrEqual(secondResult.timings.totalMilliseconds, 0)
     XCTAssertGreaterThanOrEqual(secondResult.timings.cpuMilliseconds, 0)
     XCTAssertGreaterThanOrEqual(secondResult.timings.memoryMilliseconds, 0)
@@ -28,33 +31,90 @@ final class SystemSamplerTests: XCTestCase {
   }
 
   func testLaptopBatterySignalRemainsAuthoritative() {
-    XCTAssertFalse(
-      ExternalPowerResolver.isConnected(
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
         battery: battery(present: true, externalPower: false),
-        adapter: adapter(connected: true)))
-    XCTAssertTrue(
-      ExternalPowerResolver.isConnected(
+        batteryAvailability: .available,
+        adapter: adapter(connected: true),
+        adapterAvailability: .available),
+      .disconnected)
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
         battery: battery(present: true, externalPower: true),
-        adapter: adapter(connected: false)))
+        batteryAvailability: .available,
+        adapter: adapter(connected: false),
+        adapterAvailability: .available),
+      .connected)
   }
 
-  func testBatterylessMacFallsBackToAdapterSignal() {
-    XCTAssertTrue(
-      ExternalPowerResolver.isConnected(
+  func testBatterylessMacIsKnownToUseExternalPowerWithoutAdapterTelemetry() {
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
         battery: battery(present: false, externalPower: false),
-        adapter: adapter(connected: true)))
-    XCTAssertFalse(
-      ExternalPowerResolver.isConnected(
-        battery: battery(present: false, externalPower: false),
-        adapter: adapter(connected: false)))
+        batteryAvailability: .unsupported,
+        adapter: nil,
+        adapterAvailability: .temporarilyUnavailable),
+      .connected)
   }
 
-  func testUnavailableBatteryFallsBackToAdapterAndMissingInputsAreSafe() {
-    XCTAssertTrue(
-      ExternalPowerResolver.isConnected(
+  func testUnavailableBatteryFallsBackOnlyToAvailableAdapterSignal() {
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
         battery: nil,
-        adapter: adapter(connected: true)))
-    XCTAssertFalse(ExternalPowerResolver.isConnected(battery: nil, adapter: nil))
+        batteryAvailability: .providerError,
+        adapter: adapter(connected: true),
+        adapterAvailability: .available),
+      .connected)
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
+        battery: nil,
+        batteryAvailability: .providerError,
+        adapter: adapter(connected: false),
+        adapterAvailability: .available),
+      .disconnected)
+  }
+
+  func testUnavailablePowerProvidersResolveToUnknown() {
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
+        battery: nil,
+        batteryAvailability: .providerError,
+        adapter: nil,
+        adapterAvailability: .temporarilyUnavailable),
+      .unknown)
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
+        battery: nil,
+        batteryAvailability: .providerError,
+        adapter: adapter(connected: true),
+        adapterAvailability: .providerError),
+      .unknown)
+  }
+
+  func testInconsistentBatteryAvailabilityDoesNotCreateFalsePowerClaim() {
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
+        battery: battery(present: true, externalPower: false),
+        batteryAvailability: .providerError,
+        adapter: adapter(connected: true),
+        adapterAvailability: .available),
+      .unknown)
+    XCTAssertEqual(
+      ExternalPowerResolver.resolve(
+        battery: battery(present: false, externalPower: false),
+        batteryAvailability: .available,
+        adapter: adapter(connected: true),
+        adapterAvailability: .available),
+      .unknown)
+  }
+
+  func testUnknownPowerStateProducesUnavailableAssessmentOnlyForUnknown() throws {
+    let assessment = try XCTUnwrap(UnknownExternalPowerAssessment.make(for: .unknown))
+    XCTAssertEqual(assessment.status, .unknown)
+    XCTAssertEqual(assessment.confidence, 0)
+    XCTAssertFalse(assessment.explanation.isEmpty)
+    XCTAssertNil(UnknownExternalPowerAssessment.make(for: .connected))
+    XCTAssertNil(UnknownExternalPowerAssessment.make(for: .disconnected))
   }
 
   func testBatterylessMacUsesAdapterOnlyAssessmentWithoutAdapterTelemetry() throws {
