@@ -9,17 +9,19 @@ Every pull request runs an Apple Silicon macOS workflow that must complete:
 3. SwiftFormat lint.
 4. Native Debug build with strict Swift 6 concurrency.
 5. Unit tests, including provider-backed hardware smoke coverage.
-6. Unsigned Release archive with a numeric marketing/build version.
-7. ZIP and compressed DMG creation using system tools.
-8. SHA-256 generation and verification for binaries and provenance files.
-9. Bundle metadata verification, including bundle identifier, executable, version, application icon, category, localizations and `LSUIElement`.
-10. Universal `arm64` and `x86_64` executable verification.
-11. Independent signing/notarization classification and `BUILD_MANIFEST.json` consistency checks.
-12. Read-only DMG mount verification, Applications shortcut check and ZIP/DMG payload comparison, including the icon.
-13. Packaged-app runtime smoke with CSV/JSON evidence and broad runaway guardrails.
-14. Upload of the unsigned release candidate and diagnostic logs.
-15. English and Russian Preferences UI smoke tests covering all five tabs and stable accessibility identifiers.
-16. YAML/plist/shell/localization/icon validation and secret scanning.
+6. English and Russian Preferences UI smoke tests covering all five tabs and stable accessibility identifiers.
+7. Unsigned Release archive with a numeric marketing/build version.
+8. ZIP and compressed DMG creation using system tools.
+9. SHA-256 generation and verification for binaries and provenance files.
+10. Bundle metadata verification, including bundle identifier, executable, version, application icon, category, localizations and `LSUIElement`.
+11. Universal `arm64` and `x86_64` executable verification.
+12. Independent signing/notarization classification and exact `BUILD_MANIFEST.json` / `BUILD_STATUS.txt` consistency checks.
+13. Read-only DMG mount verification, Applications shortcut check and ZIP/DMG payload comparison, including the icon.
+14. Packaged-app runtime smoke with CSV/JSON evidence and broad runaway guardrails.
+15. Upload of the unsigned release candidate and diagnostic logs.
+16. YAML/plist/shell/localization/icon/output-path validation and secret scanning.
+
+The UI smoke runs before archive/DMG creation so a confirmed UI failure does not consume packaging and runtime-smoke runner time.
 
 A separate `macos-15-intel` workflow must also complete:
 
@@ -41,9 +43,22 @@ The verified CI candidate contains:
 - `BUILD_STATUS.txt`;
 - `BUILD_MANIFEST.json`.
 
-`BUILD_STATUS.txt` provides the human-readable signing/notarization classification. `BUILD_MANIFEST.json` provides the machine-readable version, build, commit, Xcode, bundle, minimum macOS, architecture and artifact provenance. The verifier rejects disagreement between either file and the actual application bundle. The packaged `AppIcon.icns` must match the reviewed project-owned source byte for byte.
+`BUILD_STATUS.txt` provides the human-readable signing/notarization classification. `BUILD_MANIFEST.json` provides the machine-readable version, build, commit, Xcode, bundle, minimum macOS, architecture and artifact provenance. The verifier rejects extra manifest keys, malformed commit metadata, host-specific paths, or disagreement between either file and the actual application bundle. The packaged `AppIcon.icns` must match the reviewed project-owned source byte for byte.
 
 Current CI candidates are intentionally unsigned and not notarized. Runtime evidence is uploaded as a separate workflow artifact because it describes the runner and execution, not the distributable application itself.
+
+## Output-path safety
+
+Packaging and CI runtime scripts normalize their output paths and require them to be strict descendants of the repository root. Repository-root, parent-traversal, external and symlink-escape paths are rejected before destructive cleanup.
+
+`DIST_DIR` is treated as a dedicated MacVitals artifact directory. Before packaging, the script performs a two-phase inspection:
+
+1. if any unexpected file, symlink or directory is present, packaging stops without deleting anything;
+2. only recognized older MacVitals ZIP/DMG and metadata artifacts are removed before the new candidate is created.
+
+This prevents an incorrect environment variable from deleting arbitrary user data and prevents unrelated files from being included in a workflow release artifact. `BUILD_DIR`, `DIST_DIR` and `CI_RUNTIME_OUTPUT_ROOT` may be relative, but they are resolved relative to the repository root.
+
+Runtime collection durations are positive whole seconds. Concurrent direct collectors include their process ID in the evidence directory name to avoid same-second collisions.
 
 ## Publication safety
 
