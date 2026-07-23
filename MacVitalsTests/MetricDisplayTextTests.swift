@@ -53,6 +53,77 @@ final class MetricDisplayTextTests: XCTestCase {
     }
   }
 
+  func testBatteryDisplayDistinguishesProviderFailureFromProvenAbsence() {
+    let now = Date(timeIntervalSince1970: 100)
+    let providerFailure = MetricValue<BatteryStats>(
+      value: nil,
+      unit: .percent,
+      availability: .providerError,
+      quality: .unknown,
+      source: .iokitPowerSources,
+      timestamp: now,
+      isEstimated: false,
+      message: "failure")
+    let absent = MetricValue(
+      value: battery(present: false, percentage: nil),
+      unit: .percent,
+      availability: .unsupported,
+      quality: .direct,
+      source: .iokitPowerSources,
+      timestamp: now,
+      isEstimated: false,
+      message: "No internal battery")
+
+    XCTAssertEqual(BatteryDisplayText.summary(providerFailure), "Provider error")
+    XCTAssertEqual(BatteryDisplayText.summary(absent), "No battery")
+  }
+
+  func testBatteryDisplayUsesAvailabilityWhenValueIsUnavailable() {
+    let now = Date(timeIntervalSince1970: 100)
+    for availability in [
+      MetricAvailability.temporarilyUnavailable,
+      .permissionRequired,
+      .providerError,
+      .stale,
+    ] {
+      let metric = MetricValue<BatteryStats>(
+        value: nil,
+        unit: .percent,
+        availability: availability,
+        quality: .unknown,
+        source: .iokitPowerSources,
+        timestamp: now,
+        isEstimated: false,
+        message: nil)
+      XCTAssertEqual(BatteryDisplayText.summary(metric), availability.displayName)
+    }
+  }
+
+  func testBatteryDisplayFormatsPresentBatteryAndInvalidPercentage() {
+    let now = Date(timeIntervalSince1970: 100)
+    let valid = MetricValue(
+      value: battery(present: true, percentage: 49.6),
+      unit: .percent,
+      availability: .available,
+      quality: .direct,
+      source: .iokitPowerSources,
+      timestamp: now,
+      isEstimated: false,
+      message: nil)
+    let invalid = MetricValue(
+      value: battery(present: true, percentage: .nan),
+      unit: .percent,
+      availability: .available,
+      quality: .direct,
+      source: .iokitPowerSources,
+      timestamp: now,
+      isEstimated: false,
+      message: nil)
+
+    XCTAssertEqual(BatteryDisplayText.summary(valid), "50%")
+    XCTAssertEqual(BatteryDisplayText.summary(invalid), "—")
+  }
+
   func testEveryPowerStatusHasAccurateDisplayMetadata() {
     let statuses: [PowerSufficiencyStatus] = [
       .sufficient,
@@ -73,4 +144,25 @@ final class MetricDisplayTextTests: XCTestCase {
     XCTAssertEqual(PowerSufficiencyStatus.powerAdapterOnly.symbolName, "powerplug")
     XCTAssertEqual(PowerSufficiencyStatus.notConnected.symbolName, "battery.75percent")
   }
+
+  private func battery(present: Bool, percentage: Double?) -> BatteryStats {
+    BatteryStats(
+      present: present,
+      percentage: percentage,
+      state: present ? .discharging : .absent,
+      externalPowerConnected: false,
+      timeRemainingMinutes: nil,
+      timeToFullMinutes: nil,
+      cycleCount: nil,
+      condition: nil,
+      currentCapacityMah: nil,
+      maxCapacityMah: nil,
+      designCapacityMah: nil,
+      healthPercent: nil,
+      temperatureCelsius: nil,
+      voltageVolts: nil,
+      currentAmperes: nil,
+      batteryPowerWatts: nil)
+  }
+
 }
