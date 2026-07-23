@@ -187,73 +187,23 @@ else
   actual_notarization_status="not-notarized"
 fi
 
-grep -Fxq "MacVitals ${VERSION} (${build_version})" "${STATUS_PATH}"
-grep -Fxq "Architectures: ${architectures}" "${STATUS_PATH}"
-grep -Fxq "Signing status: ${actual_signing_status}" "${STATUS_PATH}"
-grep -Fxq "Notarization status: ${actual_notarization_status}" "${STATUS_PATH}"
-
-VERSION="${VERSION}" \
-BUILD_NUMBER="${build_version}" \
-BUNDLE_ID="${bundle_id}" \
-MINIMUM_MACOS="${minimum_macos}" \
-ARCHITECTURES="${architectures}" \
-SIGNING_STATUS="${actual_signing_status}" \
-NOTARIZATION_STATUS="${actual_notarization_status}" \
-ZIP_NAME="${ZIP_NAME}" \
-DMG_NAME="${DMG_NAME}" \
-MANIFEST_PATH="${MANIFEST_PATH}" \
-EXPECTED_GIT_COMMIT="${GITHUB_SHA:-}" \
-python3 - <<'PY'
-import json
-import os
-import re
-from pathlib import Path
-
-path = Path(os.environ["MANIFEST_PATH"])
-try:
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as error:
-    raise SystemExit(f"Invalid BUILD_MANIFEST.json: {error}")
-
-expected = {
-    "schemaVersion": 1,
-    "product": "MacVitals",
-    "version": os.environ["VERSION"],
-    "buildNumber": os.environ["BUILD_NUMBER"],
-    "bundleIdentifier": os.environ["BUNDLE_ID"],
-    "minimumMacOS": os.environ["MINIMUM_MACOS"],
-    "architectures": os.environ["ARCHITECTURES"].split(),
-    "signingStatus": os.environ["SIGNING_STATUS"],
-    "notarizationStatus": os.environ["NOTARIZATION_STATUS"],
-    "artifacts": {
-        "zip": os.environ["ZIP_NAME"],
-        "dmg": os.environ["DMG_NAME"],
-    },
-}
-for key, value in expected.items():
-    if manifest.get(key) != value:
-        raise SystemExit(
-            f"Manifest mismatch for {key}: expected {value!r}, found {manifest.get(key)!r}"
-        )
-
-commit = manifest.get("gitCommit")
-if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}|unknown", commit):
-    raise SystemExit(f"Invalid manifest gitCommit: {commit!r}")
-expected_commit = os.environ.get("EXPECTED_GIT_COMMIT")
-if expected_commit and commit != expected_commit:
-    raise SystemExit(
-        f"Manifest gitCommit {commit} does not match workflow commit {expected_commit}"
-    )
-
-xcode = manifest.get("xcodeVersion")
-if not isinstance(xcode, str) or not xcode.startswith("Xcode ") or "; Build version " not in xcode:
-    raise SystemExit(f"Invalid manifest xcodeVersion: {xcode!r}")
-
-serialized = json.dumps(manifest, sort_keys=True)
-for forbidden in ("/Users/", "Apple ID", "serialNumber", "username"):
-    if forbidden in serialized:
-        raise SystemExit(f"Manifest contains forbidden host-specific data: {forbidden}")
-PY
+metadata_arguments=(
+  --manifest "${MANIFEST_PATH}"
+  --status "${STATUS_PATH}"
+  --version "${VERSION}"
+  --build-number "${build_version}"
+  --bundle-identifier "${bundle_id}"
+  --minimum-macos "${minimum_macos}"
+  --architectures "${architectures}"
+  --signing-status "${actual_signing_status}"
+  --notarization-status "${actual_notarization_status}"
+  --zip-name "${ZIP_NAME}"
+  --dmg-name "${DMG_NAME}"
+)
+if [[ -n "${GITHUB_SHA:-}" ]]; then
+  metadata_arguments+=(--expected-git-commit "${GITHUB_SHA}")
+fi
+python3 "${ROOT_DIR}/scripts/validate_release_metadata.py" "${metadata_arguments[@]}"
 
 hdiutil verify "${DMG_PATH}" >/dev/null
 mkdir -p "${MOUNT_DIR}"
