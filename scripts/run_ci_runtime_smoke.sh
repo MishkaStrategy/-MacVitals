@@ -25,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for command in find head tee tr wc python3; do
+for command in date find head mkdir tee tr wc python3; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "Required runtime-smoke command is unavailable: ${command}" >&2
     exit 127
@@ -54,11 +54,34 @@ done
   exit 1
 }
 
-OUTPUT_ROOT="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${OUTPUT_ROOT}")"
+BASE_OUTPUT_ROOT="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${OUTPUT_ROOT}")"
+RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+OUTPUT_ROOT="${BASE_OUTPUT_ROOT}/${RUN_ID}"
+BASE_OUTPUT_ROOT="${BASE_OUTPUT_ROOT}" python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+base = Path(os.environ["BASE_OUTPUT_ROOT"])
+run_name = re.compile(r"run-[0-9]{8}T[0-9]{6}Z-[0-9]+\Z")
+if base.exists():
+    if not base.is_dir():
+        raise SystemExit(f"Runtime output base is not a directory: {base}")
+    unexpected = [
+        entry.name
+        for entry in base.iterdir()
+        if not (entry.is_dir() and not entry.is_symlink() and run_name.fullmatch(entry.name))
+    ]
+    if unexpected:
+        raise SystemExit(
+            "Refusing runtime output base with unexpected entries: "
+            + ", ".join(sorted(unexpected))
+        )
+PY
+mkdir -p -- "${BASE_OUTPUT_ROOT}"
+mkdir -- "${OUTPUT_ROOT}"
 APP_LOG="${OUTPUT_ROOT}/MacVitals.log"
 VALIDATION_LOG="${OUTPUT_ROOT}/validation.log"
-rm -rf -- "${OUTPUT_ROOT}"
-mkdir -p -- "${OUTPUT_ROOT}"
 
 "${EXECUTABLE_PATH}" \
   -AppleLanguages '(en)' \
@@ -141,4 +164,4 @@ print(f"| Peak threads | {threads:.0f} |" if threads is not None else "| Peak th
 PY
 fi
 
-echo "Runtime smoke artifacts were generated."
+echo "Runtime smoke artifacts were generated in ${OUTPUT_ROOT}."
