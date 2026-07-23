@@ -36,6 +36,85 @@ final class MenuLayoutRulesTests: XCTestCase {
     }
   }
 
+  func testMatchingStoredPresetRemainsSelected() {
+    for preset in MenuPreset.allCases where preset != .custom {
+      XCTAssertEqual(
+        MenuPresetResolution.resolve(
+          storedPreset: preset,
+          metrics: preset.metrics,
+          preserveExplicitCustom: true),
+        preset)
+    }
+  }
+
+  func testInterruptedPresetWriteInfersPresetFromStoredLayout() {
+    XCTAssertEqual(
+      MenuPresetResolution.resolve(
+        storedPreset: .power,
+        metrics: MenuPreset.performance.metrics,
+        preserveExplicitCustom: true),
+      .performance)
+  }
+
+  func testInterruptedCustomWriteInfersCustomFromStoredLayout() {
+    XCTAssertEqual(
+      MenuPresetResolution.resolve(
+        storedPreset: .performance,
+        metrics: [.cpu, .battery],
+        preserveExplicitCustom: true),
+      .custom)
+  }
+
+  func testExplicitCustomPresetIsPreservedForValidStoredLayout() {
+    XCTAssertEqual(
+      MenuPresetResolution.resolve(
+        storedPreset: .custom,
+        metrics: MenuPreset.performance.metrics,
+        preserveExplicitCustom: true),
+      .custom)
+  }
+
+  func testCustomWithoutStoredLayoutFallsBackToMatchingPreset() {
+    XCTAssertEqual(
+      MenuPresetResolution.resolve(
+        storedPreset: .custom,
+        metrics: MenuPreset.performance.metrics,
+        preserveExplicitCustom: false),
+      .performance)
+  }
+
+  func testUnknownLayoutResolvesToCustom() {
+    XCTAssertEqual(
+      MenuPresetResolution.resolve(
+        storedPreset: .power,
+        metrics: [.memory, .battery],
+        preserveExplicitCustom: true),
+      .custom)
+  }
+
+  func testCorrectionIsPersistedOnlyForValidStoredConfiguration() {
+    XCTAssertTrue(
+      MenuPresetResolution.shouldPersistCorrection(
+        storedRawValue: MenuPreset.power.rawValue,
+        resolvedPreset: .performance,
+        hasValidStoredConfiguration: true))
+    XCTAssertTrue(
+      MenuPresetResolution.shouldPersistCorrection(
+        storedRawValue: "futurePreset",
+        resolvedPreset: .performance,
+        hasValidStoredConfiguration: true))
+    XCTAssertFalse(
+      MenuPresetResolution.shouldPersistCorrection(
+        storedRawValue: MenuPreset.performance.rawValue,
+        resolvedPreset: .performance,
+        hasValidStoredConfiguration: true))
+    XCTAssertFalse(
+      MenuPresetResolution.shouldPersistCorrection(
+        storedRawValue: MenuPreset.power.rawValue,
+        resolvedPreset: .performance,
+        hasValidStoredConfiguration: false))
+  }
+
   func testMenuConfigurationRoundTripNormalizesMetrics() throws {
     let encoded = try XCTUnwrap(
       MenuConfigurationPersistence.encode([.cpu, .memory, .cpu, .battery]))
