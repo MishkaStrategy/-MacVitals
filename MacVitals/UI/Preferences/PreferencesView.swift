@@ -169,7 +169,7 @@ struct PreferencesView: View {
 
       HStack {
         Spacer()
-        Button("Restore Defaults") { settings.reset() }
+        Button("Restore Defaults") { settings.resetMenuLayout() }
           .accessibilityIdentifier("restoreDefaultsButton")
       }
     }
