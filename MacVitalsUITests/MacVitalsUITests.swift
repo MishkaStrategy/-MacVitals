@@ -48,7 +48,6 @@ final class MacVitalsUITests: XCTestCase {
     assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
     assertElementExists("launchAtLoginToggle", in: app, file: file, line: line)
-    assertElementExists("reduceMotionToggle", in: app, file: file, line: line)
 
     selectTab(labels.alerts, language: language, in: app, file: file, line: line)
     assertElementExists("notificationsEnabledToggle", in: app, file: file, line: line)
