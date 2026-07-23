@@ -83,10 +83,15 @@ struct OverviewView: View {
   }
 
   private var history: some View {
-    Chart(coordinator.cpuHistory.suffix(60)) { point in
-      if let value = point.value {
-        LineMark(x: .value("Time", point.timestamp), y: .value("CPU", value))
-      }
+    let points = HistoryChartSegmentation.points(
+      from: Array(coordinator.cpuHistory.suffix(60)))
+    return Chart(points) { point in
+      LineMark(
+        x: .value("Time", point.timestamp),
+        y: .value("CPU", point.value),
+        series: .value("Sampling epoch", point.segment)
+      )
+      .foregroundStyle(Color.accentColor)
     }
     .chartYScale(domain: 0...100)
     .frame(height: 76)
