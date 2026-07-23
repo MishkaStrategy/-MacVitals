@@ -24,4 +24,18 @@ final class NotificationAuthorizationTests: XCTestCase {
     XCTAssertEqual(NotificationAuthorizationState.failed("failure").message, "failure")
     XCTAssertNil(NotificationAuthorizationState.authorized.message)
   }
+
+  func testAuthorizationRequestGateRejectsConcurrentRequestsUntilCompletion() {
+    var gate = NotificationAuthorizationRequestGate()
+
+    XCTAssertTrue(gate.begin())
+    XCTAssertTrue(gate.isInFlight)
+    XCTAssertFalse(gate.begin())
+    XCTAssertTrue(gate.isInFlight)
+
+    gate.finish()
+
+    XCTAssertFalse(gate.isInFlight)
+    XCTAssertTrue(gate.begin())
+  }
 }
