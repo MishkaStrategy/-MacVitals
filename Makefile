@@ -24,10 +24,11 @@ lint:
 	swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
 validate-tooling:
-	python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+	python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_release_metadata.py scripts/validate_runtime_metrics.py
 	python3 scripts/materialize_app_icon.py --self-test
 	python3 scripts/materialize_app_icon.py --check-only
 	python3 scripts/validate_localizations.py
+	python3 scripts/validate_release_metadata.py --self-test
 	python3 scripts/validate_runtime_metrics.py --self-test
 	bash -n scripts/package_release.sh scripts/verify_release.sh scripts/collect_runtime_metrics.sh scripts/run_ci_runtime_smoke.sh
 
