@@ -57,6 +57,25 @@ final class SystemSamplerTests: XCTestCase {
     XCTAssertFalse(ExternalPowerResolver.isConnected(battery: nil, adapter: nil))
   }
 
+  func testBatterylessMacUsesAdapterOnlyAssessmentWithoutAdapterTelemetry() throws {
+    let assessment = try XCTUnwrap(
+      BatterylessPowerAssessment.make(
+        battery: battery(present: false, externalPower: false)))
+
+    XCTAssertEqual(assessment.status, .powerAdapterOnly)
+    XCTAssertEqual(assessment.confidence, 1)
+    XCTAssertNil(assessment.batteryPowerWatts)
+    XCTAssertNil(assessment.estimatedSystemPowerWatts)
+    XCTAssertFalse(assessment.explanation.isEmpty)
+  }
+
+  func testBatterylessAssessmentDoesNotMaskAvailableOrFailedBatteryProvider() {
+    XCTAssertNil(
+      BatterylessPowerAssessment.make(
+        battery: battery(present: true, externalPower: true)))
+    XCTAssertNil(BatterylessPowerAssessment.make(battery: nil))
+  }
+
   private func battery(present: Bool, externalPower: Bool) -> BatteryStats {
     BatteryStats(
       present: present,
