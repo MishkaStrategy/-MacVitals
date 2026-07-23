@@ -17,13 +17,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: bash scripts/install_xcodegen.sh
 
       - name: Generate project
         run: xcodegen generate
@@ -42,7 +42,7 @@ jobs:
 
       - name: Upload native build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-build-diagnostics
           path: |
@@ -61,7 +61,7 @@ jobs:
 
       - name: Upload native test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-test-diagnostics
           path: |
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload native UI test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-ui-test-diagnostics
           path: |
@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload release package diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-package-diagnostics
           path: |
@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload runtime smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-smoke-evidence
           path: |
@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload release candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: MacVitals-0.0.${{ github.run_number }}-unsigned
           path: dist/
@@ -141,7 +141,7 @@ jobs:
   repository-safety:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -161,12 +161,14 @@ jobs:
           python3 scripts/validate_output_path.py --self-test
           python3 scripts/validate_release_metadata.py --self-test
           python3 scripts/validate_runtime_metrics.py --self-test
+          bash scripts/install_xcodegen.sh --self-test
           bash -n \
+            scripts/install_xcodegen.sh \
             scripts/package_release.sh \
             scripts/verify_release.sh \
             scripts/collect_runtime_metrics.sh \
             scripts/run_ci_runtime_smoke.sh
 
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
