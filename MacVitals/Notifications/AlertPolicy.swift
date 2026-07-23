@@ -83,6 +83,11 @@ nonisolated struct AlertPolicy: Sendable {
     lastEmission.removeAll(keepingCapacity: true)
   }
 
+  mutating func markDeliveryFailed(_ kind: AlertKind) {
+    activeKinds.remove(kind)
+    lastEmission.removeValue(forKey: kind)
+  }
+
   private mutating func evaluatePower(
     snapshot: SystemSnapshot,
     now: Date,
