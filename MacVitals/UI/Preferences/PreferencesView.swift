@@ -31,7 +31,7 @@ struct PreferencesView: View {
     Form {
       Picker("Update interval", selection: $settings.samplingInterval) {
         ForEach([0.5, 1, 2, 5, 10], id: \.self) {
-          Text("\($0, specifier: "%g") s").tag($0)
+          Text("\($0, specifier: \"%g\") s").tag($0)
         }
       }
       .accessibilityIdentifier("samplingIntervalPicker")
@@ -56,9 +56,6 @@ struct PreferencesView: View {
             .accessibilityIdentifier("launchAtLoginStatusMessage")
         }
       }
-
-      Toggle("Reduce motion", isOn: $settings.reducedMotion)
-        .accessibilityIdentifier("reduceMotionToggle")
     }
     .padding()
   }
