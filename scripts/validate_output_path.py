@@ -35,6 +35,13 @@ def validate_descendant(repository_root: Path, candidate: Path) -> Path:
     return output
 
 
+def validate_disjoint(first: Path, second: Path) -> None:
+    left = resolved(first)
+    right = resolved(second)
+    if left == right or left in right.parents or right in left.parents:
+        raise PathSafetyError(f"Output paths must not overlap: {left} and {right}")
+
+
 def expect_invalid(root: Path, candidate: Path, label: str) -> None:
     try:
         validate_descendant(root, candidate)
@@ -52,6 +59,18 @@ def run_self_test() -> None:
         assert validate_descendant(root / ".", root / "dist") == (root / "dist").resolve()
         assert validate_descendant(root, Path("relative-build")) == (root / "relative-build").resolve()
         assert validate_descendant(root, Path("--option-like")) == (root / "--option-like").resolve()
+        validate_disjoint(root / "build", root / "dist")
+        for left, right in [
+            (root / "build", root / "build"),
+            (root / "build", root / "build" / "dist"),
+            (root / "dist" / "build", root / "dist"),
+        ]:
+            try:
+                validate_disjoint(left, right)
+            except PathSafetyError:
+                pass
+            else:
+                raise PathSafetyError(f"Self-test accepted overlapping paths: {left}, {right}")
 
         expect_invalid(root, root, "repository root")
         expect_invalid(root, root.parent, "repository parent")
@@ -72,6 +91,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--root", type=Path)
     parser.add_argument("--path", dest="candidate", type=Path)
+    parser.add_argument("--other-path", type=Path)
     return parser.parse_args()
 
 
@@ -85,6 +105,9 @@ def main() -> int:
         if arguments.root is None or arguments.candidate is None:
             raise PathSafetyError("--root and --path are required")
         output = validate_descendant(arguments.root, arguments.candidate)
+        if arguments.other_path is not None:
+            other = validate_descendant(arguments.root, arguments.other_path)
+            validate_disjoint(output, other)
         print(os.fspath(output))
         return 0
     except PathSafetyError as error:
