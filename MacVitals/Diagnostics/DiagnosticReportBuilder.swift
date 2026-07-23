@@ -92,7 +92,8 @@ enum DiagnosticReportBuilder {
       encoder.dateEncodingStrategy = .iso8601
       try encoder.encode(bundle).write(to: url, options: .atomic)
     } catch {
-      Logger.diagnostics.error("Export failed: \(error.localizedDescription, privacy: .public)")
+      Logger.diagnostics.error(
+        "Export failed: \(error.localizedDescription, privacy: .private)")
     }
   }
 
