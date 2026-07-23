@@ -1,5 +1,6 @@
 import UserNotifications
 import XCTest
+
 @testable import MacVitals
 
 final class NotificationAuthorizationTests: XCTestCase {
@@ -37,5 +38,23 @@ final class NotificationAuthorizationTests: XCTestCase {
 
     XCTAssertFalse(gate.isInFlight)
     XCTAssertTrue(gate.begin())
+  }
+
+  func testAuthorizationRefreshGateAcceptsOnlyLatestGeneration() {
+    var gate = NotificationAuthorizationRefreshGate()
+    let first = gate.begin()
+    let second = gate.begin()
+
+    XCTAssertFalse(gate.isCurrent(first))
+    XCTAssertTrue(gate.isCurrent(second))
+  }
+
+  func testAuthorizationRefreshGateInvalidatesOutstandingGeneration() {
+    var gate = NotificationAuthorizationRefreshGate()
+    let token = gate.begin()
+
+    gate.invalidate()
+
+    XCTAssertFalse(gate.isCurrent(token))
   }
 }
