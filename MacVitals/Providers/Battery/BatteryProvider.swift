@@ -2,14 +2,61 @@ import Foundation
 import IOKit
 import IOKit.ps
 
+nonisolated enum BatterySourceResolution: Equatable, Sendable {
+  case present
+  case absent
+  case providerError
+
+  static func resolve(
+    sourceCount: Int,
+    classifiedSourceCount: Int,
+    internalBatteryFound: Bool
+  ) -> Self {
+    guard sourceCount >= 0, classifiedSourceCount >= 0, classifiedSourceCount <= sourceCount else {
+      return .providerError
+    }
+    if internalBatteryFound {
+      return classifiedSourceCount > 0 ? .present : .providerError
+    }
+    if sourceCount == 0 { return .absent }
+    return classifiedSourceCount == sourceCount ? .absent : .providerError
+  }
+}
+
 struct BatteryProvider: Sendable {
   func sample() -> MetricValue<BatteryStats> {
     let now = Date()
-    guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-      let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef],
-      let description = internalBatteryDescription(info: info, sources: sources)
-    else {
+    guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+      return unavailableBattery(
+        timestamp: now,
+        message: "IOPSCopyPowerSourcesInfo failed")
+    }
+    guard let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
+      return unavailableBattery(
+        timestamp: now,
+        message: "IOPSCopyPowerSourcesList failed")
+    }
+
+    let lookup = internalBatteryLookup(info: info, sources: sources)
+    switch BatterySourceResolution.resolve(
+      sourceCount: sources.count,
+      classifiedSourceCount: lookup.classifiedSourceCount,
+      internalBatteryFound: lookup.description != nil)
+    {
+    case .providerError:
+      return unavailableBattery(
+        timestamp: now,
+        message: "Power source descriptions or types were unavailable")
+    case .absent:
       return absentBattery(timestamp: now)
+    case .present:
+      break
+    }
+
+    guard let description = lookup.description else {
+      return unavailableBattery(
+        timestamp: now,
+        message: "Internal battery resolution was inconsistent")
     }
 
     let current = BatteryValueNormalizer.finiteNumber(description[kIOPSCurrentCapacityKey])
@@ -91,20 +138,38 @@ struct BatteryProvider: Sendable {
         : nil)
   }
 
-  private func internalBatteryDescription(
+  private func internalBatteryLookup(
     info: CFTypeRef,
     sources: [CFTypeRef]
-  ) -> [String: Any]? {
+  ) -> (description: [String: Any]?, classifiedSourceCount: Int) {
+    var classifiedSourceCount = 0
     for source in sources {
       guard
         let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue()
-          as? [String: Any]
+          as? [String: Any],
+        let type = description[kIOPSTypeKey] as? String
       else { continue }
-      if (description[kIOPSTypeKey] as? String) == kIOPSInternalBatteryType {
-        return description
+      classifiedSourceCount += 1
+      if type == kIOPSInternalBatteryType {
+        return (description, classifiedSourceCount)
       }
     }
-    return nil
+    return (nil, classifiedSourceCount)
+  }
+
+  private func unavailableBattery(
+    timestamp: Date,
+    message: String
+  ) -> MetricValue<BatteryStats> {
+    MetricValue(
+      value: nil,
+      unit: .percent,
+      availability: .providerError,
+      quality: .unknown,
+      source: .iokitPowerSources,
+      timestamp: timestamp,
+      isEstimated: false,
+      message: message)
   }
 
   private func absentBattery(timestamp: Date) -> MetricValue<BatteryStats> {
