@@ -23,7 +23,7 @@ for command in xcodegen xcodebuild ditto hdiutil plutil shasum codesign lipo xcr
   }
 done
 
-BUILD_DIR="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${BUILD_DIR}")"
+BUILD_DIR="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${BUILD_DIR}" --other-path "${DIST_DIR}")"
 DIST_DIR="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${DIST_DIR}")"
 ARCHIVE_PATH="${BUILD_DIR}/MacVitals.xcarchive"
 APP_PATH="${ARCHIVE_PATH}/Products/Applications/MacVitals.app"
