@@ -7,27 +7,25 @@ struct AdapterProvider: Sendable {
     guard let unmanaged = IOPSCopyExternalPowerAdapterDetails(),
       let details = unmanaged.takeRetainedValue() as? [String: Any]
     else {
-      return unavailableAdapter(timestamp: now)
+      return .unavailable(
+        unit: .watts,
+        availability: .temporarilyUnavailable,
+        source: .iokitPowerSources,
+        message: "External adapter details are unavailable or no adapter is attached")
     }
 
-    let rawWatts = AdapterValueNormalizer.firstFiniteNumber(
-      keys: ["Watts", "AdapterWatts"],
-      in: details)
-    let rawVoltage = AdapterValueNormalizer.firstFiniteNumber(
-      keys: ["AdapterVoltage", "Voltage"],
-      in: details)
-    let rawCurrent = AdapterValueNormalizer.firstFiniteNumber(
-      keys: ["Current", "AdapterCurrent"],
-      in: details)
+    let rawWatts = AdapterValueNormalizer.finiteNumber(
+      details[kIOPSPowerAdapterWattsKey])
+    let rawCurrentMilliamps = AdapterValueNormalizer.finiteNumber(
+      details[kIOPSPowerAdapterCurrentKey])
     let value = AdapterStats(
       connected: true,
-      manufacturer: AdapterValueNormalizer.text(details["Manufacturer"]),
-      model: AdapterValueNormalizer.text(details["Name"])
-        ?? AdapterValueNormalizer.text(details["Model"]),
-      transport: AdapterValueNormalizer.text(details["Description"]),
+      manufacturer: nil,
+      model: nil,
+      transport: nil,
       ratedPowerWatts: AdapterValueNormalizer.ratedPowerWatts(rawWatts),
-      voltageVolts: AdapterValueNormalizer.voltageVolts(rawVoltage),
-      currentAmperes: AdapterValueNormalizer.currentAmperes(rawCurrent),
+      voltageVolts: nil,
+      currentAmperes: AdapterValueNormalizer.milliampsToAmps(rawCurrentMilliamps),
       measuredPowerWatts: nil)
 
     return MetricValue(
@@ -38,27 +36,8 @@ struct AdapterProvider: Sendable {
       source: .iokitPowerSources,
       timestamp: now,
       isEstimated: false,
-      message: "Validated rated/negotiated adapter data; measured input power is not claimed")
-  }
-
-  private func unavailableAdapter(timestamp: Date) -> MetricValue<AdapterStats> {
-    let value = AdapterStats(
-      connected: false,
-      manufacturer: nil,
-      model: nil,
-      transport: nil,
-      ratedPowerWatts: nil,
-      voltageVolts: nil,
-      currentAmperes: nil,
-      measuredPowerWatts: nil)
-    return MetricValue(
-      value: value,
-      unit: .watts,
-      availability: .temporarilyUnavailable,
-      quality: .direct,
-      source: .iokitPowerSources,
-      timestamp: timestamp,
-      isEstimated: false,
-      message: "No external adapter details")
+      message:
+        "Validated public adapter rated-power and current fields; measured input power is not claimed"
+    )
   }
 }
