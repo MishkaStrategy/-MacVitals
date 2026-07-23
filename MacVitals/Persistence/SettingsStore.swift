@@ -151,9 +151,6 @@ final class SettingsStore: ObservableObject {
       UserDefaults.standard.set(showInDock, forKey: Keys.showInDock)
     }
   }
-  @Published var reducedMotion: Bool {
-    didSet { UserDefaults.standard.set(reducedMotion, forKey: Keys.reducedMotion) }
-  }
   @Published var notificationsEnabled: Bool {
     didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
   }
@@ -196,7 +193,6 @@ final class SettingsStore: ObservableObject {
     samplingInterval = SamplingIntervalPolicy.normalized(
       defaults.double(forKey: Keys.samplingInterval))
     showInDock = defaults.bool(forKey: Keys.showInDock)
-    reducedMotion = defaults.bool(forKey: Keys.reducedMotion)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
     memoryAlertThreshold = SettingsNumericPolicy.memoryAlertThreshold(
       defaults.double(forKey: Keys.memoryAlertThreshold))
@@ -285,7 +281,6 @@ final class SettingsStore: ObservableObject {
     static let selectedPreset = "selectedPreset"
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
-    static let reducedMotion = "reducedMotion"
     static let notificationsEnabled = "notificationsEnabled"
     static let memoryAlertThreshold = "memoryAlertThreshold"
     static let lowBatteryAlertThreshold = "lowBatteryAlertThreshold"
