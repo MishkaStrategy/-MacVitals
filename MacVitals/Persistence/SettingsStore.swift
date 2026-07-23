@@ -78,6 +78,29 @@ nonisolated enum MenuLayoutRules {
   }
 }
 
+nonisolated enum MenuPresetResolution {
+  static func resolve(
+    storedPreset: MenuPreset,
+    metrics: [MenuMetric],
+    preserveExplicitCustom: Bool
+  ) -> MenuPreset {
+    let normalized = MenuLayoutRules.normalized(metrics)
+    if preserveExplicitCustom, storedPreset == .custom { return .custom }
+    if storedPreset != .custom, storedPreset.metrics == normalized { return storedPreset }
+    return MenuPreset.allCases.first {
+      $0 != .custom && $0.metrics == normalized
+    } ?? .custom
+  }
+
+  static func shouldPersistCorrection(
+    storedRawValue: String?,
+    resolvedPreset: MenuPreset,
+    hasValidStoredConfiguration: Bool
+  ) -> Bool {
+    hasValidStoredConfiguration && storedRawValue != resolvedPreset.rawValue
+  }
+}
+
 nonisolated enum MenuConfigurationPersistence {
   static let currentSchemaVersion = 1
 
@@ -180,29 +203,36 @@ final class SettingsStore: ObservableObject {
     lowBatteryAlertThreshold = SettingsNumericPolicy.lowBatteryAlertThreshold(
       defaults.double(forKey: Keys.lowBatteryAlertThreshold))
 
-    let initialPreset: MenuPreset
-    if let rawPreset = defaults.string(forKey: Keys.selectedPreset),
+    let storedPresetRawValue = defaults.string(forKey: Keys.selectedPreset)
+    let storedPreset: MenuPreset
+    if let rawPreset = storedPresetRawValue,
       let preset = MenuPreset(rawValue: rawPreset)
     {
-      initialPreset = preset
+      storedPreset = preset
     } else {
-      initialPreset = .performance
+      storedPreset = .performance
     }
 
-    let initialMetrics: [MenuMetric]
-    if let data = defaults.data(forKey: Keys.menuConfiguration),
-      let storedMetrics = MenuConfigurationPersistence.decode(data)
-    {
-      initialMetrics = storedMetrics
-    } else {
-      initialMetrics =
-        initialPreset == .custom
-        ? MenuPreset.performance.metrics
-        : initialPreset.metrics
-    }
+    let storedConfigurationData = defaults.data(forKey: Keys.menuConfiguration)
+    let storedMetrics: [MenuMetric]? =
+      storedConfigurationData.flatMap { MenuConfigurationPersistence.decode($0) }
+    let initialMetrics =
+      storedMetrics
+      ?? (storedPreset == .custom ? MenuPreset.performance.metrics : storedPreset.metrics)
+    let initialPreset = MenuPresetResolution.resolve(
+      storedPreset: storedPreset,
+      metrics: initialMetrics,
+      preserveExplicitCustom: storedMetrics != nil)
 
     selectedPreset = initialPreset
     enabledMetrics = initialMetrics
+    if MenuPresetResolution.shouldPersistCorrection(
+      storedRawValue: storedPresetRawValue,
+      resolvedPreset: initialPreset,
+      hasValidStoredConfiguration: storedMetrics != nil)
+    {
+      defaults.set(initialPreset.rawValue, forKey: Keys.selectedPreset)
+    }
     refreshLaunchAtLoginState()
   }
 
