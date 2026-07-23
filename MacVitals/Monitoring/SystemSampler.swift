@@ -1,18 +1,6 @@
 import Dispatch
 import Foundation
 
-nonisolated enum ExternalPowerResolver {
-  static func isConnected(
-    battery: BatteryStats?,
-    adapter: AdapterStats?
-  ) -> Bool {
-    if let battery, battery.present {
-      return battery.externalPowerConnected
-    }
-    return adapter?.connected ?? false
-  }
-}
-
 nonisolated enum BatterylessPowerAssessment {
   static func make(battery: BatteryStats?) -> PowerAssessment? {
     guard battery?.present == false else { return nil }
@@ -49,13 +37,15 @@ actor SystemSampler {
     let batteryValue = battery.value
     let adapterValue = adapter.value
     let now = Date()
-    let externalPower = ExternalPowerResolver.isConnected(
+    let externalPowerState = ExternalPowerResolver.resolve(
       battery: batteryValue,
-      adapter: adapterValue)
+      batteryAvailability: battery.availability,
+      adapter: adapterValue,
+      adapterAvailability: adapter.availability)
 
     let powerSample = PowerSample(
       timestamp: now,
-      externalPower: externalPower,
+      externalPower: externalPowerState == .connected,
       batteryPowerWatts: batteryValue?.batteryPowerWatts,
       adapterRatedPowerWatts: adapterValue?.ratedPowerWatts,
       adapterMeasuredPowerWatts: adapterValue?.measuredPowerWatts,
@@ -66,6 +56,10 @@ actor SystemSampler {
       if let directAssessment = BatterylessPowerAssessment.make(battery: batteryValue) {
         evaluator.reset()
         return directAssessment
+      }
+      if let unknownAssessment = UnknownExternalPowerAssessment.make(for: externalPowerState) {
+        evaluator.reset()
+        return unknownAssessment
       }
       return evaluator.evaluate(powerSample)
     }
