@@ -8,8 +8,6 @@ WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
 DURATION_SECONDS="${CI_RUNTIME_DURATION_SECONDS:-45}"
 INTERVAL_SECONDS="${CI_RUNTIME_INTERVAL_SECONDS:-2}"
 OUTPUT_ROOT="${CI_RUNTIME_OUTPUT_ROOT:-${ROOT_DIR}/runtime-smoke-results}"
-APP_LOG="${OUTPUT_ROOT}/MacVitals.log"
-VALIDATION_LOG="${OUTPUT_ROOT}/validation.log"
 app_pid=""
 
 cleanup() {
@@ -38,6 +36,15 @@ done
   echo "Warmup duration must be a non-negative number: ${WARMUP_SECONDS}" >&2
   exit 2
 }
+[[ "${DURATION_SECONDS}" =~ ^[0-9]+$ ]] && (( 10#${DURATION_SECONDS} > 0 )) || {
+  echo "Runtime duration must be a positive whole number of seconds: ${DURATION_SECONDS}" >&2
+  exit 2
+}
+[[ "${INTERVAL_SECONDS}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  && awk -v value="${INTERVAL_SECONDS}" 'BEGIN { exit !(value > 0) }' || {
+  echo "Runtime interval must be a positive number of seconds: ${INTERVAL_SECONDS}" >&2
+  exit 2
+}
 [[ -d "${APP_PATH}" ]] || {
   echo "Packaged application is missing: ${APP_PATH}" >&2
   exit 1
@@ -47,8 +54,11 @@ done
   exit 1
 }
 
-rm -rf "${OUTPUT_ROOT}"
-mkdir -p "${OUTPUT_ROOT}"
+OUTPUT_ROOT="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${OUTPUT_ROOT}")"
+APP_LOG="${OUTPUT_ROOT}/MacVitals.log"
+VALIDATION_LOG="${OUTPUT_ROOT}/validation.log"
+rm -rf -- "${OUTPUT_ROOT}"
+mkdir -p -- "${OUTPUT_ROOT}"
 
 "${EXECUTABLE_PATH}" \
   -AppleLanguages '(en)' \
