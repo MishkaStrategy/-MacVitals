@@ -47,20 +47,6 @@ nonisolated enum NotificationAuthorizationMapper {
   }
 }
 
-nonisolated struct NotificationAuthorizationRequestGate: Sendable {
-  private(set) var isInFlight = false
-
-  mutating func begin() -> Bool {
-    guard !isInFlight else { return false }
-    isInFlight = true
-    return true
-  }
-
-  mutating func finish() {
-    isInFlight = false
-  }
-}
-
 @MainActor
 final class NotificationCoordinator {
   var onAuthorizationStateChange: ((NotificationAuthorizationState) -> Void)?
@@ -76,6 +62,7 @@ final class NotificationCoordinator {
   private var policy = AlertPolicy()
   private var authorizationFlowTask: Task<Void, Never>?
   private var authorizationRequestGate = NotificationAuthorizationRequestGate()
+  private var authorizationRefreshGate = NotificationAuthorizationRefreshGate()
   private let center: UNUserNotificationCenter
 
   init(center: UNUserNotificationCenter = .current()) {
@@ -97,6 +84,7 @@ final class NotificationCoordinator {
     guard enabled else {
       authorizationFlowTask?.cancel()
       authorizationFlowTask = nil
+      authorizationRefreshGate.invalidate()
       policy.reset()
       authorizationState = .unknown
       return
@@ -108,10 +96,12 @@ final class NotificationCoordinator {
 
   func refreshAuthorizationState() async {
     guard enabled else {
+      authorizationRefreshGate.invalidate()
       authorizationState = .unknown
       return
     }
 
+    let token = authorizationRefreshGate.begin()
     let center = self.center
     let state = await withCheckedContinuation { continuation in
       center.getNotificationSettings { settings in
@@ -119,8 +109,32 @@ final class NotificationCoordinator {
           returning: NotificationAuthorizationMapper.state(for: settings.authorizationStatus))
       }
     }
-    guard enabled else { return }
+    guard enabled,
+      !Task.isCancelled,
+      authorizationRefreshGate.isCurrent(token)
+    else { return }
+
     authorizationState = state
+    guard state == .notDetermined,
+      authorizationRequestGate.begin()
+    else { return }
+
+    defer { authorizationRequestGate.finish() }
+
+    do {
+      try await requestAuthorization()
+      guard enabled else { return }
+      startAuthorizationFlow()
+    } catch {
+      guard enabled else { return }
+      if authorizationRefreshGate.isCurrent(token)
+        || authorizationState == .unknown
+        || authorizationState == .notDetermined
+      {
+        authorizationState = .failed(
+          L10n.format("Could not request notification permission: %@", error.localizedDescription))
+      }
+    }
   }
 
   func process(snapshot: SystemSnapshot) {
@@ -153,24 +167,7 @@ final class NotificationCoordinator {
   private func startAuthorizationFlow() {
     authorizationFlowTask?.cancel()
     authorizationFlowTask = Task { [weak self] in
-      guard let self else { return }
-      await refreshAuthorizationState()
-      guard enabled, !Task.isCancelled,
-        authorizationState == .notDetermined,
-        authorizationRequestGate.begin()
-      else { return }
-
-      defer { authorizationRequestGate.finish() }
-
-      do {
-        try await requestAuthorization()
-        guard enabled else { return }
-        await refreshAuthorizationState()
-      } catch {
-        guard enabled else { return }
-        authorizationState = .failed(
-          L10n.format("Could not request notification permission: %@", error.localizedDescription))
-      }
+      await self?.refreshAuthorizationState()
     }
   }
 
