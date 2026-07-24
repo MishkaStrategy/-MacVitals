@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,13 +43,56 @@ def finite_number(value: Any, field: str) -> float:
     return result
 
 
+def positive_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer, found {value!r}")
+    return value
+
+
+def nonnegative_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer, found {value!r}")
+    return value
+
+
+def nonempty_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string, found {value!r}")
+    return value
+
+
 def validate(summary: dict[str, Any], limits: Limits) -> list[str]:
     failures: list[str] = []
 
     try:
         schema = nested(summary, "schemaVersion")
         process_name = nested(summary, "process", "name")
+        process_pid = positive_integer(
+            nested(summary, "process", "pidAtStart"),
+            "process.pidAtStart",
+        )
+        process_uid = nonnegative_integer(
+            nested(summary, "process", "uidAtStart"),
+            "process.uidAtStart",
+        )
+        started_at = nonempty_string(
+            nested(summary, "process", "startedAt"),
+            "process.startedAt",
+        )
+        executable_name = nonempty_string(
+            nested(summary, "process", "executableName"),
+            "process.executableName",
+        )
+        identity_token = nonempty_string(
+            nested(summary, "process", "identityTokenSha256"),
+            "process.identityTokenSha256",
+        )
+        identity_stable = nested(summary, "process", "identityStable")
         alive_at_end = nested(summary, "process", "aliveAtEnd")
+        selection_mode = nonempty_string(
+            nested(summary, "process", "selectionMode"),
+            "process.selectionMode",
+        )
         requested_duration = finite_number(
             nested(summary, "requested", "durationSeconds"),
             "requested.durationSeconds",
@@ -57,9 +101,19 @@ def validate(summary: dict[str, Any], limits: Limits) -> list[str]:
             nested(summary, "requested", "intervalSeconds"),
             "requested.intervalSeconds",
         )
+        observed_clock = nested(summary, "observed", "clock")
+        sample_source = nested(summary, "observed", "sampleSource")
         observed_duration = finite_number(
             nested(summary, "observed", "durationSeconds"),
             "observed.durationSeconds",
+        )
+        first_sample_elapsed = finite_number(
+            nested(summary, "observed", "firstSampleElapsedSeconds"),
+            "observed.firstSampleElapsedSeconds",
+        )
+        last_sample_elapsed = finite_number(
+            nested(summary, "observed", "lastSampleElapsedSeconds"),
+            "observed.lastSampleElapsedSeconds",
         )
         sample_count = finite_number(
             nested(summary, "observed", "sampleCount"),
@@ -101,14 +155,34 @@ def validate(summary: dict[str, Any], limits: Limits) -> list[str]:
     except ValueError as error:
         return [str(error)]
 
-    if schema != 2:
-        failures.append(f"Expected schemaVersion 2, found {schema!r}")
+    if schema != 3:
+        failures.append(f"Expected schemaVersion 3, found {schema!r}")
     if process_name != "MacVitals":
         failures.append(f"Expected process name MacVitals, found {process_name!r}")
+    if executable_name != "MacVitals":
+        failures.append(
+            f"Expected executable name MacVitals, found {executable_name!r}"
+        )
+    if process_pid <= 0 or process_uid < 0 or not started_at:
+        failures.append("Process identity fields must be populated")
+    if not re.fullmatch(r"[0-9a-f]{64}", identity_token):
+        failures.append("Process identity token must be a lowercase SHA-256 digest")
+    if identity_stable is not True:
+        failures.append("Process identity was not stable for the entire collection")
     if alive_at_end is not True:
         failures.append("MacVitals exited before the runtime collection completed")
+    if selection_mode not in {"explicit-pid", "exact-name-single-match"}:
+        failures.append(f"Unexpected process selection mode: {selection_mode!r}")
+    if observed_clock != "monotonic":
+        failures.append(f"Expected monotonic elapsed clock, found {observed_clock!r}")
+    if sample_source != "locale-fixed-single-ps-snapshot":
+        failures.append(f"Unexpected runtime sample source: {sample_source!r}")
     if requested_duration <= 0 or requested_interval <= 0:
         failures.append("Requested duration and interval must be positive")
+    if first_sample_elapsed < 0 or last_sample_elapsed < first_sample_elapsed:
+        failures.append("Observed elapsed sample bounds are invalid")
+    if observed_duration < last_sample_elapsed:
+        failures.append("Observed duration is shorter than the final sample timestamp")
     if sample_count < limits.minimum_samples:
         failures.append(
             f"Only {int(sample_count)} samples were collected; "
@@ -172,11 +246,25 @@ def load_summary(path: Path) -> dict[str, Any]:
 
 def self_test() -> None:
     passing = {
-        "schemaVersion": 2,
-        "process": {"name": "MacVitals", "aliveAtEnd": True},
+        "schemaVersion": 3,
+        "process": {
+            "name": "MacVitals",
+            "pidAtStart": 4242,
+            "uidAtStart": 501,
+            "startedAt": "Fri Jul 24 10:11:12 2026",
+            "executableName": "MacVitals",
+            "identityTokenSha256": "a" * 64,
+            "identityStable": True,
+            "aliveAtEnd": True,
+            "selectionMode": "explicit-pid",
+        },
         "requested": {"durationSeconds": 45, "intervalSeconds": 2},
         "observed": {
+            "clock": "monotonic",
+            "sampleSource": "locale-fixed-single-ps-snapshot",
             "durationSeconds": 45,
+            "firstSampleElapsedSeconds": 0.1,
+            "lastSampleElapsedSeconds": 44.1,
             "sampleCount": 22,
             "sampleIntervalSeconds": {"p95": 3},
         },
@@ -187,6 +275,18 @@ def self_test() -> None:
         },
     }
     assert validate(passing, Limits()) == []
+
+    reused = json.loads(json.dumps(passing))
+    reused["process"]["identityStable"] = False
+    assert any("identity" in failure for failure in validate(reused, Limits()))
+
+    wall_clock = json.loads(json.dumps(passing))
+    wall_clock["observed"]["clock"] = "wall"
+    assert any("monotonic" in failure for failure in validate(wall_clock, Limits()))
+
+    ambiguous = json.loads(json.dumps(passing))
+    ambiguous["process"]["selectionMode"] = "first-name-match"
+    assert any("selection" in failure for failure in validate(ambiguous, Limits()))
 
     exiting = json.loads(json.dumps(passing))
     exiting["process"]["aliveAtEnd"] = False
