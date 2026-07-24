@@ -22,16 +22,19 @@ Includes a project-owned, reproducibly materialized macOS application icon. Engl
 No accounts, telemetry, analytics, ads, network backend, root helper or `sudo`. Runtime performance evidence uses monotonic timing and stable PID/UID/start-time/executable identity, refuses ambiguous process selection, detects possible PID reuse and automatically rejects user home paths in generated CSV, JSON and logs.
 
 ## Physical Validation
-A reproducible Apple Silicon validation harness verifies the candidate manifest, checksums, exact arm64 architecture and executable SHA-256 before collecting isolated battery, adapter, sleep/wake and stability evidence. It keeps every physical, manual, Instruments, independent-review and signed-publication gate visibly incomplete until an authorized reviewer records the result.
+A reproducible Apple Silicon validation harness verifies the candidate manifest, checksums, exact arm64 architecture and executable SHA-256 before collecting isolated battery, adapter, sleep/wake and stability evidence. It keeps every physical, manual, Instruments, independent-review and publication gate visibly incomplete until an authorized reviewer records the result.
+
+## Signed Candidate Safety
+A separate protected manual workflow can create a private Developer ID signed and notarized candidate for an exact commit. It signs and notarizes both the application and DMG, retains Apple logs, validates stapled tickets and Gatekeeper, regenerates final checksums and has read-only repository permissions. It does not merge, tag or create a public GitHub Release.
 
 ## Compatibility
 macOS 13+ on Apple Silicon (`arm64`) only. Intel (`x86_64`) and universal builds are not supported. Runtime capability checks decide sensor availability on supported hardware.
 
 ## Installation
-The CI fallback build is unsigned and non-notarized unless valid Apple credentials were configured for the workflow. `BUILD_STATUS.txt` must report `Architectures: arm64`.
+Normal CI candidates are unsigned and non-notarized. A private signed workflow artifact may report `developer-id-signed` and `ticket-present` only after all signature, Apple notarization, stapling and hosted Gatekeeper gates pass. `BUILD_STATUS.txt` must report `Architectures: arm64`.
 
 ## Known Limitations
-Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Apple Silicon Mac hardware. Hosted preparation of the physical-validation harness is not physical-device evidence.
+Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Apple Silicon Mac hardware. Hosted preparation of the physical-validation harness is not physical-device evidence, and a hosted Gatekeeper pass does not replace clean-Mac installation validation.
 
 ## Checksums
 See `SHA256SUMS.txt` attached to the release.
