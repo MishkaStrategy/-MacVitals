@@ -10,8 +10,21 @@ command -v python3 >/dev/null 2>&1 || {
 }
 
 [[ -f "${COLLECTOR}" ]] || {
-  echo "Runtime metrics collector is missing: ${COLLECTOR}" >&2
+  echo "Runtime metrics collector is missing" >&2
   exit 1
 }
 
-exec python3 "${COLLECTOR}" "$@"
+redact_output() {
+  while IFS= read -r line; do
+    if [[ "${line}" == "Runtime summary generated at "* ]]; then
+      printf '%s\n' "Runtime summary generated."
+      continue
+    fi
+    if [[ -n "${HOME:-}" ]]; then
+      line="${line//${HOME}/<HOME>}"
+    fi
+    printf '%s\n' "${line}"
+  done
+}
+
+python3 "${COLLECTOR}" "$@" 2>&1 | redact_output
