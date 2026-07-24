@@ -2,6 +2,14 @@ import AppKit
 import Foundation
 
 @MainActor
+protocol LifecycleCoordinating: AnyObject, Sendable {
+  func handleSleep()
+  func handleWake()
+}
+
+extension MetricsCoordinator: LifecycleCoordinating {}
+
+@MainActor
 final class LifecycleMonitor {
   static let shared = LifecycleMonitor(center: NSWorkspace.shared.notificationCenter)
 
@@ -15,7 +23,7 @@ final class LifecycleMonitor {
     self.center = center
   }
 
-  func start(coordinator: MetricsCoordinator) {
+  func start(coordinator: any LifecycleCoordinating) {
     guard !isStarted else { return }
 
     observers.append(
@@ -23,16 +31,20 @@ final class LifecycleMonitor {
         forName: NSWorkspace.willSleepNotification,
         object: nil,
         queue: .main
-      ) { _ in
-        Task { @MainActor in coordinator.handleSleep() }
+      ) { [weak coordinator] _ in
+        MainActor.assumeIsolated {
+          coordinator?.handleSleep()
+        }
       })
     observers.append(
       center.addObserver(
         forName: NSWorkspace.didWakeNotification,
         object: nil,
         queue: .main
-      ) { _ in
-        Task { @MainActor in coordinator.handleWake() }
+      ) { [weak coordinator] _ in
+        MainActor.assumeIsolated {
+          coordinator?.handleWake()
+        }
       })
   }
 
