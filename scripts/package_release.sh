@@ -6,6 +6,7 @@ VERSION="${1:-${VERSION:-0.0.0}}"
 BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+TARGET_ARCHITECTURE="arm64"
 
 if [[ ! "${VERSION}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || (( ${#VERSION} > 64 )); then
   echo "Invalid release version: ${VERSION}. Use one to three numeric components (64 characters maximum)." >&2
@@ -74,6 +75,8 @@ xcodebuild \
   -archivePath "${ARCHIVE_PATH}" \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+  ARCHS="${TARGET_ARCHITECTURE}" \
+  ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED_VALUE}" \
   archive
 
@@ -94,6 +97,10 @@ plist_value() {
 bundle_id="$(plist_value CFBundleIdentifier)"
 minimum_macos="$(plist_value LSMinimumSystemVersion)"
 architectures="$(lipo -archs "${EXECUTABLE_PATH}")"
+if [[ "${architectures}" != "${TARGET_ARCHITECTURE}" ]]; then
+  echo "Release executable must contain only ${TARGET_ARCHITECTURE}; found: ${architectures}" >&2
+  exit 1
+fi
 git_commit="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 xcode_version="$(xcodebuild -version | python3 -c 'import sys; print("; ".join(line.strip() for line in sys.stdin if line.strip()))')"
 
