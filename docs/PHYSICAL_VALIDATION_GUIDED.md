@@ -8,7 +8,32 @@ The flow supports native Apple Silicon (`arm64`) only. Intel and universal valid
 
 Check out the exact reviewed feature commit or, after merge, the exact reviewed `main` commit. Do not use a moving unverified checkout.
 
-From the repository root, place the five files from the intended `MacVitals-<version>-arm64-unsigned` workflow artifact directly in `dist/`:
+### Recommended: stage the downloaded workflow artifact directly
+
+Download the complete `MacVitals-<version>-arm64-unsigned.zip` workflow artifact and run:
+
+```bash
+python3 scripts/prepare_physical_artifact.py stage \
+  ~/Downloads/MacVitals-<version>-arm64-unsigned.zip
+```
+
+This command is the preferred entrypoint. Before any candidate file is extracted, it:
+
+- requires native macOS arm64;
+- requires a regular non-symlink outer ZIP;
+- requires exactly five root-level nonempty files;
+- rejects nested paths, traversal, duplicate members and symlink entries;
+- reads `BUILD_MANIFEST.json` inside the outer ZIP and requires exactly `architectures: ["arm64"]`;
+- requires the exact versioned ZIP/DMG plus status, manifest and checksums;
+- stages the files in a new digest-addressed ignored directory below `physical-validation-candidates/`;
+- refuses silent reuse of a previously staged artifact;
+- then starts the full guided verifier and validation menu.
+
+The printed outer artifact SHA-256 identifies the exact downloaded GitHub artifact used to start the session.
+
+### Alternative: stage five extracted files manually
+
+Place the five files from the intended workflow artifact directly in `dist/`:
 
 - `MacVitals-<version>.zip`;
 - `MacVitals-<version>.dmg`;
@@ -28,7 +53,7 @@ gh run download <workflow-run-id> \
 
 The guide rejects missing, extra, empty or symlinked candidate entries. `dist/` must contain exactly the five intended files.
 
-## 2. Start the guided flow
+## 2. Start the guided flow for manually staged files
 
 Run:
 
@@ -47,7 +72,7 @@ The guide:
 7. creates a new session below `physical-validation-results/`;
 8. opens the interactive menu.
 
-Existing extracted-app or session directories are never silently reused. Candidate, session and extracted-app inputs cannot escape the repository through symlinks.
+Existing staged artifacts, extracted apps and session directories are never silently reused. Candidate, session and extracted-app inputs cannot escape the repository through symlinks.
 
 ## 3. Use the menu
 
