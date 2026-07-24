@@ -289,6 +289,24 @@ def verify_developer_id(app: Path, identity: str, team_id: str, evidence: Path) 
     return detail
 
 
+def verify_developer_id_dmg(
+    dmg: Path, identity: str, team_id: str, evidence: Path
+) -> str:
+    run(["codesign", "--verify", "--strict", "--verbose=4", str(dmg)])
+    detail_result = run(["codesign", "-dv", "--verbose=4", str(dmg)], check=False)
+    detail = detail_result.stdout + detail_result.stderr
+    write_redacted(evidence / "codesign-dmg-details.txt", detail)
+    if detail_result.returncode != 0:
+        raise ReleaseError("Could not inspect Developer ID DMG signature")
+    if f"Authority={identity}" not in detail:
+        raise ReleaseError("DMG authority does not match the requested identity")
+    if f"TeamIdentifier={team_id}" not in detail:
+        raise ReleaseError("DMG TeamIdentifier does not match the requested team")
+    if not re.search(r"^Timestamp=.+$", detail, re.MULTILINE):
+        raise ReleaseError("DMG signature does not contain a trusted timestamp")
+    return detail
+
+
 def gatekeeper(app: Path, dmg: Path, evidence: Path) -> None:
     app_result = run(
         ["spctl", "--assess", "--type", "execute", "--verbose=4", str(app)],
@@ -445,9 +463,12 @@ def run_release(args: argparse.Namespace) -> int:
                 "-srcfolder", str(dmg_root), "-ov", "-format", "UDZO", str(dmg_path),
             ]
         )
+        run(["codesign", "--force", "--sign", args.identity, "--timestamp", str(dmg_path)])
+        verify_developer_id_dmg(dmg_path, args.identity, args.team_id, evidence)
         dmg_request_id = submit_and_retain(dmg_path, "dmg", evidence, credential_args)
         run(["xcrun", "stapler", "staple", str(dmg_path)])
         run(["xcrun", "stapler", "validate", str(dmg_path)])
+        verify_developer_id_dmg(dmg_path, args.identity, args.team_id, evidence)
         gatekeeper(app, dmg_path, evidence)
 
         manifest_path = final_dist / "BUILD_MANIFEST.json"
@@ -484,6 +505,7 @@ def run_release(args: argparse.Namespace) -> int:
             "trustedTimestamp": True,
             "applicationNotarySubmissionID": app_request_id,
             "dmgNotarySubmissionID": dmg_request_id,
+            "dmgDeveloperIDSignature": "pass",
             "applicationStaplerValidation": "pass",
             "dmgStaplerValidation": "pass",
             "applicationGatekeeperAssessment": "pass",
