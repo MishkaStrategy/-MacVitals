@@ -13,6 +13,8 @@ The workflow `.github/workflows/signed-release-candidate.yml`:
 - checks out an explicitly supplied 40-character commit SHA;
 - uses the protected `signed-release` GitHub environment;
 - has read-only repository permissions;
+- routes all credential-backed execution through `scripts/signed_release_entrypoint.py`;
+- rejects equal, nested, external, repository-root and symlink-escape output/work/evidence paths before signing material is used;
 - imports the Developer ID certificate into a temporary keychain;
 - deletes the temporary keychain, certificate and notary API key file in an `always()` cleanup step;
 - creates workflow artifacts only;
@@ -76,29 +78,30 @@ The workflow checks out that SHA directly. A mismatch between the requested SHA 
 
 ## Pipeline stages
 
-The workflow and `scripts/sign_notarize_release.py` perform:
+The workflow, `scripts/signed_release_entrypoint.py` and `scripts/sign_notarize_release.py` perform:
 
-1. Python compilation and deterministic signed-pipeline self-tests.
-2. SwiftFormat lint and native arm64 unit tests.
-3. Temporary keychain creation and Developer ID certificate import.
-4. A fresh unsigned arm64 archive through the existing package/release verifier.
-5. Exact manifest, version, build, commit and architecture validation.
-6. Developer ID Application signing with Hardened Runtime, trusted timestamp and project entitlements.
-7. Strict app signature, authority, Team ID, timestamp and arm64 verification.
-8. Application ZIP submission to Apple notarization with `--wait`.
-9. Retention of the application submission response and notarization log.
-10. Stapling and validation of the application ticket.
-11. Creation of the final ZIP and DMG from the stapled application.
-12. Developer ID signing and verification of the DMG.
-13. DMG submission to Apple notarization with `--wait`.
-14. Retention of the DMG submission response and notarization log.
-15. Stapling and validation of the DMG ticket.
-16. Gatekeeper assessment of both the application and DMG.
-17. Regeneration of signed/notarized provenance and SHA-256 files after stapling.
-18. Full `verify_release.sh` validation against the exact requested commit.
-19. Privacy scanning of text evidence and metadata.
-20. Upload of private candidate and evidence workflow artifacts.
-21. Guaranteed cleanup of temporary signing material.
+1. Python compilation and deterministic self-tests, including adversarial path-isolation cases.
+2. Resolution of signed output, work and evidence roots; all three must be mutually non-overlapping strict repository children with no symlink escape.
+3. SwiftFormat lint and native arm64 unit tests.
+4. Temporary keychain creation and Developer ID certificate import.
+5. A fresh unsigned arm64 archive through the existing package/release verifier.
+6. Exact manifest, version, build, commit and architecture validation.
+7. Developer ID Application signing with Hardened Runtime, trusted timestamp and project entitlements.
+8. Strict app signature, authority, Team ID, timestamp and arm64 verification.
+9. Application ZIP submission to Apple notarization with `--wait`.
+10. Retention of the application submission response and notarization log.
+11. Stapling and validation of the application ticket.
+12. Creation of the final ZIP and DMG from the stapled application.
+13. Developer ID signing and verification of the DMG.
+14. DMG submission to Apple notarization with `--wait`.
+15. Retention of the DMG submission response and notarization log.
+16. Stapling and validation of the DMG ticket.
+17. Gatekeeper assessment of both the application and DMG.
+18. Regeneration of signed/notarized provenance and SHA-256 files after stapling.
+19. Full `verify_release.sh` validation against the exact requested commit.
+20. Privacy scanning of text evidence and metadata.
+21. Upload of private candidate and evidence workflow artifacts.
+22. Guaranteed cleanup of temporary signing material.
 
 Any failed stage prevents the private candidate artifact from being uploaded as successful.
 
