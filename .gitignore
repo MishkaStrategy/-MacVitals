@@ -4,6 +4,9 @@ build/
 build-intel/
 build-intel-tests/
 dist/
+signed-dist/
+signed-release-work/
+signed-release-evidence/
 runtime-smoke-results/
 runtime-intel-results/
 performance-results/
