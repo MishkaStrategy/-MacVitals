@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  verify-arm64:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -41,13 +41,13 @@ jobs:
       - name: Swift format lint
         run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
-      - name: Unit and hardware-smoke tests
+      - name: Run arm64 unit and hardware-smoke tests
         run: >-
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
-          -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
-          test -only-testing:MacVitalsTests
+          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
 
-      - name: Package and verify unsigned main candidate
+      - name: Package and verify unsigned arm64 main candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
@@ -63,13 +63,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-smoke-evidence
+          name: runtime-smoke-evidence-arm64
           path: runtime-smoke-results/
           if-no-files-found: ignore
 
-      - name: Upload verified unsigned candidate
+      - name: Upload verified unsigned arm64 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: MacVitals-main-0.0.${{ github.run_number }}-unsigned
+          name: MacVitals-main-0.0.${{ github.run_number }}-arm64-unsigned
           path: dist/
           if-no-files-found: error
