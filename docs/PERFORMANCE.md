@@ -10,20 +10,23 @@ Synchronous Mach, IOKit and Metal collection remains isolated in a dedicated `Sy
 
 ## Recorded hosted-runner baseline
 
-The last verified Apple Silicon checkpoint before the arm64-only scope migration was Pull Request workflow #200 for version `0.0.200`. It is retained as a regression baseline, not a physical-device performance claim.
+The current post-migration checkpoint is Pull Request workflow #234 for version `0.0.234` at feature head `384360f4a5593b0fc202f9ac51107f33203c7746`. It is hosted regression evidence, not a physical-device performance claim.
+
+Environment: hosted `arm64` macOS 15.7.7 (24G720), hardware model `VirtualMac2,1`, 3 logical CPUs and 7 GiB physical memory.
 
 | Metric | Hosted arm64 observation |
 |---|---:|
 | Samples / duration | 22 / 46 s |
-| Mean process CPU | 0.405% |
+| Mean process CPU | 0.291% |
 | p95 process CPU | 1.1% |
-| Peak RSS | 54.25 MiB |
+| Peak process CPU | 1.4% |
+| Peak RSS | 51.80 MiB |
 | RSS growth during measured window | 0.23 MiB |
 | Peak threads | 5 |
 | Process alive at completion | yes |
 | Application runtime log | empty |
 
-A new checkpoint after the arm64-only migration must supersede this baseline before release readiness is claimed.
+The same workflow completed 133 unit/provider tests, bilingual Preferences smoke and exact arm64-only ZIP/DMG verification before launching the packaged application.
 
 ## CI guardrails
 
