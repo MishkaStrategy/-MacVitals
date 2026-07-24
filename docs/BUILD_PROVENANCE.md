@@ -24,6 +24,14 @@ The packaging verifier rejects missing, empty or inconsistent provenance files.
 - notarization classification;
 - exact ZIP and DMG filenames.
 
+For MacVitals v1, the architecture list must be exactly:
+
+```json
+["arm64"]
+```
+
+Universal binaries, `x86_64`, duplicate architectures and additional slices are outside the supported scope and must be rejected by release verification.
+
 The manifest intentionally omits usernames, runner paths, serial numbers, Apple IDs and timestamps that are unnecessary for identifying the source and toolchain.
 
 ## Signing states
@@ -65,6 +73,7 @@ Any change to the binaries or their declared provenance invalidates checksum ver
 Pull-request, main and tag-validation workflows intentionally set `CODE_SIGNING_ALLOWED=NO`. Their expected manifest state is therefore:
 
 ```text
+Architectures: arm64
 Signing status: unsigned
 Notarization status: not-notarized
 ```
