@@ -9,4 +9,6 @@
 - Diagnostics export, localization resources and privacy documentation
 - Project-owned reproducible macOS application icon
 - Bilingual five-tab Preferences accessibility smoke coverage
-- macOS CI and unsigned release packaging fallback
+- Apple Silicon (`arm64`) only support contract for macOS 13+
+- arm64-only CI, unsigned release packaging and exact architecture verification
+- Intel compatibility workflow and universal binary requirements removed
