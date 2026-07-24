@@ -113,6 +113,7 @@ kill -0 "${app_pid}" >/dev/null 2>&1 || {
 
 PROCESS_NAME="MacVitals" \
 PROCESS_ID="${app_pid}" \
+EXPECTED_EXECUTABLE_PATH="${EXECUTABLE_PATH}" \
 OUTPUT_ROOT="${OUTPUT_ROOT}/samples" \
 bash "${ROOT_DIR}/scripts/collect_runtime_metrics.sh" \
   "${DURATION_SECONDS}" \
