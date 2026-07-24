@@ -29,17 +29,21 @@ jobs:
     steps:
       - name: Validate manual authorization
         shell: bash
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          EXPECTED_COMMIT_INPUT: ${{ inputs.expected_commit }}
+          AUTHORIZATION_INPUT: ${{ inputs.authorization }}
         run: |
           set -euo pipefail
-          [[ "${{ inputs.authorization }}" == "SIGN_MACVITALS_RELEASE_CANDIDATE" ]] || {
+          [[ "${AUTHORIZATION_INPUT}" == "SIGN_MACVITALS_RELEASE_CANDIDATE" ]] || {
             echo "Signed release authorization phrase is incorrect" >&2
             exit 2
           }
-          [[ "${{ inputs.version }}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || {
+          [[ "${RELEASE_VERSION_INPUT}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || {
             echo "Version must contain one to three numeric components" >&2
             exit 2
           }
-          [[ "${{ inputs.expected_commit }}" =~ ^[0-9a-f]{40}$ ]] || {
+          [[ "${EXPECTED_COMMIT_INPUT}" =~ ^[0-9a-f]{40}$ ]] || {
             echo "expected_commit must be an exact lowercase commit SHA" >&2
             exit 2
           }
@@ -51,10 +55,12 @@ jobs:
 
       - name: Verify exact checkout
         shell: bash
+        env:
+          EXPECTED_COMMIT_INPUT: ${{ inputs.expected_commit }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
-          [[ "${actual}" == "${{ inputs.expected_commit }}" ]] || {
+          [[ "${actual}" == "${EXPECTED_COMMIT_INPUT}" ]] || {
             echo "Checked-out commit ${actual} differs from requested commit" >&2
             exit 1
           }
@@ -88,6 +94,10 @@ jobs:
               exit 1
             }
           done
+          [[ "${NOTARY_KEY_ID}" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo "Notary API key ID has an invalid format" >&2
+            exit 1
+          }
           KEYCHAIN_PATH="${RUNNER_TEMP}/macvitals-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
           export CERTIFICATE_PATH="${RUNNER_TEMP}/developer-id.p12"
@@ -129,6 +139,9 @@ jobs:
 
       - name: Build and verify private signed candidate
         env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          EXPECTED_COMMIT_INPUT: ${{ inputs.expected_commit }}
+          AUTHORIZATION_INPUT: ${{ inputs.authorization }}
           DEVELOPER_ID_APPLICATION: ${{ secrets.MACVITALS_DEVELOPER_ID_APPLICATION }}
           DEVELOPER_TEAM_ID: ${{ secrets.MACVITALS_DEVELOPER_TEAM_ID }}
           NOTARY_KEY_ID: ${{ secrets.MACVITALS_NOTARY_KEY_ID }}
@@ -142,15 +155,15 @@ jobs:
             }
           done
           python3 scripts/sign_notarize_release.py run \
-            --version "${{ inputs.version }}" \
+            --version "${RELEASE_VERSION_INPUT}" \
             --build-number "${GITHUB_RUN_NUMBER}" \
-            --expected-commit "${{ inputs.expected_commit }}" \
+            --expected-commit "${EXPECTED_COMMIT_INPUT}" \
             --identity "${DEVELOPER_ID_APPLICATION}" \
             --team-id "${DEVELOPER_TEAM_ID}" \
             --api-key "${MACVITALS_NOTARY_KEY_PATH}" \
             --key-id "${NOTARY_KEY_ID}" \
             --issuer "${NOTARY_ISSUER_ID}" \
-            --authorization "${{ inputs.authorization }}"
+            --authorization "${AUTHORIZATION_INPUT}"
 
       - name: Upload verified private signed candidate
         uses: actions/upload-artifact@v4
@@ -181,9 +194,8 @@ jobs:
         shell: bash
         run: |
           set +e
-          if [[ -n "${MACVITALS_SIGNING_KEYCHAIN:-}" && -f "${MACVITALS_SIGNING_KEYCHAIN}" ]]; then
-            security delete-keychain "${MACVITALS_SIGNING_KEYCHAIN}"
+          keychain_path="${MACVITALS_SIGNING_KEYCHAIN:-${RUNNER_TEMP}/macvitals-signing.keychain-db}"
+          if [[ -f "${keychain_path}" ]]; then
+            security delete-keychain "${keychain_path}"
           fi
-          rm -f -- \
-            "${MACVITALS_CERTIFICATE_PATH:-}" \
-            "${MACVITALS_NOTARY_KEY_PATH:-}"
+          rm -f -- "${RUNNER_TEMP}/developer-id.p12" "${RUNNER_TEMP}"/AuthKey_*.p8
