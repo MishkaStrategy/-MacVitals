@@ -15,3 +15,6 @@
 - Runtime evidence schema v3 with monotonic timing and stable process identity
 - Ambiguous process selection and possible PID reuse now fail closed
 - Runtime evidence logs redact home paths and pass an automated privacy scan
+- Reproducible physical Apple Silicon validation harness and runbook
+- Every physical scenario is pinned to the verified candidate executable SHA-256
+- Physical, manual, Instruments, independent-review and signing gates remain visibly incomplete until explicitly reviewed
