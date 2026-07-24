@@ -1,6 +1,6 @@
 # Physical Hardware Validation
 
-Hosted macOS CI proves compilation, deterministic logic, provider smoke behavior, packaged-process stability and packaging. It does not prove MacBook battery semantics, real adapter behavior, thermal behavior, physical-device energy impact or long-duration stability. This protocol defines the remaining physical validation evidence.
+Hosted Apple Silicon CI proves compilation, deterministic logic, provider smoke behavior, packaged-process stability and arm64-only packaging. It does not prove MacBook battery semantics, real adapter behavior, thermal behavior, physical-device energy impact or long-duration stability. This protocol defines the remaining physical validation evidence for the supported Apple Silicon scope.
 
 ## Evidence rules
 
@@ -11,16 +11,22 @@ Hosted macOS CI proves compilation, deterministic logic, provider smoke behavior
 - Do not record serial numbers, Apple ID, usernames, home paths or user documents.
 - Mark a scenario `not tested`, `unsupported`, `unavailable` or `failed`; do not silently omit it.
 - Attach the package `BUILD_MANIFEST.json`, `BUILD_STATUS.txt` and `SHA256SUMS.txt` to every validation set.
-- Keep hosted-runner, emulated and physical-device evidence clearly separated.
+- Keep hosted-runner and physical-device evidence clearly separated.
+- Confirm the packaged executable architecture is exactly `arm64`.
 
 ## Hosted architecture evidence
 
-The automated workflows currently provide two architecture checks:
+The automated workflow uses hosted Apple Silicon macOS and provides:
 
-- `macos-15`: universal packaging plus arm64 unit/provider tests and packaged-app runtime smoke;
-- `macos-15-intel`: native x86_64 Release build, x86_64 unit/provider tests and packaged-app runtime smoke on an Intel-hosted runner.
+- native arm64 Debug and Release builds;
+- arm64 unit/provider tests;
+- bilingual UI smoke;
+- an arm64-only ZIP/DMG candidate;
+- packaged-app runtime smoke with CSV/JSON evidence.
 
-This materially reduces architecture and compiler risk. It does **not** count as physical Intel MacBook validation because hosted runners do not expose a representative internal battery, charger transition matrix, thermals or real laptop sleep/wake behavior.
+This materially reduces compiler and packaging risk. It does **not** count as physical MacBook validation because hosted runners do not expose a representative internal battery, charger transition matrix, thermals or real laptop sleep/wake behavior.
+
+Intel hardware is outside the supported product scope and is not part of this validation matrix.
 
 ## Required hardware matrix
 
@@ -28,15 +34,14 @@ At minimum, validate:
 
 | Class | Minimum scenario |
 |---|---|
-| Apple Silicon laptop | M1 Pro MacBook Pro, internal display, battery and USB-C/MagSafe adapters |
+| Primary Apple Silicon laptop | M1 Pro MacBook Pro, internal display, battery and USB-C/MagSafe adapters |
 | Newer Apple Silicon laptop | At least one M2/M3/M4-family MacBook when available |
-| Intel laptop | One supported Intel MacBook for battery/adapter semantics, or an explicit decision to narrow Intel sensor claims |
-| Desktop | One battery-less Mac to confirm graceful unsupported battery behavior |
+| Apple Silicon desktop | One battery-less Mac to confirm graceful unsupported battery behavior when available |
 
 For every machine record only:
 
 - marketing model name;
-- architecture;
+- Apple Silicon family;
 - memory size;
 - macOS version and build;
 - MacVitals version/build and Git commit from `BUILD_MANIFEST.json`;
@@ -45,14 +50,15 @@ For every machine record only:
 ## Installation and launch
 
 1. Verify every SHA-256 entry.
-2. Confirm `BUILD_STATUS.txt` accurately describes signing and notarization.
+2. Confirm `BUILD_STATUS.txt` accurately describes `Architectures: arm64`, signing and notarization.
 3. Confirm `BUILD_MANIFEST.json` matches the tested ZIP/DMG and commit.
-4. Install from the DMG into Applications.
-5. Confirm menu-bar-only launch with `LSUIElement` behavior.
-6. Open Preferences with Command–Comma.
-7. Validate English and Russian interfaces.
-8. Enable and disable Launch at Login; record whether macOS requires approval.
-9. Restart the user session and confirm the actual launch state.
+4. Confirm `lipo -archs` reports exactly `arm64`.
+5. Install from the DMG into Applications.
+6. Confirm menu-bar-only launch with `LSUIElement` behavior.
+7. Open Preferences with Command–Comma.
+8. Validate English and Russian interfaces.
+9. Enable and disable Launch at Login; record whether macOS requires approval.
+10. Restart the user session and confirm the actual launch state.
 
 ## Provider scenarios
 
@@ -181,4 +187,4 @@ For each machine produce a signed-off record containing:
 - known deviations and release impact;
 - tester and date.
 
-The project must remain draft until required scenarios pass or the supported scope is explicitly narrowed in documentation and metadata.
+The project must remain Draft until required Apple Silicon scenarios pass or the supported scope is narrowed further in documentation and metadata.
