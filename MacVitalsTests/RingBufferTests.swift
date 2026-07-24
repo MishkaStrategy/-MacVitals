@@ -78,4 +78,14 @@ final class RingBufferTests: XCTestCase {
     XCTAssertEqual(chartPoint.timestamp, source.timestamp)
     XCTAssertEqual(chartPoint.value, 42)
   }
+
+  func testSnapshotHistoryPointsUseSnapshotTimestampForBothSeries() {
+    let snapshot = SystemSnapshot.empty
+    let points = SnapshotHistoryPoints.make(from: snapshot)
+
+    XCTAssertEqual(points.cpu.timestamp, snapshot.timestamp)
+    XCTAssertEqual(points.memory.timestamp, snapshot.timestamp)
+    XCTAssertNil(points.cpu.value)
+    XCTAssertNil(points.memory.value)
+  }
 }
