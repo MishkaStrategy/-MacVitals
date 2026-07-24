@@ -171,6 +171,17 @@ def stage(args: argparse.Namespace) -> int:
             + str(destination.relative_to(repository))
         )
 
+    app_root = strict_repository_child(
+        repository / "physical-validation-apps" / f"artifact-{digest[:16]}",
+        repository,
+        "physical validation app root",
+    )
+    if app_root.exists() or app_root.is_symlink():
+        raise ArtifactError(
+            "Refusing to reuse a staged physical application root: "
+            + str(app_root.relative_to(repository))
+        )
+
     version = extract_validated(artifact, destination)
     guide = repository / "scripts" / "run_physical_validation_guided.py"
     command = [
@@ -181,6 +192,8 @@ def stage(args: argparse.Namespace) -> int:
         str(repository),
         "--dist",
         str(destination),
+        "--app-root",
+        str(app_root),
     ]
     print(f"Staged verified outer artifact for version {version}.")
     print(f"Outer artifact SHA-256: {digest}")
