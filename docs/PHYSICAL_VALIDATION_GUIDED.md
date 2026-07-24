@@ -26,7 +26,7 @@ gh run download <workflow-run-id> \
   --dir dist
 ```
 
-Inspect `dist/` before continuing. It must contain only the intended candidate files.
+The guide rejects missing, extra, empty or symlinked candidate entries. `dist/` must contain exactly the five intended files.
 
 ## 2. Start the guided flow
 
@@ -40,13 +40,14 @@ The guide:
 
 1. requires a native arm64 Mac;
 2. reads the candidate version, build, commit and architecture;
-3. extracts the exact candidate ZIP into a new ignored directory below `physical-validation-apps/`;
-4. invokes the full release verifier;
-5. verifies that the extracted app executable exactly matches the candidate ZIP;
-6. creates a new session below `physical-validation-results/`;
-7. opens the interactive menu.
+3. requires the exact five-file candidate scope;
+4. runs the complete release verifier **before** extracting the ZIP;
+5. extracts the verified ZIP into a new ignored directory below `physical-validation-apps/`;
+6. verifies that the extracted app executable exactly matches the candidate ZIP;
+7. creates a new session below `physical-validation-results/`;
+8. opens the interactive menu.
 
-Existing extracted-app or session directories are never silently reused.
+Existing extracted-app or session directories are never silently reused. Candidate, session and extracted-app inputs cannot escape the repository through symlinks.
 
 ## 3. Use the menu
 
@@ -69,7 +70,7 @@ Scenario profiles use the project-approved defaults:
 | sleep-wake | 5 minutes | 2 seconds |
 | popover-closed | 15 minutes | 2 seconds |
 | popover-open | 15 minutes | 2 seconds |
-| high-frequency | 5 minutes | 0.5 seconds |
+| high-frequency | 15 minutes | 0.5 seconds |
 | stress | 15 minutes | 2 seconds |
 | stability-six-hour | 6 hours | 2 seconds |
 | batteryless-desktop | 15 minutes | 2 seconds |
@@ -87,7 +88,7 @@ python3 scripts/run_physical_validation_guided.py resume \
   --session physical-validation-results/session-<UTC>-<PID>
 ```
 
-The guide uses the exact extracted application recorded in `guided-session.json`; it does not accept a replacement application during resume.
+The guide uses the exact extracted application recorded in `guided-session.json`; it does not accept a replacement application during resume. The low-level harness rechecks the executable SHA-256 before every scenario.
 
 ## 5. Finalize conservatively
 
