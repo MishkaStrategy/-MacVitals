@@ -97,11 +97,8 @@ nonisolated enum BatteryPowerFlowState: Equatable, Sendable {
 
 nonisolated enum GPUMemoryDisplayText {
   static func summary(hasUnifiedMemory: Bool?) -> String {
-    switch hasUnifiedMemory {
-    case true: return L10n.string("unified memory")
-    case false: return L10n.string("discrete memory")
-    case nil: return L10n.string("memory type unavailable")
-    }
+    guard let hasUnifiedMemory else { return L10n.string("memory type unavailable") }
+    return L10n.string(hasUnifiedMemory ? "unified memory" : "discrete memory")
   }
 }
 
