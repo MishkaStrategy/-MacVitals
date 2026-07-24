@@ -86,6 +86,14 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 
 Эти замеры не заменяют Instruments, проверку Energy Impact, wakeups, температуры и реальной автономности.
 
+Для физической релизной проверки на M1/M-series Mac положите точный workflow-кандидат в `dist/` и запустите guided-режим:
+
+```bash
+python3 scripts/run_physical_validation_guided.py start --dist dist
+```
+
+Он сам извлекает и проверяет точное приложение, выбирает утверждённые длительности сценариев и не ставит ручной `pass` без отдельного решения проверяющего. Подробности: [guided physical validation](docs/PHYSICAL_VALIDATION_GUIDED.md) и [полный низкоуровневый runbook](docs/PHYSICAL_VALIDATION_RUNBOOK.md).
+
 ## Оставшиеся релизные проверки
 
 - Developer ID signing, notarization, stapling и Gatekeeper с настоящими Apple-учётными данными;
