@@ -1,7 +1,7 @@
 # MacVitals 1.0.0
 
 ## Overview
-Native privacy-first macOS menu bar diagnostics.
+Native privacy-first macOS menu bar diagnostics for Apple Silicon Macs.
 
 ## Highlights
 CPU and memory monitoring, battery/adapter diagnostics, bounded history, configurable combined menu bar, support bundle export and charger sufficiency assessment.
@@ -22,16 +22,16 @@ Includes a project-owned, reproducibly materialized macOS application icon. Engl
 No accounts, telemetry, analytics, ads, network backend, root helper or `sudo`.
 
 ## Compatibility
-macOS 13+; Apple Silicon is the primary target. Runtime capability checks decide sensor availability.
+macOS 13+ on Apple Silicon (`arm64`) only. Intel (`x86_64`) and universal builds are not supported. Runtime capability checks decide sensor availability on supported hardware.
 
 ## Installation
-The CI fallback build is unsigned and non-notarized unless valid Apple credentials were configured for the workflow.
+The CI fallback build is unsigned and non-notarized unless valid Apple credentials were configured for the workflow. `BUILD_STATUS.txt` must report `Architectures: arm64`.
 
 ## Known Limitations
-Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Mac hardware.
+Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Apple Silicon Mac hardware.
 
 ## Checksums
 See `SHA256SUMS.txt` attached to the release.
 
 ## Build Information
-Swift 6 / Xcode macOS runner. The attached `BUILD_STATUS.txt` is authoritative for signing/notarization status.
+Swift 6 / Xcode Apple Silicon macOS runner. The attached `BUILD_STATUS.txt` is authoritative for architecture, signing and notarization status.
