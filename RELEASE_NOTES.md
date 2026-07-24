@@ -19,7 +19,7 @@ Uses sustained signed battery power while external power is connected, rolling m
 Includes a project-owned, reproducibly materialized macOS application icon. English and Russian Preferences smoke coverage verifies all five tabs and their stable accessibility surfaces.
 
 ## Privacy
-No accounts, telemetry, analytics, ads, network backend, root helper or `sudo`.
+No accounts, telemetry, analytics, ads, network backend, root helper or `sudo`. Runtime performance evidence uses monotonic timing and stable PID/UID/start-time/executable identity, refuses ambiguous process selection, detects possible PID reuse and automatically rejects user home paths in generated CSV, JSON and logs.
 
 ## Compatibility
 macOS 13+ on Apple Silicon (`arm64`) only. Intel (`x86_64`) and universal builds are not supported. Runtime capability checks decide sensor availability on supported hardware.
