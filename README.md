@@ -1,8 +1,14 @@
 # MacVitals
 
-MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU, memory, battery, adapter and real-time power diagnostics.
+MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU, memory, battery, adapter and real-time power diagnostics on Apple Silicon Macs.
 
-> **Release status:** Apple Silicon and Intel hosted macOS workflows now verify formatting, native builds, unit/provider tests, packaged-app runtime smoke, universal unsigned Release packaging, the production application icon, ZIP/DMG consistency, EN/RU resources, SHA-256 checksums and machine-readable build provenance. Apple signing, notarization, physical battery/adapter validation, Instruments energy measurements and final hardware screenshots remain incomplete.
+> **Release status:** The Apple Silicon hosted macOS workflow verifies formatting, native arm64 builds, unit/provider tests, packaged-app runtime smoke, arm64-only unsigned Release packaging, the production application icon, ZIP/DMG consistency, EN/RU resources, SHA-256 checksums and machine-readable build provenance. Apple signing, notarization, physical battery/adapter validation, Instruments energy measurements and final hardware screenshots remain incomplete.
+
+## Supported platform
+
+- Apple Silicon (`arm64`) only
+- macOS 13 or later
+- Intel (`x86_64`) builds are intentionally unsupported and are rejected by release verification
 
 ## Highlights
 
@@ -17,9 +23,9 @@ MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU,
 - Metal GPU identity and capability detection; no fabricated system utilization
 - Local state-transition alerts with cooldown and explicit permission handling
 - Bounded in-memory history with sleep/wake discontinuities
-- Reproducible unsigned ZIP and DMG packaging with provenance and checksum verification
+- Reproducible unsigned arm64 ZIP and DMG packaging with provenance and checksum verification
 - Reproducible project-owned macOS application icon with structural and checksum validation
-- Native hosted runtime smoke on both arm64 and x86_64
+- Native hosted runtime smoke on arm64
 - English and Russian localization resources and five-tab Preferences accessibility smoke coverage
 - No accounts, ads, analytics, telemetry, cloud backend, root helper or `sudo`
 
@@ -29,7 +35,7 @@ macOS does not expose one universal public API for whole-system GPU utilization 
 
 ## Build from source
 
-Requirements: macOS 13+, Xcode 16+, Homebrew.
+Requirements: Apple Silicon Mac, macOS 13+, Xcode 16+, Homebrew.
 
 ```bash
 git clone https://github.com/mishkacher/-MacVitals.git
@@ -59,7 +65,7 @@ The package output includes:
 - `BUILD_STATUS.txt`
 - `BUILD_MANIFEST.json`
 
-The verifier checks the application icon, bundle, localizations, universal executable, ZIP/DMG payload consistency, signing/notarization classification and exact checksum scope. An artifact must not be described as Developer ID signed or notarized unless the actual bundle and provenance checks confirm those states.
+The verifier checks the application icon, bundle, localizations, arm64-only executable, ZIP/DMG payload consistency, signing/notarization classification and exact checksum scope. A universal or x86_64 executable is rejected. An artifact must not be described as Developer ID signed or notarized unless the actual bundle and provenance checks confirm those states.
 
 To run the same short packaged-app regression guardrail used by CI:
 
@@ -77,18 +83,18 @@ These process samples do not replace Instruments energy, wakeup, thermal or phys
 
 ## Verified hosted evidence
 
-The current workflows have successfully:
+The current workflow has successfully:
 
 - built, tested and launched the packaged app natively on hosted arm64 macOS;
-- built, tested and launched a native x86_64 app on `macos-15-intel`;
 - retained raw runtime CSV/JSON evidence;
-- kept broad CPU, RSS, sample-continuity and thread-count runaway guardrails green.
+- kept broad CPU, RSS, sample-continuity and thread-count runaway guardrails green;
+- verified that the distributable executable contains only the `arm64` architecture.
 
-This confirms hosted architecture compatibility. It does not prove physical MacBook battery, charger, thermal, sleep/wake or energy behavior. See [performance evidence](docs/PERFORMANCE.md) and [physical validation protocol](docs/HARDWARE_VALIDATION.md).
+This confirms hosted Apple Silicon compatibility. It does not prove physical MacBook battery, charger, thermal, sleep/wake or energy behavior. See [performance evidence](docs/PERFORMANCE.md) and [physical validation protocol](docs/HARDWARE_VALIDATION.md).
 
 ## Screenshots
 
-Verified screenshots will be added only after the application has been captured on representative physical Mac hardware. Concept renders are intentionally not presented as real screenshots.
+Verified screenshots will be added only after the application has been captured on representative physical Apple Silicon Mac hardware. Concept renders are intentionally not presented as real screenshots.
 
 ## Privacy
 
@@ -102,8 +108,7 @@ The evaluator does **not** compare voltages. Its most important practical signal
 
 - Apple Developer ID signing, notarization, stapling and Gatekeeper validation with real credentials
 - Physical Apple Silicon laptop validation under battery/adapter transitions
-- Physical Intel Mac validation for retained sensor claims, or explicitly narrowed support claims
 - Instruments energy/wakeup/allocations evidence and multi-hour stability testing
-- Final screenshots, VoiceOver review and visual review on physical hardware
+- Final screenshots, VoiceOver review and visual review on physical Apple Silicon hardware
 
 See [README_RU.md](README_RU.md), [architecture](ARCHITECTURE.md), [application icon](docs/APP_ICON.md), [sensor compatibility](docs/SENSOR_COMPATIBILITY.md), [build provenance](docs/BUILD_PROVENANCE.md), and [release process](docs/RELEASE.md).
