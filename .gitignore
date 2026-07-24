@@ -11,6 +11,7 @@ runtime-smoke-results/
 runtime-intel-results/
 performance-results/
 physical-validation-results/
+physical-validation-apps/
 *.xcuserstate
 xcuserdata/
 MacVitals.xcodeproj/
