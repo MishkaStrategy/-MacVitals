@@ -13,7 +13,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  native:
+  apple-silicon:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -31,10 +31,10 @@ jobs:
       - name: Swift format lint
         run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
-      - name: Build
+      - name: Build arm64
         run: |
           set +e
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build > native-build.log 2>&1
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build > native-build.log 2>&1
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' native-build.log | tail -n 300 > native-build-diagnostics.txt || true
           cat native-build-diagnostics.txt
@@ -50,10 +50,10 @@ jobs:
             native-build-diagnostics.txt
           if-no-files-found: error
 
-      - name: Unit tests
+      - name: Run arm64 unit tests
         run: |
           set +e
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests > native-tests.log 2>&1
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests > native-tests.log 2>&1
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-tests.log | tail -n 400 > native-test-diagnostics.txt || true
           cat native-test-diagnostics.txt
@@ -72,7 +72,7 @@ jobs:
       - name: Bilingual preferences accessibility smoke test
         run: |
           set +e
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
           cat native-ui-test-diagnostics.txt
@@ -88,7 +88,7 @@ jobs:
             native-ui-test-diagnostics.txt
           if-no-files-found: ignore
 
-      - name: Package and verify release candidate
+      - name: Package and verify arm64 release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
@@ -125,16 +125,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-smoke-evidence
+          name: runtime-smoke-evidence-arm64
           path: |
             runtime-smoke-run.log
             runtime-smoke-results/
           if-no-files-found: ignore
 
-      - name: Upload release candidate
+      - name: Upload arm64 release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: MacVitals-0.0.${{ github.run_number }}-unsigned
+          name: MacVitals-0.0.${{ github.run_number }}-arm64-unsigned
           path: dist/
           if-no-files-found: error
 
@@ -147,7 +147,7 @@ jobs:
 
       - name: Validate YAML, plist XML, localizations, icon and scripts
         run: |
-          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/main.yml'); YAML.load_file('.github/workflows/release.yml'); YAML.load_file('.github/workflows/intel.yml')"
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); YAML.load_file('.github/workflows/pr.yml'); YAML.load_file('.github/workflows/main.yml'); YAML.load_file('.github/workflows/release.yml')"
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
