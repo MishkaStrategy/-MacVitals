@@ -68,4 +68,37 @@ final class BatterySourceResolutionTests: XCTestCase {
         internalBatteryFound: true),
       .present)
   }
+
+  func testBatteryExternalPowerResolutionAcceptsOnlyKnownStates() {
+    XCTAssertEqual(
+      BatteryExternalPowerResolution.resolve(
+        rawState: "AC Power",
+        acPowerValue: "AC Power",
+        batteryPowerValue: "Battery Power"),
+      .connected)
+    XCTAssertEqual(
+      BatteryExternalPowerResolution.resolve(
+        rawState: "Battery Power",
+        acPowerValue: "AC Power",
+        batteryPowerValue: "Battery Power"),
+      .disconnected)
+    XCTAssertEqual(
+      BatteryExternalPowerResolution.resolve(
+        rawState: nil,
+        acPowerValue: "AC Power",
+        batteryPowerValue: "Battery Power"),
+      .unavailable)
+    XCTAssertEqual(
+      BatteryExternalPowerResolution.resolve(
+        rawState: "Unknown",
+        acPowerValue: "AC Power",
+        batteryPowerValue: "Battery Power"),
+      .unavailable)
+  }
+
+  func testBatteryExternalPowerResolutionBooleanProjectionIsExplicit() {
+    XCTAssertEqual(BatteryExternalPowerResolution.connected.isConnected, true)
+    XCTAssertEqual(BatteryExternalPowerResolution.disconnected.isConnected, false)
+    XCTAssertNil(BatteryExternalPowerResolution.unavailable.isConnected)
+  }
 }
