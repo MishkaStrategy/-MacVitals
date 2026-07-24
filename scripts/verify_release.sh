@@ -14,6 +14,7 @@ CHECKSUM_PATH="${DIST_DIR}/SHA256SUMS.txt"
 WORK_DIR="$(mktemp -d)"
 MOUNT_DIR="${WORK_DIR}/mounted"
 ATTACHED=0
+TARGET_ARCHITECTURE="arm64"
 
 cleanup() {
   if [[ "${ATTACHED}" -eq 1 ]]; then
@@ -160,12 +161,10 @@ for locale in en ru; do
 done
 
 architectures="$(lipo -archs "${EXECUTABLE}")"
-for architecture in arm64 x86_64; do
-  grep -qw "${architecture}" <<<"${architectures}" || {
-    echo "Packaged executable is missing ${architecture}; found: ${architectures}" >&2
-    exit 1
-  }
-done
+if [[ "${architectures}" != "${TARGET_ARCHITECTURE}" ]]; then
+  echo "Packaged executable must contain only ${TARGET_ARCHITECTURE}; found: ${architectures}" >&2
+  exit 1
+fi
 
 signature_info="$(codesign -dv --verbose=4 "${ZIP_APP}" 2>&1 || true)"
 if codesign --verify --deep --strict "${ZIP_APP}" >/dev/null 2>&1; then
@@ -251,4 +250,4 @@ codesign --verify --deep --strict "${DMG_APP}" >/dev/null 2>&1 || {
   fi
 }
 
-echo "Verified MacVitals ${VERSION} (${build_version}): provenance, app icon, bundle metadata, EN/RU resources, arm64/x86_64 binary, ZIP, DMG and checksums are valid"
+echo "Verified MacVitals ${VERSION} (${build_version}): provenance, app icon, bundle metadata, EN/RU resources, arm64 executable, ZIP, DMG and checksums are valid"
