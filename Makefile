@@ -14,10 +14,10 @@ bootstrap: prepare-assets
 	cd "$(ROOT_DIR)" && xcodegen generate
 
 build: bootstrap
-	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' build
+	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
 
 test: bootstrap
-	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' test -only-testing:MacVitalsTests
+	cd "$(ROOT_DIR)" && xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test -only-testing:MacVitalsTests
 
 format:
 	cd "$(ROOT_DIR)" && swift format format --in-place --recursive MacVitals MacVitalsTests MacVitalsUITests
@@ -48,5 +48,5 @@ collect-runtime:
 	cd "$(ROOT_DIR)" && bash scripts/collect_runtime_metrics.sh "$(RUNTIME_DURATION)" "$(RUNTIME_INTERVAL)"
 
 clean:
-	rm -rf -- "$(ROOT_DIR)/MacVitals.xcodeproj" "$(ROOT_DIR)/build" "$(ROOT_DIR)/build-intel" "$(ROOT_DIR)/build-intel-tests" "$(ROOT_DIR)/dist" "$(ROOT_DIR)/runtime-smoke-results" "$(ROOT_DIR)/runtime-intel-results" "$(ROOT_DIR)/performance-results"
+	rm -rf -- "$(ROOT_DIR)/MacVitals.xcodeproj" "$(ROOT_DIR)/build" "$(ROOT_DIR)/dist" "$(ROOT_DIR)/runtime-smoke-results" "$(ROOT_DIR)/performance-results"
 	rm -f -- "$(ROOT_DIR)/MacVitals/Resources/AppIcon.icns"
