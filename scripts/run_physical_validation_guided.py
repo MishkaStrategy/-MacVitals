@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,7 @@ SCENARIO_PROFILES = (
     ),
     ScenarioProfile(
         "high-frequency",
-        300,
+        900,
         0.5,
         "Set the application update interval to 0.5 seconds before starting.",
     ),
@@ -112,12 +113,21 @@ def fail(message: str, code: int = 1) -> NoReturn:
     raise SystemExit(code)
 
 
-def run(command: Sequence[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    command: Sequence[str],
+    *,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    process_env = {**os.environ, "LC_ALL": "C", "LANG": "C"}
+    if env:
+        process_env.update(env)
     return subprocess.run(
         list(command),
         check=False,
         text=True,
         capture_output=capture,
+        env=process_env,
     )
 
 
@@ -152,6 +162,11 @@ def strict_repository_child(path: Path, repository: Path, label: str) -> Path:
     return resolved
 
 
+def reject_symlink_input(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise GuideError(f"{label} must not be a symlink")
+
+
 def require_commands(*names: str) -> None:
     missing = [name for name in names if shutil.which(name) is None]
     if missing:
@@ -164,6 +179,8 @@ def ensure_repository(repository: Path) -> Path:
         raise GuideError("Repository does not contain .git")
     if not (repository / "scripts" / "run_physical_validation.py").is_file():
         raise GuideError("Physical validation harness is missing")
+    if not (repository / "scripts" / "verify_release.sh").is_file():
+        raise GuideError("Release verifier is missing")
     return repository
 
 
@@ -204,9 +221,55 @@ def candidate_identity(dist: Path) -> tuple[str, str, str]:
     return str(version), str(build), str(commit)
 
 
+def expected_candidate_names(version: str) -> set[str]:
+    return {
+        f"MacVitals-{version}.zip",
+        f"MacVitals-{version}.dmg",
+        "BUILD_STATUS.txt",
+        "BUILD_MANIFEST.json",
+        "SHA256SUMS.txt",
+    }
+
+
+def validate_candidate_directory(dist: Path, version: str) -> None:
+    entries = list(dist.iterdir())
+    found = {entry.name for entry in entries}
+    expected = expected_candidate_names(version)
+    if found != expected:
+        raise GuideError(
+            f"Candidate directory scope mismatch; expected {sorted(expected)}, "
+            f"found {sorted(found)}"
+        )
+    unsafe = [
+        entry.name
+        for entry in entries
+        if not entry.is_file() or entry.is_symlink() or entry.stat().st_size == 0
+    ]
+    if unsafe:
+        raise GuideError("Candidate directory contains unsafe entries: " + ", ".join(unsafe))
+
+
+def verify_before_extraction(repository: Path, dist: Path, version: str) -> None:
+    result = run(
+        ["bash", str(repository / "scripts" / "verify_release.sh"), version],
+        capture=True,
+        env={"DIST_DIR": str(dist)},
+    )
+    if result.returncode != 0:
+        raise GuideError(
+            "Candidate failed the complete release verifier before extraction; "
+            "run verify_release.sh directly to inspect local diagnostics"
+        )
+
+
 def start_session(args: argparse.Namespace) -> tuple[Path, Path]:
-    require_commands("ditto", "lipo", "pmset", "python3", "sw_vers", "sysctl", "uname")
+    require_commands(
+        "bash", "ditto", "lipo", "pmset", "python3", "sw_vers", "sysctl", "uname"
+    )
     repository = ensure_repository(args.repository)
+    reject_symlink_input(args.dist, "candidate directory")
+    reject_symlink_input(args.output_root, "physical validation output")
+    reject_symlink_input(args.app_root, "physical validation app root")
     dist = strict_repository_child(args.dist, repository, "candidate directory")
     output_root = strict_repository_child(
         args.output_root, repository, "physical validation output"
@@ -214,13 +277,16 @@ def start_session(args: argparse.Namespace) -> tuple[Path, Path]:
     app_root_base = strict_repository_child(
         args.app_root, repository, "physical validation app root"
     )
-    if not dist.is_dir() or dist.is_symlink():
+    if not dist.is_dir():
         raise GuideError("Candidate directory must be a regular repository directory")
+    machine = run(["uname", "-m"], capture=True).stdout.strip()
+    if machine != "arm64":
+        raise GuideError(f"Native arm64 Mac is required; found {machine!r}")
 
     version, build, commit = candidate_identity(dist)
+    validate_candidate_directory(dist, version)
+    verify_before_extraction(repository, dist, version)
     candidate_zip = dist / f"MacVitals-{version}.zip"
-    if not candidate_zip.is_file() or candidate_zip.is_symlink():
-        raise GuideError(f"Candidate ZIP is missing: {candidate_zip.name}")
 
     app_root_base.mkdir(parents=True, exist_ok=True)
     app_root = app_root_base / f"{version}-{build}-{commit[:12]}"
@@ -232,11 +298,11 @@ def start_session(args: argparse.Namespace) -> tuple[Path, Path]:
     extraction = run(["ditto", "-x", "-k", str(candidate_zip), str(app_root)])
     if extraction.returncode != 0:
         shutil.rmtree(app_root, ignore_errors=True)
-        raise GuideError("Could not extract the candidate ZIP")
+        raise GuideError("Could not extract the verified candidate ZIP")
     app = app_root / "MacVitals.app"
-    if not app.is_dir():
+    if not app.is_dir() or app.is_symlink():
         shutil.rmtree(app_root, ignore_errors=True)
-        raise GuideError("Candidate ZIP did not contain MacVitals.app at its root")
+        raise GuideError("Candidate ZIP did not contain a regular MacVitals.app at its root")
 
     output_root.mkdir(parents=True, exist_ok=True)
     before = {path.resolve() for path in output_root.glob("session-*") if path.is_dir()}
@@ -282,17 +348,22 @@ def start_session(args: argparse.Namespace) -> tuple[Path, Path]:
     return session, app
 
 
-def load_guided_session(repository: Path, session: Path) -> tuple[Path, Path]:
+def load_guided_session(repository: Path, session_path: Path) -> tuple[Path, Path]:
     repository = ensure_repository(repository)
-    session = strict_repository_child(session, repository, "physical validation session")
-    if not session.is_dir() or session.is_symlink():
+    reject_symlink_input(session_path, "physical validation session")
+    session = strict_repository_child(
+        session_path, repository, "physical validation session"
+    )
+    if not session.is_dir():
         raise GuideError("Physical validation session must be a regular directory")
     guide = read_json(session / "guided-session.json")
     application = guide.get("application")
     if not isinstance(application, str) or not application:
         raise GuideError("Guided session application record is invalid")
-    app = strict_repository_child(repository / application, repository, "test application")
-    if not app.is_dir() or app.is_symlink():
+    app_path = repository / application
+    reject_symlink_input(app_path, "test application")
+    app = strict_repository_child(app_path, repository, "test application")
+    if not app.is_dir():
         raise GuideError("Exact guided test application is missing or unsafe")
     return session, app
 
@@ -432,7 +503,10 @@ def menu(repository: Path, session: Path, app: Path) -> int:
             if status == 0:
                 print("All required records are complete.")
             else:
-                print("Acceptance remains incomplete; open items are listed in ACCEPTANCE.md.")
+                print(
+                    "Acceptance remains incomplete; open items are listed in "
+                    "ACCEPTANCE.md."
+                )
 
 
 def start(args: argparse.Namespace) -> int:
@@ -449,8 +523,16 @@ def resume(args: argparse.Namespace) -> int:
 def self_test(_args: argparse.Namespace | None = None) -> int:
     assert len(SCENARIO_NAMES) == 10
     assert len(set(SCENARIO_NAMES)) == len(SCENARIO_NAMES)
+    assert profile_for("high-frequency").duration == 900
     assert profile_for("high-frequency").interval == 0.5
     assert profile_for("stability-six-hour").duration == 21_600
+    assert expected_candidate_names("1.2.3") == {
+        "MacVitals-1.2.3.zip",
+        "MacVitals-1.2.3.dmg",
+        "BUILD_STATUS.txt",
+        "BUILD_MANIFEST.json",
+        "SHA256SUMS.txt",
+    }
     assert set(MANUAL_GATES) == {
         "voiceOver",
         "keyboardNavigation",
@@ -485,6 +567,16 @@ def self_test(_args: argparse.Namespace | None = None) -> int:
             pass
         else:
             raise AssertionError("External output was accepted")
+        target = repository / "target"
+        target.mkdir()
+        symlink = repository / "link"
+        symlink.symlink_to(target, target_is_directory=True)
+        try:
+            reject_symlink_input(symlink, "fixture")
+        except GuideError:
+            pass
+        else:
+            raise AssertionError("Symlink input was accepted")
     print("Guided physical validation self-test passed")
     return 0
 
