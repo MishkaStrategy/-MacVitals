@@ -16,8 +16,9 @@
 - Ambiguous process selection and possible PID reuse now fail closed
 - Runtime evidence logs redact home paths and pass an automated privacy scan
 - Reproducible physical Apple Silicon validation harness and runbook
+- Guided physical-validation runner extracts the exact candidate and preserves separate human review decisions
 - Every physical scenario is pinned to the verified candidate executable SHA-256
-- Guarded private Developer ID signing/notarization workflow with exact commit binding
+- Guarded private Developer ID signing/notarization workflow with exact main-commit binding
 - Separate app and DMG signing, notarization logs, stapling and Gatekeeper verification
 - Private signed artifacts remain non-public until independent review and explicit authorization
 - Physical, manual, Instruments, independent-review and publication gates remain visibly incomplete until explicitly reviewed
