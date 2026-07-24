@@ -18,8 +18,10 @@ Every pull request runs an Apple Silicon macOS workflow that must complete:
 12. Independent signing/notarization classification and exact `BUILD_MANIFEST.json` / `BUILD_STATUS.txt` consistency checks.
 13. Read-only DMG mount verification, Applications shortcut check and ZIP/DMG payload comparison, including the icon.
 14. Packaged-app runtime smoke with schema-v3 CSV/JSON evidence, monotonic timing, stable process identity, PID-reuse detection, privacy scanning and broad runaway guardrails on hosted Apple Silicon macOS.
-15. Upload of the unsigned arm64 release candidate and diagnostic logs.
-16. YAML/plist/shell/localization/icon/output-path validation and secret scanning.
+15. Hosted preparation smoke for the exact physical-validation candidate without claiming physical evidence.
+16. Deterministic self-tests for the private Developer ID signing/notarization pipeline without using real credentials.
+17. Upload of the unsigned arm64 release candidate and diagnostic logs.
+18. YAML/plist/shell/localization/icon/output-path validation and secret scanning.
 
 The UI smoke runs before archive/DMG creation so a confirmed UI failure does not consume packaging and runtime-smoke runner time.
 
@@ -37,7 +39,7 @@ The verified CI candidate contains:
 
 `BUILD_STATUS.txt` provides the human-readable signing/notarization classification. `BUILD_MANIFEST.json` provides the machine-readable version, build, commit, Xcode, bundle, minimum macOS, architecture and artifact provenance. The verifier rejects extra manifest keys, malformed commit metadata, host-specific paths, disagreement between either file and the actual application bundle, or any packaged architecture other than `arm64`. The packaged `AppIcon.icns` must match the reviewed project-owned source byte for byte.
 
-Current CI candidates are intentionally unsigned and not notarized. Runtime evidence is uploaded as a separate workflow artifact because it describes the runner and execution, not the distributable application itself. Runtime CSV, JSON and logs must not contain usernames or user home paths.
+Normal PR/main/tag-validation candidates are intentionally unsigned and not notarized. Runtime evidence is uploaded as a separate workflow artifact because it describes the runner and execution, not the distributable application itself. Runtime CSV, JSON and logs must not contain usernames or user home paths.
 
 ## Output-path safety
 
@@ -54,21 +56,33 @@ Runtime smoke does not delete its output base. Each invocation creates a unique 
 
 Runtime collection durations are positive whole seconds. Direct collectors include their process ID in the evidence directory name to avoid same-second collisions. Console output omits or redacts the user home directory, and the runtime smoke fails when generated evidence contains `/Users/<name>` or `/home/<name>` paths.
 
+Private signed outputs use separate `signed-dist/`, `signed-release-work/` and `signed-release-evidence/` roots. Each successful candidate is bound to version, build number and exact commit SHA. Existing output directories are never silently reused.
+
 ## Publication safety
 
 The tag-triggered **Release Candidate** workflow has read-only repository permissions. It builds, tests, verifies, runtime-smokes and uploads an unsigned arm64 workflow artifact for internal validation, but it intentionally cannot create a public GitHub Release.
 
-A public release workflow must not be enabled until it can:
+The manual **Signed Release Candidate** workflow and `scripts/sign_notarize_release.py` are implemented for a private Developer ID candidate. They:
 
-1. Import a Developer ID Application certificate from encrypted repository secrets.
-2. Build and sign the arm64 application with Hardened Runtime.
-3. Verify the code signature and designated requirement.
-4. Submit the signed archive to Apple notarization.
-5. Wait for a successful notarization result and retain its log.
-6. Staple and validate the notarization ticket.
-7. Run Gatekeeper assessment against the final app and DMG.
-8. Recalculate provenance and checksums after all signing and stapling operations.
-9. Publish only the exact verified signed artifacts.
+1. require the exact authorization phrase and immutable commit SHA;
+2. use the protected `signed-release` environment;
+3. import certificate/API-key material into temporary runner files and a temporary keychain;
+4. sign the app with Developer ID, Hardened Runtime and a trusted timestamp;
+5. submit the application ZIP to Apple notarization and retain its response/log;
+6. staple and validate the application ticket;
+7. create and Developer ID sign the final DMG;
+8. submit the DMG separately to notarization and retain its response/log;
+9. staple and validate the DMG ticket;
+10. run Gatekeeper assessment against both app and DMG;
+11. regenerate provenance and checksums only after signing/stapling;
+12. rerun the full release verifier against the exact requested commit;
+13. upload private workflow artifacts with `contents: read` permissions;
+14. delete temporary signing material in an unconditional cleanup step;
+15. explicitly record that no public GitHub Release was created.
+
+Follow [`SIGNED_RELEASE_RUNBOOK.md`](SIGNED_RELEASE_RUNBOOK.md). The workflow must not gain tag triggers, `contents: write` or a release-publication action.
+
+A future public-release action must remain disabled until it can publish only an independently reviewed, clean-Mac-validated artifact after separate user authorization.
 
 ## Final release gates
 
@@ -81,10 +95,11 @@ Before creating `v1.0.0`:
 5. Record physical-device performance and Instruments measurements.
 6. Complete a multi-hour stability run.
 7. Review sensor compatibility and known limitations for the Apple Silicon-only scope.
-8. Obtain Apple Developer ID credentials.
-9. Implement the secret-backed signed publication workflow described above.
-10. Verify the stapled notarization ticket and Gatekeeper assessment on a clean Apple Silicon Mac.
-11. Merge only after required checks and audits pass.
-12. Create the release tag only after the signed publication workflow is enabled and independently reviewed.
+8. Obtain Apple Developer ID credentials and configure the protected `signed-release` environment.
+9. Run and independently inspect the private signed/notarized candidate workflow.
+10. Verify the stapled notarization tickets and Gatekeeper assessments on a clean Apple Silicon Mac.
+11. Complete the separate independent audit.
+12. Merge only after required checks and audits pass and after explicit user authorization.
+13. Create the release tag and public GitHub Release only after separate explicit publication authorization.
 
-Never describe an unsigned CI artifact as signed, notarized or ready for frictionless Gatekeeper installation.
+Never describe an unsigned CI artifact as signed, notarized or ready for frictionless Gatekeeper installation. A private signed workflow artifact is also not a public release.
