@@ -62,24 +62,25 @@ Private signed outputs use separate `signed-dist/`, `signed-release-work/` and `
 
 The tag-triggered **Release Candidate** workflow has read-only repository permissions. It builds, tests, verifies, runtime-smokes and uploads an unsigned arm64 workflow artifact for internal validation, but it intentionally cannot create a public GitHub Release.
 
-The manual **Signed Release Candidate** workflow routes through `scripts/signed_release_entrypoint.py` and then `scripts/sign_notarize_release.py` to create a private Developer ID candidate. They:
+The manual **Signed Release Candidate** workflow is intentionally post-merge. GitHub exposes a `workflow_dispatch` workflow only after its YAML exists on the default branch, so the workflow requires an immutable commit already present on `main`. It routes through `scripts/signed_release_entrypoint.py` and then `scripts/sign_notarize_release.py` to create a private Developer ID candidate. They:
 
-1. require the exact authorization phrase and immutable commit SHA;
-2. prove that signed output, work and evidence roots are mutually non-overlapping strict repository children before importing credentials;
-3. use the protected `signed-release` environment;
-4. import certificate/API-key material into temporary runner files and a temporary keychain;
-5. sign the app with Developer ID, Hardened Runtime and a trusted timestamp;
-6. submit the application ZIP to Apple notarization and retain its response/log;
-7. staple and validate the application ticket;
-8. create and Developer ID sign the final DMG;
-9. submit the DMG separately to notarization and retain its response/log;
-10. staple and validate the DMG ticket;
-11. run Gatekeeper assessment against both app and DMG;
-12. regenerate provenance and checksums only after signing/stapling;
-13. rerun the full release verifier against the exact requested commit;
-14. upload private workflow artifacts with `contents: read` permissions;
-15. delete temporary signing material in an unconditional cleanup step;
-16. explicitly record that no public GitHub Release was created.
+1. require the exact authorization phrase and immutable `main` commit SHA;
+2. verify that the checked-out commit is present on `origin/main` before importing credentials;
+3. prove that signed output, work and evidence roots are mutually non-overlapping strict repository children;
+4. use the protected `signed-release` environment;
+5. import certificate/API-key material into temporary runner files and a temporary keychain;
+6. sign the app with Developer ID, Hardened Runtime and a trusted timestamp;
+7. submit the application ZIP to Apple notarization and retain its response/log;
+8. staple and validate the application ticket;
+9. create and Developer ID sign the final DMG;
+10. submit the DMG separately to notarization and retain its response/log;
+11. staple and validate the DMG ticket;
+12. run Gatekeeper assessment against both app and DMG;
+13. regenerate provenance and checksums only after signing/stapling;
+14. rerun the full release verifier against the exact requested commit;
+15. upload private workflow artifacts with `contents: read` permissions;
+16. delete temporary signing material in an unconditional cleanup step;
+17. explicitly record that no public GitHub Release was created.
 
 Follow [`SIGNED_RELEASE_RUNBOOK.md`](SIGNED_RELEASE_RUNBOOK.md). The workflow must not gain tag triggers, `contents: write` or a release-publication action.
 
@@ -89,18 +90,21 @@ A future public-release action must remain disabled until it can publish only an
 
 Before creating `v1.0.0`:
 
-1. Run the ARM pull-request workflow on the intended release commit.
+1. Run the ARM pull-request workflow on the intended PR head.
 2. Complete physical Apple Silicon laptop validation under battery and adapter transitions.
 3. Validate graceful unsupported battery behavior on at least one battery-less Apple Silicon Mac when available.
 4. Capture real screenshots and complete VoiceOver and visual accessibility review.
 5. Record physical-device performance and Instruments measurements.
-6. Complete a multi-hour stability run.
+6. Complete a multi-hour stability run and real sleep/wake validation.
 7. Review sensor compatibility and known limitations for the Apple Silicon-only scope.
-8. Obtain Apple Developer ID credentials and configure the protected `signed-release` environment.
-9. Run and independently inspect the private signed/notarized candidate workflow.
-10. Verify the stapled notarization tickets and Gatekeeper assessments on a clean Apple Silicon Mac.
-11. Complete the separate independent audit.
-12. Merge only after required checks and audits pass and after explicit user authorization.
-13. Create the release tag and public GitHub Release only after separate explicit publication authorization.
+8. Complete the independent code/release-readiness audit for the PR head.
+9. Obtain explicit user authorization to mark the PR ready and merge it.
+10. Merge into `main`; the merge commit becomes the immutable signing candidate.
+11. Obtain Apple Developer ID credentials and configure the protected `signed-release` environment.
+12. Run the private signed/notarized candidate workflow for the exact `main` commit and independently inspect its evidence.
+13. Verify the stapled tickets and Gatekeeper behavior on a clean Apple Silicon Mac.
+14. Obtain separate explicit authorization to create `v1.0.0` and the public GitHub Release from the exact verified signed artifacts.
+
+A signing failure after merge must be fixed through a new reviewed pull request; never mutate or replace release evidence silently.
 
 Never describe an unsigned CI artifact as signed, notarized or ready for frictionless Gatekeeper installation. A private signed workflow artifact is also not a public release.
