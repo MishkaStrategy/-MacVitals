@@ -12,3 +12,6 @@
 - Apple Silicon (`arm64`) only support contract for macOS 13+
 - arm64-only CI, unsigned release packaging and exact architecture verification
 - Intel compatibility workflow and universal binary requirements removed
+- Runtime evidence schema v3 with monotonic timing and stable process identity
+- Ambiguous process selection and possible PID reuse now fail closed
+- Runtime evidence logs redact home paths and pass an automated privacy scan
