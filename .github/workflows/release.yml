@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  package-arm64:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -62,13 +62,13 @@ jobs:
       - name: Swift format lint
         run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
-      - name: Unit and hardware-smoke tests
+      - name: Run arm64 unit and hardware-smoke tests
         run: >-
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
-          -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
-          test -only-testing:MacVitalsTests
+          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
 
-      - name: Build and verify unsigned release candidate
+      - name: Build and verify unsigned arm64 release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
@@ -84,14 +84,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-smoke-evidence
+          name: runtime-smoke-evidence-arm64
           path: runtime-smoke-results/
           if-no-files-found: ignore
 
-      - name: Upload unsigned candidate for internal validation
+      - name: Upload unsigned arm64 candidate for internal validation
         uses: actions/upload-artifact@v4
         with:
-          name: MacVitals-${{ steps.version.outputs.value }}-unsigned
+          name: MacVitals-${{ steps.version.outputs.value }}-arm64-unsigned
           path: dist/
           if-no-files-found: error
 
@@ -100,7 +100,7 @@ jobs:
           {
             echo "## Publication blocked"
             echo
-            echo "This workflow produces an unsigned, non-notarized validation artifact only."
+            echo "This workflow produces an unsigned, non-notarized arm64 validation artifact only."
             echo "It intentionally does not create a public GitHub Release."
             echo "Public release publication requires a separate Developer ID signing, notarization, stapling and Gatekeeper verification workflow."
           } >> "${GITHUB_STEP_SUMMARY}"
