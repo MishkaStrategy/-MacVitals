@@ -1,53 +1,43 @@
 # Performance
 
-## What CI now proves
+## What CI proves
 
-The pull-request workflows build and launch the packaged Release application on two independent hosted macOS architectures:
+The pull-request workflow builds, tests, packages and launches the real Release application on hosted Apple Silicon macOS (`macos-15`). The project and command-line gates force `ARCHS=arm64`, and release verification rejects universal or x86_64 executables.
 
-- Apple Silicon on `macos-15`;
-- Intel x86_64 on `macos-15-intel`.
-
-Both workflows execute deterministic unit/provider smoke tests and then run the real packaged `MacVitals.app` after a five-second warmup. Process CPU, resident memory, virtual memory, sample continuity and thread count are recorded in CSV and a schema-versioned JSON summary. The process must remain alive and pass broad runaway guardrails.
+The workflow executes deterministic unit/provider smoke tests and then runs the packaged `MacVitals.app` after a five-second warmup. Process CPU, resident memory, virtual memory, sample continuity and thread count are recorded in CSV and a schema-versioned JSON summary. The process must remain alive and pass broad runaway guardrails.
 
 Synchronous Mach, IOKit and Metal collection remains isolated in a dedicated `SystemSampler` actor, while UI publication remains on `MainActor`.
 
-## Recorded hosted-runner evidence
+## Recorded hosted-runner baseline
 
-These observations are retained in the workflow artifacts for the named runs. They describe only the recorded virtual runners and workloads.
+The last verified Apple Silicon checkpoint before the arm64-only scope migration was Pull Request workflow #200 for version `0.0.200`. It is retained as a regression baseline, not a physical-device performance claim.
 
-| Evidence | ARM pull-request run 151 | Intel compatibility run 2 |
-|---|---:|---:|
-| Source commit | `7ab19e12c65014a6afbd6efcd684f2c979fa4379` | `5c2fd8763de9ee5768f86d148db8e23e3584e5b7` |
-| Architecture | arm64 | x86_64 |
-| Hosted hardware model | `VirtualMac2,1` | `Macmini6,2` |
-| macOS | 15.7.7 (24G720) | 15.7.7 (24G720) |
-| Warmup | 5 s | 5 s |
-| Measured duration | 46 s | 31 s |
-| Samples | 22 | 15 |
-| Mean process CPU | 0.23% | 0.07% |
-| p95 process CPU | 1.00% | 0.30% |
-| Peak RSS | 54.27 MiB | 33.96 MiB |
-| RSS growth during measured window | 0.17 MiB | 0.08 MiB |
-| Peak threads | 5 | 6 |
-| Process alive at completion | yes | yes |
+| Metric | Hosted arm64 observation |
+|---|---:|
+| Samples / duration | 22 / 46 s |
+| Mean process CPU | 0.405% |
+| p95 process CPU | 1.1% |
+| Peak RSS | 54.25 MiB |
+| RSS growth during measured window | 0.23 MiB |
+| Peak threads | 5 |
+| Process alive at completion | yes |
+| Application runtime log | empty |
 
-The ARM run intentionally supersedes the earlier no-warmup smoke, where startup allocation inflated the apparent RSS growth. The current measured window begins only after application initialization.
+A new checkpoint after the arm64-only migration must supersede this baseline before release readiness is claimed.
 
 ## CI guardrails
 
 The default CI validator rejects:
 
 - application exit before collection completes;
-- fewer than 10 samples or less than 30 seconds of ARM observation;
+- fewer than 10 samples or less than 30 seconds of observation;
 - severe sample cadence stalls;
-- mean process CPU above 75% or p95 above 200% on the ARM guardrail;
+- mean process CPU above 75% or p95 above 200%;
 - peak RSS above 512 MiB;
 - RSS growth above 128 MiB during the warmed measurement window;
 - more than 128 threads when the platform exposes thread count.
 
-The Intel job uses a shorter 30-second observation and slightly wider CPU limits while keeping the same memory and thread runaway limits.
-
-These thresholds are deliberately broad regression alarms. They are **not** product targets, service-level objectives or claims that all Macs will match the hosted values.
+These thresholds are deliberately broad regression alarms. They are **not** product targets, service-level objectives or claims that all Apple Silicon Macs will match the hosted values.
 
 ## What this does not prove
 
@@ -55,7 +45,7 @@ Hosted CI is not an idle-power, wakeup, thermal, battery-runtime or long-duratio
 
 A physical-device benchmark must still record:
 
-- exact Mac model, CPU/GPU, memory and macOS build;
+- exact Apple Silicon Mac model, CPU/GPU, memory and macOS build;
 - power mode and whether the Mac is on battery or external power;
 - sampling interval and test duration;
 - average, p95 and peak process CPU;
