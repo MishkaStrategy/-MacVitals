@@ -2,9 +2,9 @@
 
 Status: **automated controls completed for the Apple Silicon scope**.
 
-Audited feature head: `384360f4a5593b0fc202f9ac51107f33203c7746`.
+Audited runtime-hardening head: `d4a6da91c30e94db1add397d7387a0805c8cca69`.
 
-Primary evidence: Pull Request workflow #234 on hosted Apple Silicon macOS 15.7.7 (`arm64`).
+Primary evidence: Pull Request workflow #247 on hosted Apple Silicon macOS 15.7.7 (`arm64`).
 
 ## Scope
 
@@ -14,6 +14,7 @@ Primary evidence: Pull Request workflow #234 on hosted Apple Silicon macOS 15.7.
 - unsigned release packaging and provenance;
 - architecture enforcement;
 - packaged-application runtime smoke;
+- process identity, timing and runtime-evidence privacy;
 - misleading sensor and UI states found during continuation review.
 
 Intel and universal binaries are intentionally outside the supported product scope.
@@ -50,6 +51,22 @@ Resolution: only the documented AC and battery states are accepted. Missing or u
 
 Status: **fixed and covered by unit tests**.
 
+### Medium: runtime sampling could attach evidence to the wrong process
+
+Evidence: the previous collector selected the first exact-name PID, used wall-clock elapsed time and sampled CPU/RSS/VSZ in separate `ps` invocations without a stable process identity contract. Ambiguous duplicate processes, clock corrections and PID reuse could make the evidence misleading.
+
+Resolution: runtime schema v3 uses monotonic time, refuses ambiguous exact-name matches, supports an explicit PID/executable gate and pins every sample by PID, UID, start time and executable identity. Possible PID reuse terminates collection instead of silently continuing. Collector and validator adversarial self-tests run in PR, main and release-candidate workflows.
+
+Status: **fixed and verified by workflow #247**.
+
+### Medium: runtime evidence log exposed the hosted runner home path
+
+Evidence: the first schema-v3 artifact correctly omitted paths from CSV/JSON, but successful console messages still recorded an absolute `/Users/runner/...` summary/output path in the uploaded runtime log.
+
+Resolution: collector-wrapper and runtime-smoke messages now redact or omit home paths. A dedicated privacy gate scans generated runtime CSV, JSON and logs and fails on `/Users/<name>` or `/home/<name>` paths. The downloaded workflow #247 artifact was independently searched and contained no home path.
+
+Status: **fixed and independently rechecked**.
+
 ### Medium: zero battery flow was labelled as charging
 
 Evidence: every non-negative value selected the charging label, so a full battery reporting exactly `0 W` was shown as charging.
@@ -68,19 +85,22 @@ Status: **fixed and covered by unit tests**.
 
 ## Automated evidence
 
-Workflow #234 completed successfully with:
+Workflow #247 completed successfully with:
 
-- repository validation and secret scanning;
+- repository validation, collector/validator self-tests and secret scanning;
 - SwiftFormat and native `arm64` build;
-- 133 unit/provider tests with zero failures;
+- 138 unit/provider tests with zero failures;
 - English/Russian five-tab Preferences accessibility smoke;
 - unsigned arm64-only Release archive;
 - ZIP, DMG, application icon, checksum and provenance verification;
-- packaged-app runtime smoke with process alive at completion and an empty application log.
+- packaged-app runtime smoke with stable process identity, monotonic timing, process alive at completion and an empty application log;
+- runtime evidence privacy validation with no user home path.
 
-Verified candidate: `MacVitals-0.0.234-arm64-unsigned`.
+Verified candidate: `MacVitals-0.0.247-arm64-unsigned`.
 
-Artifact digest: `sha256:52949659039eb6d82a6b905f428159fe3da73d959208592615943fbc458479d3`.
+Workflow artifact digest: `sha256:fdabbbdf91e58d4391998f71413979e90b8d9402e063703bf81e2ae917823b90`.
+
+Runtime evidence: 24 samples over 46.0 seconds, mean CPU 0.233%, p95 CPU 0.7%, peak CPU 1.2%, peak RSS 53.53 MiB, RSS delta -5.77 MiB and five threads.
 
 ## Security and publication decision
 
