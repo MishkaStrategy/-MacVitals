@@ -19,7 +19,7 @@ Every pull request runs an Apple Silicon macOS workflow that must complete:
 13. Read-only DMG mount verification, Applications shortcut check and ZIP/DMG payload comparison, including the icon.
 14. Packaged-app runtime smoke with schema-v3 CSV/JSON evidence, monotonic timing, stable process identity, PID-reuse detection, privacy scanning and broad runaway guardrails on hosted Apple Silicon macOS.
 15. Hosted preparation smoke for the exact physical-validation candidate without claiming physical evidence.
-16. Deterministic self-tests for the private Developer ID signing/notarization pipeline without using real credentials.
+16. Deterministic self-tests for the private Developer ID signing/notarization pipeline and its path-isolation entrypoint without using real credentials.
 17. Upload of the unsigned arm64 release candidate and diagnostic logs.
 18. YAML/plist/shell/localization/icon/output-path validation and secret scanning.
 
@@ -56,29 +56,30 @@ Runtime smoke does not delete its output base. Each invocation creates a unique 
 
 Runtime collection durations are positive whole seconds. Direct collectors include their process ID in the evidence directory name to avoid same-second collisions. Console output omits or redacts the user home directory, and the runtime smoke fails when generated evidence contains `/Users/<name>` or `/home/<name>` paths.
 
-Private signed outputs use separate `signed-dist/`, `signed-release-work/` and `signed-release-evidence/` roots. Each successful candidate is bound to version, build number and exact commit SHA. Existing output directories are never silently reused.
+Private signed outputs use separate `signed-dist/`, `signed-release-work/` and `signed-release-evidence/` roots. `scripts/signed_release_entrypoint.py` resolves all three paths before credentials are used and rejects equality, parent/child nesting, repository-root paths, external paths and symlink escapes. Each successful candidate is bound to version, build number and exact commit SHA. Existing output directories are never silently reused.
 
 ## Publication safety
 
 The tag-triggered **Release Candidate** workflow has read-only repository permissions. It builds, tests, verifies, runtime-smokes and uploads an unsigned arm64 workflow artifact for internal validation, but it intentionally cannot create a public GitHub Release.
 
-The manual **Signed Release Candidate** workflow and `scripts/sign_notarize_release.py` are implemented for a private Developer ID candidate. They:
+The manual **Signed Release Candidate** workflow routes through `scripts/signed_release_entrypoint.py` and then `scripts/sign_notarize_release.py` to create a private Developer ID candidate. They:
 
 1. require the exact authorization phrase and immutable commit SHA;
-2. use the protected `signed-release` environment;
-3. import certificate/API-key material into temporary runner files and a temporary keychain;
-4. sign the app with Developer ID, Hardened Runtime and a trusted timestamp;
-5. submit the application ZIP to Apple notarization and retain its response/log;
-6. staple and validate the application ticket;
-7. create and Developer ID sign the final DMG;
-8. submit the DMG separately to notarization and retain its response/log;
-9. staple and validate the DMG ticket;
-10. run Gatekeeper assessment against both app and DMG;
-11. regenerate provenance and checksums only after signing/stapling;
-12. rerun the full release verifier against the exact requested commit;
-13. upload private workflow artifacts with `contents: read` permissions;
-14. delete temporary signing material in an unconditional cleanup step;
-15. explicitly record that no public GitHub Release was created.
+2. prove that signed output, work and evidence roots are mutually non-overlapping strict repository children before importing credentials;
+3. use the protected `signed-release` environment;
+4. import certificate/API-key material into temporary runner files and a temporary keychain;
+5. sign the app with Developer ID, Hardened Runtime and a trusted timestamp;
+6. submit the application ZIP to Apple notarization and retain its response/log;
+7. staple and validate the application ticket;
+8. create and Developer ID sign the final DMG;
+9. submit the DMG separately to notarization and retain its response/log;
+10. staple and validate the DMG ticket;
+11. run Gatekeeper assessment against both app and DMG;
+12. regenerate provenance and checksums only after signing/stapling;
+13. rerun the full release verifier against the exact requested commit;
+14. upload private workflow artifacts with `contents: read` permissions;
+15. delete temporary signing material in an unconditional cleanup step;
+16. explicitly record that no public GitHub Release was created.
 
 Follow [`SIGNED_RELEASE_RUNBOOK.md`](SIGNED_RELEASE_RUNBOOK.md). The workflow must not gain tag triggers, `contents: write` or a release-publication action.
 
