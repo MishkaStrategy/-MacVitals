@@ -26,10 +26,11 @@ jobs:
 
       - name: Validate localization, app icon and runtime tooling
         run: |
-          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_runtime_metrics.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py
           python3 scripts/materialize_app_icon.py --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
+          python3 scripts/collect_runtime_metrics.py --self-test
           python3 scripts/validate_runtime_metrics.py --self-test
           bash -n \
             scripts/package_release.sh \
@@ -76,16 +77,23 @@ jobs:
 
       - name: Packaged runtime smoke guardrail
         timeout-minutes: 5
-        run: >-
-          bash scripts/run_ci_runtime_smoke.sh
-          build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            > runtime-smoke-run.log 2>&1
+          status=$?
+          cat runtime-smoke-run.log
+          exit $status
 
       - name: Upload runtime smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runtime-smoke-evidence-arm64
-          path: runtime-smoke-results/
+          path: |
+            runtime-smoke-run.log
+            runtime-smoke-results/
           if-no-files-found: ignore
 
       - name: Upload unsigned arm64 candidate for internal validation
