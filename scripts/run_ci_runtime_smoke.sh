@@ -46,11 +46,11 @@ done
   exit 2
 }
 [[ -d "${APP_PATH}" ]] || {
-  echo "Packaged application is missing: ${APP_PATH}" >&2
+  echo "Packaged application is missing" >&2
   exit 1
 }
 [[ -x "${EXECUTABLE_PATH}" ]] || {
-  echo "Packaged executable is missing or not executable: ${EXECUTABLE_PATH}" >&2
+  echo "Packaged executable is missing or not executable" >&2
   exit 1
 }
 
@@ -66,7 +66,7 @@ base = Path(os.environ["BASE_OUTPUT_ROOT"])
 run_name = re.compile(r"run-[0-9]{8}T[0-9]{6}Z-[0-9]+\Z")
 if base.exists():
     if not base.is_dir():
-        raise SystemExit(f"Runtime output base is not a directory: {base}")
+        raise SystemExit("Runtime output base is not a directory")
     unexpected = [
         entry.name
         for entry in base.iterdir()
@@ -138,6 +138,31 @@ python3 "${ROOT_DIR}/scripts/validate_runtime_metrics.py" \
   --maximum-interval-multiplier "${CI_RUNTIME_MAXIMUM_INTERVAL_MULTIPLIER:-6}" \
   | tee "${VALIDATION_LOG}"
 
+EVIDENCE_ROOT="${OUTPUT_ROOT}" python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+root = Path(os.environ["EVIDENCE_ROOT"])
+home = str(Path.home())
+home_pattern = re.compile(r"/(?:Users|home)/[^/\s]+")
+violations: list[str] = []
+for path in root.rglob("*"):
+    if not path.is_file() or path.is_symlink():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    if (home and home in text) or home_pattern.search(text):
+        violations.append(str(path.relative_to(root)))
+if violations:
+    raise SystemExit(
+        "Runtime evidence contains a user home path: " + ", ".join(sorted(violations))
+    )
+print("Runtime evidence privacy validation passed")
+PY
+
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   SUMMARY_PATH="${summary_path}" WARMUP_SECONDS="${WARMUP_SECONDS}" python3 - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
 import json
@@ -165,4 +190,4 @@ print(f"| Peak threads | {threads:.0f} |" if threads is not None else "| Peak th
 PY
 fi
 
-echo "Runtime smoke artifacts were generated in ${OUTPUT_ROOT}."
+echo "Runtime smoke artifacts were generated."
