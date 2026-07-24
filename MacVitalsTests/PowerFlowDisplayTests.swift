@@ -11,7 +11,7 @@ final class PowerFlowDisplayTests: XCTestCase {
     XCTAssertEqual(BatteryPowerFlowState.resolve(nil), .unavailable)
     XCTAssertEqual(BatteryPowerFlowState.resolve(.nan), .unavailable)
     XCTAssertEqual(BatteryPowerFlowState.resolve(.infinity), .unavailable)
-    XCTAssertEqual(BatteryPowerFlowState.resolve(-.infinity), .unavailable)
+    XCTAssertEqual(BatteryPowerFlowState.resolve(-Double.infinity), .unavailable)
   }
 
   func testBatteryPowerFlowProvidesAccurateDisplayMetadata() {
