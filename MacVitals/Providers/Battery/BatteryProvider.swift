@@ -23,6 +23,31 @@ nonisolated enum BatterySourceResolution: Equatable, Sendable {
   }
 }
 
+nonisolated enum BatteryExternalPowerResolution: Equatable, Sendable {
+  case connected
+  case disconnected
+  case unavailable
+
+  static func resolve(
+    rawState: String?,
+    acPowerValue: String,
+    batteryPowerValue: String
+  ) -> Self {
+    guard let rawState else { return .unavailable }
+    if rawState == acPowerValue { return .connected }
+    if rawState == batteryPowerValue { return .disconnected }
+    return .unavailable
+  }
+
+  var isConnected: Bool? {
+    switch self {
+    case .connected: return true
+    case .disconnected: return false
+    case .unavailable: return nil
+    }
+  }
+}
+
 struct BatteryProvider: Sendable {
   func sample() -> MetricValue<BatteryStats> {
     let now = Date()
@@ -59,10 +84,19 @@ struct BatteryProvider: Sendable {
         message: "Internal battery resolution was inconsistent")
     }
 
+    let powerResolution = BatteryExternalPowerResolution.resolve(
+      rawState: description[kIOPSPowerSourceStateKey] as? String,
+      acPowerValue: kIOPSACPowerValue,
+      batteryPowerValue: kIOPSBatteryPowerValue)
+    guard let external = powerResolution.isConnected else {
+      return unavailableBattery(
+        timestamp: now,
+        message: "Internal battery power-source state was unavailable or unrecognized")
+    }
+
     let current = BatteryValueNormalizer.finiteNumber(description[kIOPSCurrentCapacityKey])
     let maximum = BatteryValueNormalizer.finiteNumber(description[kIOPSMaxCapacityKey])
     let percentage = BatteryValueNormalizer.percentage(current: current, maximum: maximum)
-    let external = (description[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
     let charging = description[kIOPSIsChargingKey] as? Bool ?? false
     let state = BatteryValueNormalizer.state(
       charging: charging,
