@@ -41,13 +41,20 @@ final class BatteryValueNormalizerTests: XCTestCase {
     XCTAssertEqual(BatteryValueNormalizer.temperatureCelsius(raw: 35), 35)
     XCTAssertNil(BatteryValueNormalizer.temperatureCelsius(raw: 20_000))
     XCTAssertEqual(BatteryValueNormalizer.millivoltsToVolts(12_000), 12)
+    XCTAssertNil(BatteryValueNormalizer.millivoltsToVolts(0))
+    XCTAssertNil(BatteryValueNormalizer.millivoltsToVolts(-1))
     XCTAssertNil(BatteryValueNormalizer.millivoltsToVolts(40_000))
     XCTAssertEqual(BatteryValueNormalizer.milliampsToAmps(-2_000), -2)
     XCTAssertNil(BatteryValueNormalizer.milliampsToAmps(40_000))
     XCTAssertEqual(
       BatteryValueNormalizer.powerWatts(voltage: 12, current: -2),
       -24)
+    XCTAssertEqual(
+      BatteryValueNormalizer.powerWatts(voltage: 12, current: 0),
+      0)
+    XCTAssertNil(BatteryValueNormalizer.powerWatts(voltage: 0, current: 2))
     XCTAssertNil(BatteryValueNormalizer.powerWatts(voltage: nil, current: 2))
+    XCTAssertNil(BatteryValueNormalizer.powerWatts(voltage: 12, current: .nan))
   }
 
   func testMinutesTextAndBatteryState() {
