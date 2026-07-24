@@ -17,7 +17,7 @@ Every pull request runs an Apple Silicon macOS workflow that must complete:
 11. Exact arm64-only executable verification. Universal and x86_64 binaries are rejected.
 12. Independent signing/notarization classification and exact `BUILD_MANIFEST.json` / `BUILD_STATUS.txt` consistency checks.
 13. Read-only DMG mount verification, Applications shortcut check and ZIP/DMG payload comparison, including the icon.
-14. Packaged-app runtime smoke with CSV/JSON evidence and broad runaway guardrails on hosted Apple Silicon macOS.
+14. Packaged-app runtime smoke with schema-v3 CSV/JSON evidence, monotonic timing, stable process identity, PID-reuse detection, privacy scanning and broad runaway guardrails on hosted Apple Silicon macOS.
 15. Upload of the unsigned arm64 release candidate and diagnostic logs.
 16. YAML/plist/shell/localization/icon/output-path validation and secret scanning.
 
@@ -37,7 +37,7 @@ The verified CI candidate contains:
 
 `BUILD_STATUS.txt` provides the human-readable signing/notarization classification. `BUILD_MANIFEST.json` provides the machine-readable version, build, commit, Xcode, bundle, minimum macOS, architecture and artifact provenance. The verifier rejects extra manifest keys, malformed commit metadata, host-specific paths, disagreement between either file and the actual application bundle, or any packaged architecture other than `arm64`. The packaged `AppIcon.icns` must match the reviewed project-owned source byte for byte.
 
-Current CI candidates are intentionally unsigned and not notarized. Runtime evidence is uploaded as a separate workflow artifact because it describes the runner and execution, not the distributable application itself.
+Current CI candidates are intentionally unsigned and not notarized. Runtime evidence is uploaded as a separate workflow artifact because it describes the runner and execution, not the distributable application itself. Runtime CSV, JSON and logs must not contain usernames or user home paths.
 
 ## Output-path safety
 
@@ -52,7 +52,7 @@ This prevents an incorrect environment variable from deleting arbitrary user dat
 
 Runtime smoke does not delete its output base. Each invocation creates a unique `run-<UTC>-<PID>` directory. An existing output base is accepted only when every entry is a previous non-symlink run directory with that exact naming contract; source-like or contaminated directories are rejected before the application launches. This preserves prior evidence and prevents `CI_RUNTIME_OUTPUT_ROOT` from erasing source or build data.
 
-Runtime collection durations are positive whole seconds. Direct collectors include their process ID in the evidence directory name to avoid same-second collisions.
+Runtime collection durations are positive whole seconds. Direct collectors include their process ID in the evidence directory name to avoid same-second collisions. Console output omits or redacts the user home directory, and the runtime smoke fails when generated evidence contains `/Users/<name>` or `/home/<name>` paths.
 
 ## Publication safety
 
