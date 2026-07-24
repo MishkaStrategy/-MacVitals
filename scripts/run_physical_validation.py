@@ -215,7 +215,7 @@ def app_identity(app: Path) -> dict[str, Any]:
 
 def verify_app(app: Path, candidate: dict[str, Any]) -> dict[str, Any]:
     identity = app_identity(app)
-    for key in ("bundleIdentifier", "version", "build"):
+    for key in ("bundleIdentifier", "version", "build", "executableSha256"):
         expected = candidate.get(key)
         actual = identity.get(key)
         if expected is not None and str(actual) != str(expected):
@@ -290,9 +290,9 @@ def prepare(args: argparse.Namespace) -> int:
     strict_child(output_root, root)
     version = candidate_version(dist, args.version)
     candidate = verify_candidate(root, dist, version)
+    archive_identity = extracted_identity(dist, version)
+    candidate["executableSha256"] = archive_identity["executableSha256"]
     test_identity = verify_app(app, candidate)
-    if test_identity["executableSha256"] != extracted_identity(dist, version)["executableSha256"]:
-        raise ValidationError("Test app executable differs from verified candidate ZIP")
     output_root.mkdir(parents=True, exist_ok=True)
     session = output_root / f"session-{utc_now().replace('-', '').replace(':', '')}-{os.getpid()}"
     session.mkdir(exist_ok=False)
