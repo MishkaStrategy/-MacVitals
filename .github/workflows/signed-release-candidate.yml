@@ -8,7 +8,7 @@ on:
         required: true
         default: 1.0.0
       expected_commit:
-        description: Exact 40-character commit SHA to sign
+        description: Exact 40-character commit SHA already merged into main
         required: true
       authorization:
         description: Type SIGN_MACVITALS_RELEASE_CANDIDATE to authorize a private candidate
@@ -53,7 +53,7 @@ jobs:
           ref: ${{ inputs.expected_commit }}
           fetch-depth: 0
 
-      - name: Verify exact checkout
+      - name: Verify exact main-branch checkout
         shell: bash
         env:
           EXPECTED_COMMIT_INPUT: ${{ inputs.expected_commit }}
@@ -62,6 +62,11 @@ jobs:
           actual="$(git rev-parse HEAD)"
           [[ "${actual}" == "${EXPECTED_COMMIT_INPUT}" ]] || {
             echo "Checked-out commit ${actual} differs from requested commit" >&2
+            exit 1
+          }
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "${EXPECTED_COMMIT_INPUT}" origin/main || {
+            echo "Requested commit is not present on origin/main" >&2
             exit 1
           }
 
@@ -188,7 +193,8 @@ jobs:
           {
             echo "## Private signed candidate only"
             echo
-            echo "This workflow has read-only repository permissions and does not create a GitHub Release."
+            echo "This workflow signs only an exact commit already present on main."
+            echo "It has read-only repository permissions and does not create a GitHub Release."
             echo "Publication still requires clean-Mac validation, independent review and separate user authorization."
           } >> "${GITHUB_STEP_SUMMARY}"
 
