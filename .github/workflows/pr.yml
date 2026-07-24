@@ -110,6 +110,20 @@ jobs:
             release-package-diagnostics.txt
           if-no-files-found: ignore
 
+      - name: Physical validation harness hosted prepare smoke
+        run: |
+          python3 scripts/run_physical_validation.py prepare \
+            --version "0.0.${GITHUB_RUN_NUMBER}" \
+            --app build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+
+      - name: Upload hosted physical harness smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-validation-harness-hosted-smoke-arm64
+          path: physical-validation-results/
+          if-no-files-found: ignore
+
       - name: Packaged runtime smoke guardrail
         timeout-minutes: 5
         run: |
