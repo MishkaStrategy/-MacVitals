@@ -100,10 +100,8 @@ enum DiagnosticReportBuilder {
   nonisolated private static func architecture() -> String {
     #if arch(arm64)
       return "arm64"
-    #elseif arch(x86_64)
-      return "x86_64"
     #else
-      return "unknown"
+      return "unsupported"
     #endif
   }
 }
