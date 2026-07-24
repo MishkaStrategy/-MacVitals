@@ -14,6 +14,12 @@ Hosted Apple Silicon CI proves compilation, deterministic logic, provider smoke 
 - Keep hosted-runner and physical-device evidence clearly separated.
 - Confirm the packaged executable architecture is exactly `arm64`.
 
+## Validation harness
+
+Use [`PHYSICAL_VALIDATION_RUNBOOK.md`](PHYSICAL_VALIDATION_RUNBOOK.md) and `scripts/run_physical_validation.py` for the machine-dependent release pass. The harness verifies the exact candidate, records redacted hardware and power-state evidence, collects named runtime scenarios and generates a conservative acceptance record.
+
+The hosted harness smoke proves only that candidate preparation works against the CI-built arm64 package. It does not count as physical MacBook evidence.
+
 ## Hosted architecture evidence
 
 The automated workflow uses hosted Apple Silicon macOS and provides:
@@ -22,7 +28,8 @@ The automated workflow uses hosted Apple Silicon macOS and provides:
 - arm64 unit/provider tests;
 - bilingual UI smoke;
 - an arm64-only ZIP/DMG candidate;
-- packaged-app runtime smoke with CSV/JSON evidence.
+- packaged-app runtime smoke with CSV/JSON evidence;
+- a hosted smoke of physical-validation candidate preparation.
 
 This materially reduces compiler and packaging risk. It does **not** count as physical MacBook validation because hosted runners do not expose a representative internal battery, charger transition matrix, thermals or real laptop sleep/wake behavior.
 
@@ -59,6 +66,8 @@ For every machine record only:
 8. Validate English and Russian interfaces.
 9. Enable and disable Launch at Login; record whether macOS requires approval.
 10. Restart the user session and confirm the actual launch state.
+
+The harness `prepare` command automates the package, architecture, metadata and exact executable-identity portion of this list. The UI and login behavior remain manual observations.
 
 ## Provider scenarios
 
@@ -118,25 +127,22 @@ For each adapter/load combination:
 
 ## Runtime performance collection
 
-Launch the packaged app, allow initialization to settle, leave the popover closed, and run:
+Follow the named commands in [`PHYSICAL_VALIDATION_RUNBOOK.md`](PHYSICAL_VALIDATION_RUNBOOK.md). The required physical scenarios include:
 
-```bash
-bash scripts/collect_runtime_metrics.sh 900 2
-```
-
-Repeat with:
-
-- popover closed at idle;
-- popover open;
+- battery idle;
+- external-power idle;
+- adapter disconnect/reconnect;
+- popover closed and open;
 - 0.5-second update interval;
 - default 2-second interval;
-- CPU/memory stress workload;
-- sleep/wake cycle;
-- six-hour stability run when feasible.
+- controlled CPU/memory stress;
+- real sleep/wake;
+- six-hour stability;
+- graceful battery-less desktop behavior when hardware is available.
 
-The script creates CSV samples and a JSON summary without administrator privileges. It measures process CPU, RSS, VSZ and thread count when supported by the host `ps`. It does not replace Instruments measurements of wakeups or Energy Impact.
+The harness creates isolated runtime CSV/JSON, parsed power-state timelines and a scenario acceptance record without administrator privileges. It uses the hardened runtime collector and refuses to equate automated collection success with manual semantic review.
 
-The automated `run_ci_runtime_smoke.sh` is only a short hosted-runner regression guardrail. Do not substitute it for the scenarios above.
+The automated `run_ci_runtime_smoke.sh` and hosted physical-harness preparation are short hosted-runner regression guardrails. Do not substitute them for the physical scenarios above.
 
 ## Instruments pass
 
@@ -148,6 +154,8 @@ Capture separate Instruments evidence for:
 - Energy Log when supported by the tested macOS/Xcode combination.
 
 Record average, p95 and peak values only with the trace duration, workload and hardware context. Do not publish universal performance claims from one machine.
+
+The harness records reviewed Instruments gate states but does not create or interpret Instruments traces automatically.
 
 ## Alerts and permission states
 
@@ -173,7 +181,7 @@ Export a support bundle for each major scenario and verify:
 - no network data;
 - no stable GPU registry identifier.
 
-Inspect runtime evidence and verify that its JSON and logs also omit usernames, home paths, serial numbers and user documents.
+Inspect runtime evidence and verify that its JSON and logs also omit usernames, home paths, serial numbers and user documents. The harness performs a home-path scan, but the final reviewer must still inspect approved evidence before it is committed or attached.
 
 ## Acceptance record
 
@@ -182,9 +190,12 @@ For each machine produce a signed-off record containing:
 - pass/fail/not-tested table;
 - links to redacted support bundles;
 - runtime CSV/JSON summaries;
+- parsed power transition evidence;
 - Instruments trace filenames and summarized findings;
 - screenshots in both languages;
 - known deviations and release impact;
 - tester and date.
+
+The harness generates `acceptance.json` and `ACCEPTANCE.md` and intentionally returns a nonzero incomplete status while required items remain open. Do not bypass this by deleting scenarios or weakening acceptance rules.
 
 The project must remain Draft until required Apple Silicon scenarios pass or the supported scope is narrowed further in documentation and metadata.
