@@ -116,6 +116,11 @@ jobs:
             --version "0.0.${GITHUB_RUN_NUMBER}" \
             --app build/MacVitals.xcarchive/Products/Applications/MacVitals.app
 
+      - name: Guided physical validation prepare smoke
+        run: |
+          printf '6\n' | python3 scripts/run_physical_validation_guided.py start \
+            --dist dist
+
       - name: Upload hosted physical harness smoke
         if: always()
         uses: actions/upload-artifact@v4
