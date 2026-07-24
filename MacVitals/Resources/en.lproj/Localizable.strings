@@ -16,6 +16,7 @@
 "Unknown GPU" = "Unknown GPU";
 "unified memory" = "unified memory";
 "discrete memory" = "discrete memory";
+"memory type unavailable" = "memory type unavailable";
 "%@ · %@ · utilization unavailable" = "%@ · %@ · utilization unavailable";
 "No battery" = "No battery";
 "Diagnostics" = "Diagnostics";
@@ -34,6 +35,7 @@
 "System" = "System";
 "Supporting system" = "Supporting system";
 "Charging" = "Charging";
+"No net battery flow" = "No net battery flow";
 "Rated %d W" = "Rated %d W";
 "~%.1f W" = "~%.1f W";
 "%.1f W" = "%.1f W";
