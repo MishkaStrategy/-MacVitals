@@ -70,8 +70,11 @@ jobs:
 
       - name: Validate source and signed-release tooling
         run: |
-          python3 -m py_compile scripts/sign_notarize_release.py
+          python3 -m py_compile \
+            scripts/sign_notarize_release.py \
+            scripts/signed_release_entrypoint.py
           python3 scripts/sign_notarize_release.py self-test
+          python3 scripts/signed_release_entrypoint.py self-test
           python3 scripts/materialize_app_icon.py
           xcodegen generate
           swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
@@ -154,7 +157,7 @@ jobs:
               exit 1
             }
           done
-          python3 scripts/sign_notarize_release.py run \
+          python3 scripts/signed_release_entrypoint.py run \
             --version "${RELEASE_VERSION_INPUT}" \
             --build-number "${GITHUB_RUN_NUMBER}" \
             --expected-commit "${EXPECTED_COMMIT_INPUT}" \
