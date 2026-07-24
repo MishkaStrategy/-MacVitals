@@ -2,6 +2,17 @@ import Combine
 import Foundation
 import OSLog
 
+nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
+  let cpu: TimedPoint
+  let memory: TimedPoint
+
+  static func make(from snapshot: SystemSnapshot) -> Self {
+    Self(
+      cpu: TimedPoint(timestamp: snapshot.timestamp, value: snapshot.cpu.value?.total),
+      memory: TimedPoint(timestamp: snapshot.timestamp, value: snapshot.memory.value?.usedPercent))
+  }
+}
+
 @MainActor
 final class MetricsCoordinator: ObservableObject {
   @Published private(set) var snapshot: SystemSnapshot = .empty
@@ -78,8 +89,9 @@ final class MetricsCoordinator: ObservableObject {
       timings: result.timings,
       configuredIntervalSeconds: configuredInterval)
     onSnapshot?(newSnapshot)
-    cpuBuffer.append(TimedPoint(value: newSnapshot.cpu.value?.total))
-    memoryBuffer.append(TimedPoint(value: newSnapshot.memory.value?.usedPercent))
+    let historyPoints = SnapshotHistoryPoints.make(from: newSnapshot)
+    cpuBuffer.append(historyPoints.cpu)
+    memoryBuffer.append(historyPoints.memory)
     publishHistory()
   }
 
