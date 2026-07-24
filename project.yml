@@ -16,6 +16,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     CLANG_ENABLE_MODULES: YES
     GENERATE_INFOPLIST_FILE: NO
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
 configs:
   Debug: debug
   Release: release
