@@ -21,6 +21,9 @@ Includes a project-owned, reproducibly materialized macOS application icon. Engl
 ## Privacy
 No accounts, telemetry, analytics, ads, network backend, root helper or `sudo`. Runtime performance evidence uses monotonic timing and stable PID/UID/start-time/executable identity, refuses ambiguous process selection, detects possible PID reuse and automatically rejects user home paths in generated CSV, JSON and logs.
 
+## Physical Validation
+A reproducible Apple Silicon validation harness verifies the candidate manifest, checksums, exact arm64 architecture and executable SHA-256 before collecting isolated battery, adapter, sleep/wake and stability evidence. It keeps every physical, manual, Instruments, independent-review and signed-publication gate visibly incomplete until an authorized reviewer records the result.
+
 ## Compatibility
 macOS 13+ on Apple Silicon (`arm64`) only. Intel (`x86_64`) and universal builds are not supported. Runtime capability checks decide sensor availability on supported hardware.
 
@@ -28,7 +31,7 @@ macOS 13+ on Apple Silicon (`arm64`) only. Intel (`x86_64`) and universal builds
 The CI fallback build is unsigned and non-notarized unless valid Apple credentials were configured for the workflow. `BUILD_STATUS.txt` must report `Architectures: arm64`.
 
 ## Known Limitations
-Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Apple Silicon Mac hardware.
+Whole-system GPU utilization and measured adapter input power may be unavailable. Hardware performance, VoiceOver and final visual evidence must be collected on representative physical Apple Silicon Mac hardware. Hosted preparation of the physical-validation harness is not physical-device evidence.
 
 ## Checksums
 See `SHA256SUMS.txt` attached to the release.
