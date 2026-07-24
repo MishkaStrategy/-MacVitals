@@ -21,7 +21,7 @@ jobs:
 
       - name: Validate localization, app icon and runtime tooling
         run: |
-          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_guided.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_guided.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
           python3 scripts/materialize_app_icon.py --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
@@ -29,6 +29,7 @@ jobs:
           python3 scripts/validate_runtime_metrics.py --self-test
           python3 scripts/run_physical_validation.py self-test
           python3 scripts/run_physical_validation_guided.py self-test
+          python3 scripts/prepare_physical_artifact.py self-test
           python3 scripts/sign_notarize_release.py self-test
           python3 scripts/signed_release_entrypoint.py self-test
           bash -n \
