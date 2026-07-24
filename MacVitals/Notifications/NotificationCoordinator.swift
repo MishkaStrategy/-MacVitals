@@ -63,6 +63,8 @@ final class NotificationCoordinator {
   private var authorizationFlowTask: Task<Void, Never>?
   private var authorizationRequestGate = NotificationAuthorizationRequestGate()
   private var authorizationRefreshGate = NotificationAuthorizationRefreshGate()
+  private var deliveryCallbackGate = NotificationDeliveryCallbackGate()
+  private var deliveryRetryGate = NotificationDeliveryRetryGate()
   private let center: UNUserNotificationCenter
 
   init(center: UNUserNotificationCenter = .current()) {
@@ -81,10 +83,15 @@ final class NotificationCoordinator {
         memoryThresholdPercent: memoryThreshold,
         lowBatteryThresholdPercent: lowBatteryThreshold))
 
+    if enabled != wasEnabled {
+      deliveryCallbackGate.invalidate()
+    }
+
     guard enabled else {
       authorizationFlowTask?.cancel()
       authorizationFlowTask = nil
       authorizationRefreshGate.invalidate()
+      deliveryRetryGate.reset()
       policy.reset()
       authorizationState = .unknown
       return
@@ -141,7 +148,13 @@ final class NotificationCoordinator {
     guard enabled, authorizationState.canDeliver else { return }
 
     let events = policy.evaluate(snapshot: snapshot)
+    let attemptDate = Date()
     for event in events {
+      guard deliveryRetryGate.canAttempt(event.kind, at: attemptDate) else {
+        policy.markDeliveryFailed(event.kind)
+        continue
+      }
+
       let content = UNMutableNotificationContent()
       content.title = event.title
       content.body = event.message
@@ -150,15 +163,23 @@ final class NotificationCoordinator {
         identifier: "macvitals.\(event.kind.rawValue).\(UUID().uuidString)",
         content: content,
         trigger: nil)
+      let callbackToken = deliveryCallbackGate.token
 
       center.add(request) { [weak self] error in
         guard let error else { return }
+        let failedAt = Date()
         let message = error.localizedDescription
         Task { @MainActor [weak self] in
-          guard let self, self.enabled else { return }
+          guard let self,
+            self.enabled,
+            self.deliveryCallbackGate.isCurrent(callbackToken)
+          else { return }
+
+          self.deliveryRetryGate.markFailed(event.kind, at: failedAt)
           self.policy.markDeliveryFailed(event.kind)
           self.authorizationState = .failed(
             L10n.format("Could not deliver a notification: %@", message))
+          self.startAuthorizationFlow()
         }
       }
     }
