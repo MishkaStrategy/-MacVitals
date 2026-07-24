@@ -81,6 +81,14 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 
 These process samples do not replace Instruments energy, wakeup, thermal or physical battery testing.
 
+For the physical M1/M-series release pass, place the exact workflow candidate in `dist/` and start the conservative guided flow:
+
+```bash
+python3 scripts/run_physical_validation_guided.py start --dist dist
+```
+
+The guide extracts and verifies the exact candidate, chooses approved scenario timings and keeps every result pending human review. See the [guided physical-validation guide](docs/PHYSICAL_VALIDATION_GUIDED.md) and the [full low-level runbook](docs/PHYSICAL_VALIDATION_RUNBOOK.md).
+
 ## Verified hosted evidence
 
 The current workflow has successfully:
