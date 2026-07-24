@@ -40,9 +40,9 @@ nonisolated enum BatteryValueNormalizer {
   }
 
   static func millivoltsToVolts(_ value: Double?) -> Double? {
-    guard let value, value.isFinite else { return nil }
+    guard let value, value.isFinite, value > 0 else { return nil }
     let volts = value / 1_000
-    guard (0...30).contains(volts) else { return nil }
+    guard volts > 0, volts <= 30 else { return nil }
     return volts
   }
 
@@ -54,7 +54,10 @@ nonisolated enum BatteryValueNormalizer {
   }
 
   static func powerWatts(voltage: Double?, current: Double?) -> Double? {
-    guard let voltage, let current else { return nil }
+    guard let voltage, let current,
+      voltage.isFinite, voltage > 0,
+      current.isFinite
+    else { return nil }
     let watts = voltage * current
     return watts.isFinite ? watts : nil
   }
