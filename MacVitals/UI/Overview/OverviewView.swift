@@ -149,8 +149,7 @@ struct OverviewView: View {
       return L10n.string("GPU data unavailable")
     }
     let name = gpu.name ?? L10n.string("Unknown GPU")
-    let memory = L10n.string(
-      gpu.hasUnifiedMemory == true ? "unified memory" : "discrete memory")
+    let memory = GPUMemoryDisplayText.summary(hasUnifiedMemory: gpu.hasUnifiedMemory)
     return L10n.format("%@ · %@ · utilization unavailable", name, memory)
   }
 
