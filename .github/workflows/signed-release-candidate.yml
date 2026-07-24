@@ -90,8 +90,8 @@ jobs:
           done
           KEYCHAIN_PATH="${RUNNER_TEMP}/macvitals-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
-          CERTIFICATE_PATH="${RUNNER_TEMP}/developer-id.p12"
-          NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${NOTARY_KEY_ID}.p8"
+          export CERTIFICATE_PATH="${RUNNER_TEMP}/developer-id.p12"
+          export NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${NOTARY_KEY_ID}.p8"
           echo "::add-mask::${KEYCHAIN_PASSWORD}"
           python3 - <<'PY'
           import base64
@@ -126,9 +126,6 @@ jobs:
             echo "MACVITALS_CERTIFICATE_PATH=${CERTIFICATE_PATH}"
             echo "MACVITALS_NOTARY_KEY_PATH=${NOTARY_KEY_PATH}"
           } >> "${GITHUB_ENV}"
-        env:
-          CERTIFICATE_PATH: ${{ runner.temp }}/developer-id.p12
-          NOTARY_KEY_PATH: ${{ runner.temp }}/AuthKey_${{ secrets.MACVITALS_NOTARY_KEY_ID }}.p8
 
       - name: Build and verify private signed candidate
         env:
