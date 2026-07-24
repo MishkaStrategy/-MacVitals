@@ -37,6 +37,7 @@ FORBIDDEN_HOST_DATA = (
     "serialNumber",
     "username",
 )
+SUPPORTED_ARCHITECTURES = ("arm64",)
 
 
 class ValidationError(ValueError):
@@ -55,6 +56,14 @@ class ExpectedMetadata:
     zip_name: str
     dmg_name: str
     expected_git_commit: str | None = None
+
+
+def validate_supported_architectures(architectures: tuple[str, ...]) -> None:
+    if architectures != SUPPORTED_ARCHITECTURES:
+        raise ValidationError(
+            "MacVitals release architectures must be exactly arm64; "
+            f"found {' '.join(architectures) or '<empty>'}"
+        )
 
 
 def read_manifest(path: Path) -> dict[str, object]:
@@ -76,6 +85,7 @@ def validate_manifest(manifest: dict[str, object], expected: ExpectedMetadata) -
             f"Manifest key scope mismatch; missing={missing}, unexpected={unexpected}"
         )
 
+    validate_supported_architectures(expected.architectures)
     fixed_values: dict[str, object] = {
         "schemaVersion": 1,
         "product": "MacVitals",
@@ -159,7 +169,7 @@ def valid_fixture() -> tuple[dict[str, object], ExpectedMetadata]:
         build_number="45",
         bundle_identifier="com.mishkacher.MacVitals",
         minimum_macos="13.0",
-        architectures=("x86_64", "arm64"),
+        architectures=SUPPORTED_ARCHITECTURES,
         signing_status="unsigned",
         notarization_status="not-notarized",
         zip_name="MacVitals-1.2.3.zip",
@@ -256,6 +266,20 @@ def run_self_test() -> None:
 
     expect_invalid(manifest, expected, status_commit="b" * 40)
 
+    try:
+        validate_supported_architectures(("arm64", "x86_64"))
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("Self-test expected universal architectures to be rejected")
+
+    try:
+        validate_supported_architectures(("x86_64",))
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("Self-test expected Intel architecture to be rejected")
+
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -291,9 +315,10 @@ def main() -> int:
 
         manifest_path = required(arguments.manifest, "--manifest")
         status_path = required(arguments.status, "--status")
-        architectures = str(required(arguments.architectures, "--architectures")).split()
-        if not architectures:
-            raise ValidationError("At least one architecture is required")
+        architectures = tuple(
+            str(required(arguments.architectures, "--architectures")).split()
+        )
+        validate_supported_architectures(architectures)
         expected = ExpectedMetadata(
             version=str(required(arguments.version, "--version")),
             build_number=str(required(arguments.build_number, "--build-number")),
@@ -301,7 +326,7 @@ def main() -> int:
                 required(arguments.bundle_identifier, "--bundle-identifier")
             ),
             minimum_macos=str(required(arguments.minimum_macos, "--minimum-macos")),
-            architectures=tuple(architectures),
+            architectures=architectures,
             signing_status=str(required(arguments.signing_status, "--signing-status")),
             notarization_status=str(
                 required(arguments.notarization_status, "--notarization-status")
