@@ -20,9 +20,9 @@ struct PowerFlowView: View {
       if let battery = snapshot.battery.value, battery.present {
         HStack(spacing: 8) {
           node("Battery", detail: batteryPower, symbol: "battery.75percent")
-          Image(systemName: batteryFlowSymbol)
+          Image(systemName: batteryFlowState.symbolName)
             .accessibilityHidden(true)
-          Text(batteryFlowText)
+          Text(batteryFlowState.displayName)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -62,18 +62,8 @@ struct PowerFlowView: View {
       ?? "—"
   }
 
-  private var batteryIsDischarging: Bool? {
-    MetricNumberFormatter.isNegative(snapshot.battery.value?.batteryPowerWatts)
-  }
-
-  private var batteryFlowSymbol: String {
-    guard let batteryIsDischarging else { return "arrow.left.and.right" }
-    return batteryIsDischarging ? "arrow.right" : "arrow.left"
-  }
-
-  private var batteryFlowText: String {
-    guard let batteryIsDischarging else { return L10n.string("Unknown") }
-    return L10n.string(batteryIsDischarging ? "Supporting system" : "Charging")
+  private var batteryFlowState: BatteryPowerFlowState {
+    BatteryPowerFlowState.resolve(snapshot.battery.value?.batteryPowerWatts)
   }
 
   private var statusLabel: some View {
