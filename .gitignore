@@ -12,6 +12,7 @@ runtime-intel-results/
 performance-results/
 physical-validation-results/
 physical-validation-apps/
+physical-validation-candidates/
 *.xcuserstate
 xcuserdata/
 MacVitals.xcodeproj/
