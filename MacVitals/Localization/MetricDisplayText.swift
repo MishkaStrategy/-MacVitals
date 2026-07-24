@@ -63,6 +63,48 @@ nonisolated enum BatteryDisplayText {
   }
 }
 
+nonisolated enum BatteryPowerFlowState: Equatable, Sendable {
+  case supportingSystem
+  case charging
+  case idle
+  case unavailable
+
+  static func resolve(_ batteryPowerWatts: Double?) -> Self {
+    guard let batteryPowerWatts, batteryPowerWatts.isFinite else { return .unavailable }
+    if batteryPowerWatts < 0 { return .supportingSystem }
+    if batteryPowerWatts > 0 { return .charging }
+    return .idle
+  }
+
+  var displayName: String {
+    switch self {
+    case .supportingSystem: return L10n.string("Supporting system")
+    case .charging: return L10n.string("Charging")
+    case .idle: return L10n.string("No net battery flow")
+    case .unavailable: return L10n.string("Unknown")
+    }
+  }
+
+  var symbolName: String {
+    switch self {
+    case .supportingSystem: return "arrow.right"
+    case .charging: return "arrow.left"
+    case .idle: return "minus"
+    case .unavailable: return "arrow.left.and.right"
+    }
+  }
+}
+
+nonisolated enum GPUMemoryDisplayText {
+  static func summary(hasUnifiedMemory: Bool?) -> String {
+    switch hasUnifiedMemory {
+    case true: return L10n.string("unified memory")
+    case false: return L10n.string("discrete memory")
+    case nil: return L10n.string("memory type unavailable")
+    }
+  }
+}
+
 nonisolated enum MetricNumberFormatter {
   static func percentage(_ value: Double?) -> String {
     boundedRoundedInteger(value, range: 0...100).map { "\($0)%" } ?? "—"
