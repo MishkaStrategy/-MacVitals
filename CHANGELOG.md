@@ -17,4 +17,7 @@
 - Runtime evidence logs redact home paths and pass an automated privacy scan
 - Reproducible physical Apple Silicon validation harness and runbook
 - Every physical scenario is pinned to the verified candidate executable SHA-256
-- Physical, manual, Instruments, independent-review and signing gates remain visibly incomplete until explicitly reviewed
+- Guarded private Developer ID signing/notarization workflow with exact commit binding
+- Separate app and DMG signing, notarization logs, stapling and Gatekeeper verification
+- Private signed artifacts remain non-public until independent review and explicit authorization
+- Physical, manual, Instruments, independent-review and publication gates remain visibly incomplete until explicitly reviewed
