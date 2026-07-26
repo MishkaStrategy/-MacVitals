@@ -126,7 +126,7 @@ summary_count="$(find "${OUTPUT_ROOT}/samples" -name summary.json -type f -print
 }
 summary_path="$(find "${OUTPUT_ROOT}/samples" -name summary.json -type f -print | head -n 1)"
 
-python3 "${ROOT_DIR}/scripts/validate_runtime_metrics.py" \
+python3 "${ROOT_DIR}/scripts/validate_runtime_metrics_hardened.py" \
   "${summary_path}" \
   --minimum-samples "${CI_RUNTIME_MINIMUM_SAMPLES:-10}" \
   --minimum-observed-seconds "${CI_RUNTIME_MINIMUM_OBSERVED_SECONDS:-30}" \
