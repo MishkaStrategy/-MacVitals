@@ -70,15 +70,11 @@ jobs:
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           runner_user="$(id -un)"
           console_user="$(stat -f '%Su' /dev/console)"
+          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]]
           [[ "${console_user}" == "${runner_user}" ]] || {
             echo "Physical runner must execute as the active macOS console user" >&2
             exit 1
           }
-          # `launchctl print gui/<uid>` verifies that the active user's GUI
-          # bootstrap exists. Do not use `launchctl asuser ... true` as a
-          # preflight: GitHub Runner can be the console user while its audit
-          # session is not permitted to switch audit sessions on modern macOS.
-          launchctl print "gui/$(id -u)" >/dev/null
           [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || {
             echo "GitHub run number is not numeric" >&2
             exit 1
@@ -119,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          for command_name in launchctl python3 stat xcodebuild xcodegen xcrun swift; do
+          for command_name in python3 stat xcodebuild xcodegen xcrun swift; do
             command -v "${command_name}" >/dev/null 2>&1 || {
               echo "Required preinstalled runner tool is missing: ${command_name}" >&2
               exit 1
@@ -198,10 +194,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          REDACT_HOME="${HOME:-}" \
-          REDACT_USER="$(id -un 2>/dev/null || true)" \
-          REDACT_HOST="$(hostname 2>/dev/null || true)" \
-          python3 - <<'PYCODE'
+          REDACT_HOME="${HOME:-}" REDACT_USER="$(id -un 2>/dev/null || true)" REDACT_HOST="$(hostname 2>/dev/null || true)" python3 - <<'PYCODE'
           from pathlib import Path
           import os
           import re
@@ -243,10 +236,8 @@ jobs:
 
           raw_text = "Physical collection log was not created.\n"
           if raw_log.exists():
-              if raw_log.is_symlink() or not raw_log.is_file():
-                  raise SystemExit("Raw physical log is not a regular file")
-              if raw_log.stat().st_nlink != 1:
-                  raise SystemExit("Raw physical log must not be hard-linked")
+              if raw_log.is_symlink() or not raw_log.is_file() or raw_log.stat().st_nlink != 1:
+                  raise SystemExit("Raw physical log is unsafe")
               if raw_log.stat().st_size > 20 * 1024 * 1024:
                   raise SystemExit("Raw physical log exceeds the 20 MiB limit")
               raw_bytes = raw_log.read_bytes()
@@ -267,12 +258,9 @@ jobs:
                       raise SystemExit(f"Symlink is forbidden in physical evidence: {path.name}")
                   if path.is_dir():
                       continue
-                  if not path.is_file():
-                      raise SystemExit(f"Non-regular physical evidence entry: {path.name}")
-                  metadata = path.stat()
-                  if metadata.st_nlink != 1:
-                      raise SystemExit(f"Hard-linked physical evidence is forbidden: {path.name}")
-                  total_size += metadata.st_size
+                  if not path.is_file() or path.stat().st_nlink != 1:
+                      raise SystemExit(f"Unsafe physical evidence entry: {path.name}")
+                  total_size += path.stat().st_size
                   if total_size > 100 * 1024 * 1024:
                       raise SystemExit("Physical evidence exceeds the 100 MiB upload limit")
                   payload = path.read_bytes()
@@ -335,62 +323,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Preserve sanitized evidence locally if upload failed
-        if: >-
-          always() &&
-          steps.privacy.outputs.ready == 'true' &&
-          steps.physical.outputs.status != '' &&
-          steps.evidence_upload.outcome != 'success'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [[ "${GITHUB_RUN_ID}" =~ ^[0-9]+$ ]]
-          evidence_top="${HOME}/MacVitalsPhysicalEvidence"
-          evidence_commit="${evidence_top}/${CANDIDATE_SHA}"
-          evidence_run="${evidence_commit}/${GITHUB_RUN_ID}"
-          fallback_root="${evidence_run}/sanitized-upload-fallback"
-          for directory in "${evidence_top}" "${evidence_commit}" "${evidence_run}"; do
-            if [[ -e "${directory}" ]]; then
-              [[ -d "${directory}" && ! -L "${directory}" ]] || {
-                echo "Unsafe local evidence directory" >&2
-                exit 1
-              }
-            else
-              mkdir "${directory}"
-            fi
-          done
-          [[ ! -e "${fallback_root}" ]] || {
-            echo "Refusing to overwrite existing sanitized fallback evidence" >&2
-            exit 1
-          }
-          mkdir "${fallback_root}"
-          chmod 700 "${evidence_top}" "${evidence_commit}" "${evidence_run}" "${fallback_root}" 2>/dev/null || true
-          if [[ -d physical-validation-results && ! -L physical-validation-results ]]; then
-            ditto physical-validation-results "${fallback_root}/physical-validation-results"
-          fi
-          for file in physical-validation-run.log physical-evidence-upload-ready.txt; do
-            if [[ -f "${file}" && ! -L "${file}" ]]; then
-              cp "${file}" "${fallback_root}/${file}"
-            fi
-          done
-          printf '%s\n' "Sanitized upload fallback retained at <HOME>/MacVitalsPhysicalEvidence/${CANDIDATE_SHA}/${GITHUB_RUN_ID}/sanitized-upload-fallback"
-
       - name: Clean generated workspace data
         if: always()
         shell: bash
         run: |
-          rm -rf \
-            build \
-            dist \
-            physical-validation-results \
-            physical-validation-apps \
-            staged-physical-artifacts \
-            MacVitals.xcodeproj \
-            MacVitals/Resources/AppIcon.icns
-          rm -f \
-            physical-validation-run.raw.log \
-            physical-validation-run.log \
-            physical-evidence-upload-ready.txt
+          rm -rf build dist physical-validation-results physical-validation-apps staged-physical-artifacts MacVitals.xcodeproj MacVitals/Resources/AppIcon.icns
+          rm -f physical-validation-run.raw.log physical-validation-run.log physical-evidence-upload-ready.txt
           git clean -ffdX || true
 
       - name: Enforce physical and privacy results
