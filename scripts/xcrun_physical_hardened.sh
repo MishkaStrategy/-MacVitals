@@ -1,5 +1,5 @@
 #!/bin/bash
-# Accept non-zero xctrace exits only when a real trace bundle exports a valid XML TOC.
+# Accept xctrace exit 54 only when a real trace bundle exports a valid XML TOC.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -58,7 +58,7 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "record" ]]; then
   done
   mkdir -p "${output}"
   printf 'trace-data\n' > "${output}/data"
-  exit 54
+  exit "${FAKE_RECORD_STATUS:-54}"
 fi
 if [[ "${1:-}" == "xctrace" && "${2:-}" == "export" ]]; then
   output=""
@@ -69,7 +69,7 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "export" ]]; then
   done
   [[ -n "${output}" && ! -e "${output}" ]] || exit 65
   printf '<trace-toc/>\n' > "${output}"
-  exit 54
+  exit "${FAKE_EXPORT_STATUS:-54}"
 fi
 exit 0
 FAKE
@@ -82,6 +82,16 @@ FAKE
   MACVITALS_REAL_XCRUN="${root}/fake-xcrun" \
     bash "$0" xctrace export --input "${root}/sample.trace" --toc --output "${root}/toc.xml" >/dev/null 2>&1
   valid_xml_file "${root}/toc.xml" || fail "xctrace shim self-test did not preserve valid TOC output"
+
+  if FAKE_RECORD_STATUS=2 MACVITALS_REAL_XCRUN="${root}/fake-xcrun" \
+      bash "$0" xctrace record --output "${root}/unsupported.trace" >/dev/null 2>&1; then
+    fail "xctrace shim self-test accepted unsupported record exit 2"
+  fi
+
+  if FAKE_EXPORT_STATUS=2 MACVITALS_REAL_XCRUN="${root}/fake-xcrun" \
+      bash "$0" xctrace export --input "${root}/sample.trace" --toc --output "${root}/unsupported.xml" >/dev/null 2>&1; then
+    fail "xctrace shim self-test accepted unsupported export exit 2"
+  fi
 
   printf 'Hardened xctrace exit validation self-test passed\n'
 }
@@ -101,6 +111,7 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "record" ]]; then
   status=$?
   set -e
   [[ ${status} -ne 0 ]] || exit 0
+  [[ ${status} -eq 54 ]] || exit "${status}"
 
   if [[ -n "${output_path}" ]] && trace_has_payload "${output_path}"; then
     toc_root="$(mktemp -d)"
@@ -109,9 +120,8 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "record" ]]; then
     "${REAL_XCRUN}" xctrace export --input "${output_path}" --toc --output "${toc_path}" >/dev/null 2>&1
     export_status=$?
     set -e
-    if valid_xml_file "${toc_path}"; then
-      printf 'MacVitals hardening: xctrace record returned %s and TOC export returned %s, but the saved trace has a valid XML TOC; retaining it for human review.\n' \
-        "${status}" "${export_status}" >&2
+    if [[ ${export_status} -eq 0 || ${export_status} -eq 54 ]] && valid_xml_file "${toc_path}"; then
+      printf 'MacVitals hardening: xctrace record returned 54, and the saved trace exported a valid XML TOC; retaining it for human review.\n' >&2
       rm -rf "${toc_root}"
       exit 0
     fi
@@ -127,9 +137,9 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "export" ]]; then
   status=$?
   set -e
   [[ ${status} -ne 0 ]] || exit 0
+  [[ ${status} -eq 54 ]] || exit "${status}"
   if [[ -n "${output_path}" ]] && valid_xml_file "${output_path}"; then
-    printf 'MacVitals hardening: xctrace export returned %s, but produced valid XML; retaining it for human review.\n' \
-      "${status}" >&2
+    printf 'MacVitals hardening: xctrace export returned 54 but produced valid XML; retaining it for human review.\n' >&2
     exit 0
   fi
   exit "${status}"
