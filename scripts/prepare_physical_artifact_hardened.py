@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -62,6 +65,69 @@ def extract_validated(artifact: Path, destination: Path) -> str:
     if artifact.stat().st_size > MAX_OUTER_ARCHIVE_BYTES:
         raise base.ArtifactError("Downloaded workflow artifact exceeds the outer ZIP size limit")
     return _original_extract_validated(artifact, destination)
+
+
+def hardened_guide(repository: Path) -> Path:
+    guide = repository / "scripts" / "run_physical_validation_guided_hardened.py"
+    if not guide.is_file() or guide.is_symlink():
+        raise base.ArtifactError("Hardened guided physical validation script is missing or unsafe")
+    return guide
+
+
+def stage(args: argparse.Namespace) -> int:
+    if sys.platform != "darwin":
+        raise base.ArtifactError("Physical validation staging requires macOS")
+    if os.uname().machine != "arm64":
+        raise base.ArtifactError(
+            f"Physical validation requires native arm64; found {os.uname().machine!r}"
+        )
+
+    repository = base.ensure_repository(args.repository)
+    guide = hardened_guide(repository)
+    artifact = args.artifact.expanduser().resolve()
+    if not artifact.is_file() or artifact.is_symlink():
+        raise base.ArtifactError("Workflow artifact must be a regular non-symlink file")
+
+    candidates_root = base.strict_repository_child(
+        args.candidates_root, repository, "physical candidate root"
+    )
+    candidates_root.mkdir(parents=True, exist_ok=True)
+    digest = base.sha256(artifact)
+    destination = candidates_root / f"artifact-{digest[:16]}"
+    if destination.exists() or destination.is_symlink():
+        raise base.ArtifactError(
+            "Refusing to reuse a staged workflow artifact directory: "
+            + str(destination.relative_to(repository))
+        )
+
+    app_root = base.strict_repository_child(
+        repository / "physical-validation-apps" / f"artifact-{digest[:16]}",
+        repository,
+        "physical validation app root",
+    )
+    if app_root.exists() or app_root.is_symlink():
+        raise base.ArtifactError(
+            "Refusing to reuse a staged physical application root: "
+            + str(app_root.relative_to(repository))
+        )
+
+    version = extract_validated(artifact, destination)
+    command = [
+        sys.executable,
+        str(guide),
+        "start",
+        "--repository",
+        str(repository),
+        "--dist",
+        str(destination),
+        "--app-root",
+        str(app_root),
+    ]
+    print(f"Staged verified outer artifact for version {version}.")
+    print(f"Outer artifact SHA-256: {digest}")
+    print(f"Candidate directory: {destination.relative_to(repository)}")
+    result = subprocess.run(command, check=False)
+    return int(result.returncode)
 
 
 def _write_custom_fixture(
@@ -125,12 +191,27 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
         else:
             raise AssertionError("Oversized total workflow artifact was accepted")
 
+        repository = root / "repository"
+        scripts = repository / "scripts"
+        scripts.mkdir(parents=True)
+        guide = scripts / "run_physical_validation_guided_hardened.py"
+        guide.write_text("# fixture\n", encoding="utf-8")
+        assert hardened_guide(repository) == guide
+        guide.unlink()
+        try:
+            hardened_guide(repository)
+        except base.ArtifactError:
+            pass
+        else:
+            raise AssertionError("Missing hardened guide was accepted")
+
     print("Hardened physical workflow artifact staging self-test passed")
     return 0
 
 
 base.validated_members = validated_members
 base.extract_validated = extract_validated
+base.stage = stage
 base.self_test = self_test
 
 
