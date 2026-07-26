@@ -67,6 +67,12 @@ PY
 
 cd "${ROOT_DIR}"
 python3 scripts/materialize_app_icon.py
+python3 scripts/verify_xcodegen_version.py
+xcodegen_version="$(xcodegen --version | sed -nE 's/.*([0-9]+[.][0-9]+[.][0-9]+).*/\1/p' | head -n 1)"
+[[ -n "${xcodegen_version}" ]] || {
+  echo "Could not record the verified XcodeGen version" >&2
+  exit 1
+}
 xcodegen generate
 xcodebuild \
   -project MacVitals.xcodeproj \
@@ -157,6 +163,7 @@ BUNDLE_ID="${bundle_id}" \
 MINIMUM_MACOS="${minimum_macos}" \
 GIT_COMMIT="${git_commit}" \
 XCODE_VERSION="${xcode_version}" \
+XCODEGEN_VERSION="${xcodegen_version}" \
 ARCHITECTURES="${architectures}" \
 SIGNING_STATUS="${signing_status}" \
 NOTARIZATION_STATUS="${notarization_status}" \
@@ -177,6 +184,7 @@ manifest = {
     "minimumMacOS": os.environ["MINIMUM_MACOS"],
     "gitCommit": os.environ["GIT_COMMIT"],
     "xcodeVersion": os.environ["XCODE_VERSION"],
+    "xcodeGenVersion": os.environ["XCODEGEN_VERSION"],
     "architectures": os.environ["ARCHITECTURES"].split(),
     "signingStatus": os.environ["SIGNING_STATUS"],
     "notarizationStatus": os.environ["NOTARIZATION_STATUS"],
