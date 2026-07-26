@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: physical-direct-session-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -97,7 +97,23 @@ jobs:
         env:
           BUILD_NUMBER: ${{ steps.identity.outputs.build_number }}
           CODE_SIGNING_ALLOWED: NO
-        run: bash scripts/package_release.sh "${CANDIDATE_VERSION}"
+        run: |
+          set -Eeuo pipefail
+          bash scripts/package_release.sh "${CANDIDATE_VERSION}"
+          python3 - "${CANDIDATE_SHA}" dist/BUILD_MANIFEST.json <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+
+          expected = sys.argv[1]
+          manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          actual = manifest.get("gitCommit")
+          if actual != expected:
+              raise SystemExit(
+                  f"Physical candidate manifest commit {actual!r} does not match exact checkout {expected!r}"
+              )
+          print("Physical candidate manifest is bound to the exact checkout")
+          PY
 
       - name: Collect through same-UID direct GUI session
         id: physical
