@@ -93,6 +93,8 @@ schemes:
         MacVitalsUITests: [test]
     test:
       gatherCoverageData: true
+      language: en
+      region: US
       targets:
         - MacVitalsTests
         - MacVitalsUITests
