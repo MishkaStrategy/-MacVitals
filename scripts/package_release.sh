@@ -107,7 +107,14 @@ if [[ "${architectures}" != "${TARGET_ARCHITECTURE}" ]]; then
   echo "Release executable must contain only ${TARGET_ARCHITECTURE}; found: ${architectures}" >&2
   exit 1
 fi
-git_commit="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+git_commit="$(git rev-parse HEAD 2>/dev/null || true)"
+if [[ -z "${git_commit}" ]]; then
+  git_commit="${GITHUB_SHA:-unknown}"
+fi
+if [[ ! "${git_commit}" =~ ^([0-9a-f]{40}|unknown)$ ]]; then
+  echo "Could not determine a valid release commit: ${git_commit}" >&2
+  exit 1
+fi
 xcode_version="$(xcodebuild -version | python3 -c 'import sys; print("; ".join(line.strip() for line in sys.stdin if line.strip()))')"
 
 signature_info="$(codesign -dv --verbose=4 "${APP_PATH}" 2>&1 || true)"
@@ -209,5 +216,5 @@ PY
     > "$(basename "${CHECKSUM_PATH}")"
 )
 
-bash "${ROOT_DIR}/scripts/verify_release.sh" "${VERSION}"
+GITHUB_SHA="${git_commit}" bash "${ROOT_DIR}/scripts/verify_release.sh" "${VERSION}"
 echo "Release artifacts are available in ${DIST_DIR}"
