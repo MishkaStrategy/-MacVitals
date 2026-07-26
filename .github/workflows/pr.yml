@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -42,7 +42,7 @@ jobs:
 
       - name: Upload native build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-build-diagnostics
           path: |
@@ -61,7 +61,7 @@ jobs:
 
       - name: Upload native test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-test-diagnostics
           path: |
@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload native UI test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-ui-test-diagnostics
           path: |
@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload release package diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-package-diagnostics
           path: |
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload hosted physical harness smoke
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: physical-validation-harness-hosted-smoke-arm64
           path: physical-validation-results/
@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload runtime smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: runtime-smoke-evidence-arm64
           path: |
@@ -163,7 +163,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload arm64 release candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: MacVitals-0.0.${{ github.run_number }}-arm64-unsigned
           path: dist/
@@ -172,7 +172,7 @@ jobs:
   repository-safety:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
@@ -204,6 +204,6 @@ jobs:
             scripts/collect_runtime_metrics.sh \
             scripts/run_ci_runtime_smoke.sh
 
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
