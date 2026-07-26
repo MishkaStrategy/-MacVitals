@@ -161,10 +161,13 @@ if [[ "${mode}" == "apply" ]]; then
   sudo xcode-select --switch "${developer_dir}"
 
   note "Accepting the Xcode license for the selected installation"
-  sudo env DEVELOPER_DIR="${developer_dir}" xcodebuild -license accept
+  sudo /usr/bin/xcodebuild -license accept
 
   note "Installing required Xcode first-launch components"
-  sudo env DEVELOPER_DIR="${developer_dir}" xcodebuild -runFirstLaunch
+  sudo /usr/bin/xcodebuild -runFirstLaunch
+
+  note "Verifying first-launch completion"
+  sudo /usr/bin/xcodebuild -checkFirstLaunchStatus
 fi
 
 active_developer_dir="$(xcode-select -p 2>/dev/null || true)"
@@ -176,13 +179,22 @@ fi
 
 note "Active developer directory: ${active_developer_dir:-unset}"
 "${xcodegen_path}" --version
-env DEVELOPER_DIR="${developer_dir}" xcodebuild -version
-env DEVELOPER_DIR="${developer_dir}" xcrun swift --version
-env DEVELOPER_DIR="${developer_dir}" xcrun --find xctrace >/dev/null
+/usr/bin/xcodebuild -version
+/usr/bin/xcrun swift --version
+/usr/bin/xcrun --find xctrace >/dev/null
 
-if [[ "$(env DEVELOPER_DIR="${developer_dir}" xcrun --sdk macosx --show-sdk-platform-path 2>/dev/null || true)" == "" ]]; then
+if [[ "$(/usr/bin/xcrun --sdk macosx --show-sdk-platform-path 2>/dev/null || true)" == "" ]]; then
   fail "The macOS SDK is unavailable in the selected Xcode"
 fi
+
+first_launch_output="$(/usr/bin/xcodebuild -checkFirstLaunchStatus 2>&1)" || {
+  fail "Xcode first-launch setup is incomplete: ${first_launch_output//$'\n'/ }"
+}
+
+git_output="$(/usr/bin/git --version 2>&1)" || {
+  fail "System Git is blocked, usually by an unaccepted Xcode license: ${git_output//$'\n'/ }"
+}
+[[ "${git_output}" == git\ version* ]] || fail "Unexpected system Git response: ${git_output//$'\n'/ }"
 
 cat <<EOF
 
@@ -190,7 +202,8 @@ Physical runner toolchain is ready.
 Xcode app: ${xcode_app}
 Developer directory: ${developer_dir}
 XcodeGen: ${xcodegen_path}
+System Git: ${git_output}
 
 Next step:
-  Synchronize feature/macvitals-v1 to run Physical Apple Silicon Validation.
+  Re-run Physical Apple Silicon Validation for the exact PR head.
 EOF
