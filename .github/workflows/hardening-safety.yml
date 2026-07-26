@@ -1,0 +1,48 @@
+name: Hardened Tooling Safety
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hardened-tooling-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hardened-tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Compile hardened Python entrypoints
+        run: |
+          python3 -m py_compile \
+            scripts/run_physical_validation.py \
+            scripts/run_physical_validation_hardened.py \
+            scripts/run_physical_validation_guided.py \
+            scripts/run_physical_validation_guided_hardened.py \
+            scripts/prepare_physical_artifact.py \
+            scripts/prepare_physical_artifact_hardened.py \
+            scripts/validate_runtime_metrics.py \
+            scripts/validate_runtime_metrics_hardened.py
+
+      - name: Run hardened regression self-tests
+        run: |
+          python3 scripts/run_physical_validation_hardened.py self-test
+          python3 scripts/run_physical_validation_guided_hardened.py self-test
+          python3 scripts/prepare_physical_artifact_hardened.py self-test
+          python3 scripts/validate_runtime_metrics_hardened.py --self-test
+
+      - name: Validate shell routing contracts
+        run: |
+          bash -n \
+            scripts/run_ci_physical_validation_hardened.sh \
+            scripts/run_ci_runtime_smoke.sh \
+            scripts/run_ci_runtime_smoke_hardened.sh
+          bash scripts/run_ci_physical_validation_hardened.sh --self-test
+          bash scripts/run_ci_runtime_smoke_hardened.sh --self-test
