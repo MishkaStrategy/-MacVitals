@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Validate localization, app icon and runtime tooling
         run: |
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload runtime smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: runtime-smoke-evidence-arm64
           path: |
@@ -102,7 +102,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload unsigned arm64 candidate for internal validation
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: MacVitals-${{ steps.version.outputs.value }}-arm64-unsigned
           path: dist/
