@@ -177,7 +177,7 @@ for required in (
     'module.base.host_snapshot()',
     'record_instrument "Power Profiler" "energy-log" 300',
     'terminate_exact_candidate_processes()',
-    'command_line == "${EXECUTABLE}"',
+    '"${command_line}" == "${EXECUTABLE}"',
 ):
     if required not in runner:
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
