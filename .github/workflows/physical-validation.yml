@@ -113,10 +113,8 @@ jobs:
           run_check xcrun --find swift
           run_check command -v swift
           run_check swift --version
-          python3 - <<'PYCODE' >> preflight-diagnostics.raw.log 2>&1 || {
-          python_status=$?
-          if [[ "${status}" -eq 0 ]]; then status="${python_status}"; fi
-          }
+          set +e
+          python3 - <<'PYCODE' >> preflight-diagnostics.raw.log 2>&1
           from pathlib import Path
           import importlib.util
           import json
@@ -136,6 +134,11 @@ jobs:
               "state": power.get("state"),
           }, sort_keys=True))
           PYCODE
+          python_status=$?
+          set -e
+          if [[ "${python_status}" -ne 0 && "${status}" -eq 0 ]]; then
+            status="${python_status}"
+          fi
           pmset -g therm >> preflight-diagnostics.raw.log 2>&1 || true
           echo "status=${status}" >> "${GITHUB_OUTPUT}"
           echo "Runner diagnostics exit status: ${status}"
