@@ -25,8 +25,6 @@ jobs:
        github.actor == github.repository_owner &&
        github.event.pull_request.head.ref == 'feature/macvitals-v1')
     runs-on: [self-hosted, macOS, ARM64]
-    # Explicit step timeouts are capped at 360 minutes. The long collector
-    # intentionally relies on this job-level limit on the self-hosted runner.
     timeout-minutes: 540
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -76,14 +74,15 @@ jobs:
             echo "Physical runner must execute as the active macOS console user" >&2
             exit 1
           }
+          # `launchctl print gui/<uid>` verifies that the active user's GUI
+          # bootstrap exists. Do not use `launchctl asuser ... true` as a
+          # preflight: GitHub Runner can be the console user while its audit
+          # session is not permitted to switch audit sessions on modern macOS.
           launchctl print "gui/$(id -u)" >/dev/null
-          launchctl asuser "$(id -u)" /usr/bin/true
           [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || {
             echo "GitHub run number is not numeric" >&2
             exit 1
           }
-          # Reserve a separate numeric namespace so the physical candidate cannot
-          # collide with the normal Pull Request workflow build number.
           build_number=$((500000 + 10#${GITHUB_RUN_NUMBER}))
           candidate_version="0.0.${build_number}"
           echo "sha=${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
@@ -178,9 +177,6 @@ jobs:
 
       - name: Collect physical and local-only Instruments evidence
         id: physical
-        # Do not add steps[*].timeout-minutes here: GitHub caps that field at
-        # 360 minutes, while this exact collector contains a six-hour scenario.
-        # The 540-minute job timeout remains the controlling upper bound.
         shell: bash
         run: |
           set -Eeuo pipefail
