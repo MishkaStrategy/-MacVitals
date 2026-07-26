@@ -1,6 +1,6 @@
 # Guided Physical Apple Silicon Validation
 
-This guide runs the existing conservative physical-validation harness through an interactive menu. It does not weaken acceptance criteria and cannot mark a scenario or manual gate as passed automatically.
+This guide runs the conservative physical-validation harness through hardened entrypoints and an interactive menu. It does not weaken acceptance criteria and cannot mark a scenario or manual gate as passed automatically.
 
 The flow supports native Apple Silicon (`arm64`) only. Intel and universal validation remain outside the MacVitals v1 scope.
 
@@ -13,7 +13,7 @@ Check out the exact reviewed feature commit or, after merge, the exact reviewed 
 Download the complete `MacVitals-<version>-arm64-unsigned.zip` workflow artifact and run:
 
 ```bash
-python3 scripts/prepare_physical_artifact.py stage \
+python3 scripts/prepare_physical_artifact_hardened.py stage \
   ~/Downloads/MacVitals-<version>-arm64-unsigned.zip
 ```
 
@@ -21,8 +21,11 @@ This command is the preferred entrypoint. Before any candidate file is extracted
 
 - requires native macOS arm64;
 - requires a regular non-symlink outer ZIP;
+- enforces an outer archive size limit;
 - requires exactly five root-level nonempty files;
 - rejects nested paths, traversal, duplicate members and symlink entries;
+- limits individual and total uncompressed size;
+- limits total compressed size and rejects unsafe compression ratios;
 - reads `BUILD_MANIFEST.json` inside the outer ZIP and requires exactly `architectures: ["arm64"]`;
 - requires the exact versioned ZIP/DMG plus status, manifest and checksums;
 - stages the files in a new digest-addressed ignored directory below `physical-validation-candidates/`;
@@ -58,7 +61,7 @@ The guide rejects missing, extra, empty or symlinked candidate entries. `dist/` 
 Run:
 
 ```bash
-python3 scripts/run_physical_validation_guided.py start --dist dist
+python3 scripts/run_physical_validation_guided_hardened.py start --dist dist
 ```
 
 The guide:
@@ -70,7 +73,8 @@ The guide:
 5. extracts the verified ZIP into a new ignored directory below `physical-validation-apps/`;
 6. verifies that the extracted app executable exactly matches the candidate ZIP;
 7. creates a new session below `physical-validation-results/`;
-8. opens the interactive menu.
+8. routes every prepare, run, review, manual and finalize command through the hardened acceptance layer;
+9. opens the interactive menu.
 
 Existing staged artifacts, extracted apps and session directories are never silently reused. Candidate, session and extracted-app inputs cannot escape the repository through symlinks.
 
@@ -100,16 +104,23 @@ Scenario profiles use the project-approved defaults:
 | stability-six-hour | 6 hours | 2 seconds |
 | batteryless-desktop | 15 minutes | 2 seconds |
 
-Before each run, the guide prints the required physical action and requires typing `RUN`. Every collected scenario remains `pending-review` until a human records `pass`, `fail`, `not-tested` or `unsupported` separately.
+Before each run, the guide prints the required physical action and requires typing `RUN`. Every collected scenario remains `pending-review` until a human records a decision separately.
 
-The `independentReviewer` gate must be recorded only by a separate reviewer. Signing, notarization, stapling and clean-Mac Gatekeeper gates must remain `not-tested` until the final signed candidate exists.
+The hardened acceptance rules are fail-closed:
+
+- a scenario cannot receive human `pass` before its automated status is `pass`;
+- a failed or not-run automated scenario remains an open item even if evidence is edited or an invalid review is attempted;
+- `unsupported` is accepted only for the hardware-specific `batteryless-desktop` scenario;
+- manual gates do not accept `unsupported`; they require an explicit real `pass` to close;
+- `independentReviewer` can pass only after an actual separate reviewer completes the review;
+- signing, notarization, stapling and clean-Mac Gatekeeper gates remain open until the final signed candidate exists and is genuinely validated.
 
 ## 4. Resume later
 
 The start command prints the session path. Resume it with:
 
 ```bash
-python3 scripts/run_physical_validation_guided.py resume \
+python3 scripts/run_physical_validation_guided_hardened.py resume \
   --session physical-validation-results/session-<UTC>-<PID>
 ```
 
@@ -117,9 +128,9 @@ The guide uses the exact extracted application recorded in `guided-session.json`
 
 ## 5. Finalize conservatively
 
-Choose **Finalize acceptance record** from the menu, or use the low-level command documented in [`PHYSICAL_VALIDATION_RUNBOOK.md`](PHYSICAL_VALIDATION_RUNBOOK.md).
+Choose **Finalize acceptance record** from the menu, or use the hardened low-level command documented in [`PHYSICAL_VALIDATION_RUNBOOK.md`](PHYSICAL_VALIDATION_RUNBOOK.md).
 
-An incomplete result and exit status `2` are expected while any required scenario or manual gate remains open. Do not delete open items or edit generated runtime evidence to force completion.
+An incomplete result and exit status `2` are expected while any required automated scenario, human review or manual gate remains open. Do not delete open items or edit generated runtime evidence to force completion.
 
 ## Privacy and evidence handling
 
