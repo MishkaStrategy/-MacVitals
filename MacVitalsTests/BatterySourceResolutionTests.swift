@@ -3,7 +3,7 @@ import XCTest
 @testable import MacVitals
 
 final class BatterySourceResolutionTests: XCTestCase {
-  func testEmptyPowerSourceListMeansNoInternalBattery() {
+  func testEmptyPowerSourceListIsOnlyAnAbsenceCandidate() {
     XCTAssertEqual(
       BatterySourceResolution.resolve(
         sourceCount: 0,
@@ -30,7 +30,7 @@ final class BatterySourceResolutionTests: XCTestCase {
       .providerError)
   }
 
-  func testFullyDescribedExternalSourcesWithoutInternalBatteryMeanAbsent() {
+  func testFullyDescribedExternalSourcesWithoutInternalBatteryAreAbsenceCandidate() {
     XCTAssertEqual(
       BatterySourceResolution.resolve(
         sourceCount: 2,
@@ -67,6 +67,98 @@ final class BatterySourceResolutionTests: XCTestCase {
         classifiedSourceCount: 1,
         internalBatteryFound: true),
       .present)
+  }
+
+  func testHardwareClassificationIsFailClosed() {
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "MacBookPro18,2"), .portable)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "MacBookAir10,1"), .portable)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "Macmini9,1"), .desktop)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "MacStudio1,1"), .desktop)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "MacPro7,1"), .desktop)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "iMac21,1"), .desktop)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "VirtualMac2,1"), .unknown)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: nil), .unknown)
+    XCTAssertEqual(BatteryHardwareKind.classify(modelIdentifier: "  "), .unknown)
+  }
+
+  func testBatteryAbsenceRequiresSamplesAndElapsedDuration() {
+    var confirmation = BatteryAbsenceConfirmation()
+    let start = Date(timeIntervalSince1970: 1_000)
+
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start,
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(5),
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertTrue(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(10),
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+  }
+
+  func testSmartBatteryServiceCancelsAbsenceConfirmation() {
+    var confirmation = BatteryAbsenceConfirmation()
+    let start = Date(timeIntervalSince1970: 2_000)
+
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start,
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(5),
+        absenceCandidate: true,
+        smartBatteryServiceFound: true))
+    XCTAssertNil(confirmation.firstObservedAt)
+    XCTAssertEqual(confirmation.sampleCount, 0)
+  }
+
+  func testNonCandidateSampleResetsAbsenceConfirmation() {
+    var confirmation = BatteryAbsenceConfirmation()
+    let start = Date(timeIntervalSince1970: 3_000)
+
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start,
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(5),
+        absenceCandidate: false,
+        smartBatteryServiceFound: false))
+    XCTAssertNil(confirmation.firstObservedAt)
+    XCTAssertEqual(confirmation.sampleCount, 0)
+  }
+
+  func testClockRollbackRestartsAbsenceConfirmation() {
+    var confirmation = BatteryAbsenceConfirmation()
+    let start = Date(timeIntervalSince1970: 4_000)
+
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start,
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(5),
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertFalse(
+      confirmation.evaluate(
+        timestamp: start.addingTimeInterval(-10),
+        absenceCandidate: true,
+        smartBatteryServiceFound: false))
+    XCTAssertEqual(confirmation.sampleCount, 1)
+    XCTAssertEqual(confirmation.firstObservedAt, start.addingTimeInterval(-10))
   }
 
   func testBatteryExternalPowerResolutionAcceptsOnlyKnownStates() {
