@@ -8,7 +8,7 @@ MacVitals v1 supports Apple Silicon (`arm64`) Macs running macOS 13 or later. In
 | Physical/active/wired/compressed memory | Mach `host_statistics64` | CI smoke verified on hosted ARM; physical validation pending | Yes | Yes | No | High | Yes | Provider error, app continues |
 | Memory pressure level | `DispatchSourceMemoryPressure` | Build/test verified on ARM; pressure transitions need physical stress validation | Yes | Yes | No | High for OS pressure events | Yes | `unknown`; percent threshold remains separate |
 | Battery percentage/state/time | IOKit Power Sources | Provider build verified; physical battery transitions pending | Yes | N/A | No | High | Yes | Battery section reports absent |
-| Battery voltage/current/cycles/temperature | `AppleSmartBattery` IORegistry keys | Capability checked at runtime | Model-dependent | N/A | No | Experimental | Registry API public; keys not guaranteed | Omitted and marked unavailable |
+| Battery voltage/current/cycles/temperature | `AppleSmartBattery` IORegistry keys | Capability checked at runtime; temperature is shown beside battery percentage when available | Model-dependent | N/A | No | Experimental | Registry API public; keys not guaranteed | Individual fields are omitted; no temperature value is fabricated |
 | Adapter presence/rated power | `IOPSCopyExternalPowerAdapterDetails` | Provider build verified; real adapters pending | Yes | Model-dependent | Yes | Medium/high | Yes | Adapter unavailable |
 | Adapter measured input power | No universal source in v1 | No claim | No claim | No claim | Yes | Unsupported | — | Explicitly unavailable |
 | GPU identity/Metal capability | Metal | CI smoke verified on hosted ARM | Yes | Yes | No | High | Yes | GPU unavailable |
