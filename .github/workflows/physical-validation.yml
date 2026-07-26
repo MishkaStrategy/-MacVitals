@@ -78,7 +78,70 @@ jobs:
           echo "CANDIDATE_VERSION=${candidate_version}" >> "${GITHUB_ENV}"
           echo "PHYSICAL_BUILD_NUMBER=${build_number}" >> "${GITHUB_ENV}"
 
+      - name: Collect runner tooling and power diagnostics
+        id: diagnostics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -f preflight-diagnostics.raw.log preflight-diagnostics.log
+          status=0
+          run_check() {
+            "$@" >> preflight-diagnostics.raw.log 2>&1 || {
+              command_status=$?
+              if [[ "${status}" -eq 0 ]]; then
+                status="${command_status}"
+              fi
+            }
+          }
+          {
+            echo "diagnostics-version=1"
+            echo "candidate-sha=${CANDIDATE_SHA}"
+            echo "architecture=$(uname -m)"
+            echo "runner-user=$(id -un 2>/dev/null || true)"
+            echo "console-user=$(stat -f '%Su' /dev/console 2>/dev/null || true)"
+          } >> preflight-diagnostics.raw.log
+          run_check sw_vers
+          run_check command -v xcode-select
+          run_check xcode-select -p
+          run_check command -v xcodebuild
+          run_check xcodebuild -version
+          run_check command -v python3
+          run_check python3 --version
+          run_check command -v xcodegen
+          run_check xcodegen --version
+          run_check command -v xcrun
+          run_check xcrun --find swift
+          run_check command -v swift
+          run_check swift --version
+          python3 - <<'PYCODE' >> preflight-diagnostics.raw.log 2>&1 || {
+          python_status=$?
+          if [[ "${status}" -eq 0 ]]; then status="${python_status}"; fi
+          }
+          from pathlib import Path
+          import importlib.util
+          import json
+          import sys
+
+          path = Path("scripts/run_physical_validation.py")
+          spec = importlib.util.spec_from_file_location("macvitals_physical_harness", path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("Could not load physical validation harness")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          power = module.power_snapshot()
+          print(json.dumps({
+              "batteryPresent": power.get("batteryPresent"),
+              "powerSource": power.get("source"),
+              "state": power.get("state"),
+          }, sort_keys=True))
+          PYCODE
+          pmset -g therm >> preflight-diagnostics.raw.log 2>&1 || true
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          echo "Runner diagnostics exit status: ${status}"
+
       - name: Validate tooling and physical host without credentials
+        if: success() && steps.diagnostics.outputs.status == '0'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -125,6 +188,7 @@ jobs:
           python3 scripts/prepare_physical_artifact.py self-test
 
       - name: Generate project and lint
+        if: success() && steps.diagnostics.outputs.status == '0'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -134,6 +198,7 @@ jobs:
           swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
 
       - name: Run native arm64 tests
+        if: success() && steps.diagnostics.outputs.status == '0'
         shell: bash
         run: >-
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
@@ -142,6 +207,7 @@ jobs:
 
       - name: Build and verify exact unsigned candidate
         id: package
+        if: success() && steps.diagnostics.outputs.status == '0'
         shell: bash
         env:
           BUILD_NUMBER: ${{ steps.identity.outputs.build_number }}
@@ -150,6 +216,7 @@ jobs:
 
       - name: Collect physical and local-only Instruments evidence
         id: physical
+        if: success() && steps.diagnostics.outputs.status == '0'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -176,17 +243,21 @@ jobs:
           import os
           import re
 
-          raw_log = Path("physical-validation-run.raw.log")
-          safe_log = Path("physical-validation-run.log")
+          physical_raw = Path("physical-validation-run.raw.log")
+          physical_safe = Path("physical-validation-run.log")
+          preflight_raw = Path("preflight-diagnostics.raw.log")
+          preflight_safe = Path("preflight-diagnostics.log")
           evidence_root = Path("physical-validation-results")
           ready = Path("physical-evidence-upload-ready.txt")
           ready.unlink(missing_ok=True)
+
           home = os.environ.get("REDACT_HOME", "")
           user = os.environ.get("REDACT_USER", "")
           host = os.environ.get("REDACT_HOST", "")
           replacements = [(home, "<HOME>"), (host, "<HOST>")]
           if len(user) >= 3:
               replacements.append((user, "<USER>"))
+
           path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
           temp_pattern = re.compile(r"/private/tmp/macvitals-instruments\.[^/\s<]+")
           battery_id_pattern = re.compile(r"\bInternalBattery-\d+(?:\s+\(id=\d+\))?")
@@ -209,20 +280,24 @@ jobs:
               if path_pattern.search(text) or temp_pattern.search(text):
                   raise SystemExit(f"Path privacy scan failed for {source.name}")
 
-          raw_text = "Physical collection log was not created.\n"
-          if raw_log.exists():
-              if raw_log.is_symlink() or not raw_log.is_file() or raw_log.stat().st_nlink != 1:
-                  raise SystemExit("Raw physical log is unsafe")
-              if raw_log.stat().st_size > 20 * 1024 * 1024:
-                  raise SystemExit("Raw physical log exceeds the 20 MiB limit")
-              raw_bytes = raw_log.read_bytes()
-              if b"\x00" in raw_bytes:
-                  raise SystemExit("Raw physical log is unexpectedly binary")
-              raw_text = raw_bytes.decode("utf-8", errors="strict")
-          safe_text = sanitize(raw_text)
-          verify_clean(safe_text, raw_log)
-          safe_log.write_text(safe_text, encoding="utf-8")
-          raw_log.unlink(missing_ok=True)
+          def sanitize_log(raw: Path, safe: Path, fallback: str, size_limit: int) -> None:
+              raw_text = fallback
+              if raw.exists():
+                  if raw.is_symlink() or not raw.is_file() or raw.stat().st_nlink != 1:
+                      raise SystemExit(f"Unsafe raw log: {raw.name}")
+                  if raw.stat().st_size > size_limit:
+                      raise SystemExit(f"Raw log exceeds size limit: {raw.name}")
+                  payload = raw.read_bytes()
+                  if b"\x00" in payload:
+                      raise SystemExit(f"Raw log is unexpectedly binary: {raw.name}")
+                  raw_text = payload.decode("utf-8", errors="strict")
+              safe_text = sanitize(raw_text)
+              verify_clean(safe_text, raw)
+              safe.write_text(safe_text, encoding="utf-8")
+              raw.unlink(missing_ok=True)
+
+          sanitize_log(preflight_raw, preflight_safe, "Runner diagnostics log was not created.\n", 4 * 1024 * 1024)
+          sanitize_log(physical_raw, physical_safe, "Physical collection log was not created.\n", 20 * 1024 * 1024)
 
           total_size = 0
           if evidence_root.exists():
@@ -244,15 +319,18 @@ jobs:
                   text = sanitize(payload.decode("utf-8", errors="strict"))
                   verify_clean(text, path)
                   path.write_text(text, encoding="utf-8")
+
           ready.write_text("privacy-scan=passed\n", encoding="utf-8")
           PYCODE
           echo "ready=true" >> "${GITHUB_OUTPUT}"
+          tail -n 200 preflight-diagnostics.log
           tail -n 200 physical-validation-run.log
 
       - name: Add conservative job summary
         if: always()
         shell: bash
         env:
+          DIAGNOSTICS_STATUS: ${{ steps.diagnostics.outputs.status }}
           PHYSICAL_STATUS: ${{ steps.physical.outputs.status }}
           PRIVACY_READY: ${{ steps.privacy.outputs.ready }}
         run: |
@@ -262,6 +340,7 @@ jobs:
             echo "- Exact commit: \`${CANDIDATE_SHA}\`"
             echo "- Architecture: \`$(uname -m)\`"
             echo "- Runner labels: \`self-hosted\`, \`macOS\`, \`ARM64\`"
+            echo "- Runner diagnostics exit: \`${DIAGNOSTICS_STATUS:-not-run}\`"
             echo "- Physical collector exit: \`${PHYSICAL_STATUS:-not-run}\`"
             echo "- Evidence privacy gate: \`${PRIVACY_READY:-failed-or-not-run}\`"
             echo "- No manual or independent gate is auto-approved."
@@ -275,6 +354,7 @@ jobs:
         with:
           name: physical-apple-silicon-${{ steps.identity.outputs.short_sha }}
           path: |
+            preflight-diagnostics.log
             physical-validation-run.log
             physical-evidence-upload-ready.txt
             physical-validation-results/
@@ -302,13 +382,14 @@ jobs:
         shell: bash
         run: |
           rm -rf build dist physical-validation-results physical-validation-apps staged-physical-artifacts MacVitals.xcodeproj MacVitals/Resources/AppIcon.icns
-          rm -f physical-validation-run.raw.log physical-validation-run.log physical-evidence-upload-ready.txt
+          rm -f preflight-diagnostics.raw.log preflight-diagnostics.log physical-validation-run.raw.log physical-validation-run.log physical-evidence-upload-ready.txt
           git clean -ffdX || true
 
       - name: Enforce physical and privacy results
         if: always()
         shell: bash
         env:
+          DIAGNOSTICS_STATUS: ${{ steps.diagnostics.outputs.status }}
           PHYSICAL_STATUS: ${{ steps.physical.outputs.status }}
           PRIVACY_READY: ${{ steps.privacy.outputs.ready }}
         run: |
@@ -317,6 +398,14 @@ jobs:
             echo "Physical evidence privacy gate did not pass" >&2
             exit 1
           }
+          [[ "${DIAGNOSTICS_STATUS:-}" =~ ^[0-9]+$ ]] || {
+            echo "Runner diagnostics did not produce a valid exit status" >&2
+            exit 1
+          }
+          if [[ "${DIAGNOSTICS_STATUS}" -ne 0 ]]; then
+            echo "Runner diagnostics failed with exit ${DIAGNOSTICS_STATUS}; sanitized diagnostics were uploaded" >&2
+            exit "${DIAGNOSTICS_STATUS}"
+          fi
           [[ "${PHYSICAL_STATUS:-}" =~ ^[0-9]+$ ]] || {
             echo "Physical collector did not produce a valid exit status" >&2
             exit 1
