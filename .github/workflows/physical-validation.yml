@@ -1,4 +1,4 @@
-name: Physical Apple Silicon Validation
+name: Physical Legacy Queue Guard
 
 on:
   pull_request:
@@ -6,475 +6,60 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
+# Reuse the legacy group so this lightweight guard replaces any pending copy of
+# the superseded long-running canonical workflow. The authoritative physical
+# collector is Physical Direct-Session Validation.
 concurrency:
   group: physical-apple-silicon-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  physical-validation:
+  superseded-physical-path:
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-       github.ref == 'refs/heads/main' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.pull_request.user.login == github.repository_owner &&
        github.actor == github.repository_owner &&
        github.event.pull_request.head.ref == 'feature/macvitals-v1')
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 540
-    env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Register runner privacy masks
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          workspace_parent=""
-          if [[ -n "${GITHUB_WORKSPACE:-}" ]]; then
-            workspace_parent="$(dirname "${GITHUB_WORKSPACE}")"
-          fi
-          for value in \
-            "${HOME:-}" \
-            "${USER:-}" \
-            "$(id -un 2>/dev/null || true)" \
-            "$(hostname 2>/dev/null || true)" \
-            "${RUNNER_NAME:-}" \
-            "${GITHUB_WORKSPACE:-}" \
-            "${workspace_parent}"; do
-            if [[ -n "${value}" && ${#value} -ge 3 ]]; then
-              echo "::add-mask::${value}"
-            fi
-          done
-
       - name: Checkout exact candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          clean: true
 
-      - name: Verify runner and exact checkout
-        id: identity
+      - name: Verify authoritative hardened physical path
         shell: bash
         run: |
           set -Eeuo pipefail
-          [[ "$(uname -s)" == "Darwin" ]] || { echo "Physical runner must be macOS" >&2; exit 1; }
-          [[ "$(uname -m)" == "arm64" ]] || { echo "Physical runner must be native arm64" >&2; exit 1; }
-          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "Candidate SHA is invalid" >&2; exit 1; }
-          [[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA}" ]] || { echo "Exact candidate checkout mismatch" >&2; exit 1; }
-          [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || { echo "GitHub run number is not numeric" >&2; exit 1; }
-          build_number=$((500000 + 10#${GITHUB_RUN_NUMBER}))
-          candidate_version="0.0.${build_number}"
-          echo "sha=${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "short_sha=${CANDIDATE_SHA:0:12}" >> "${GITHUB_OUTPUT}"
-          echo "version=${candidate_version}" >> "${GITHUB_OUTPUT}"
-          echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
-          echo "CANDIDATE_VERSION=${candidate_version}" >> "${GITHUB_ENV}"
-          echo "PHYSICAL_BUILD_NUMBER=${build_number}" >> "${GITHUB_ENV}"
-
-      - name: Resolve preinstalled developer tools
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          developer_dir=""
-          selected_developer_dir="$(xcode-select -p 2>/dev/null || true)"
-          candidates=(
-            "${DEVELOPER_DIR:-}"
-            "${selected_developer_dir}"
-            "/Applications/Xcode.app/Contents/Developer"
-            "/Applications/Xcode-beta.app/Contents/Developer"
+          required=(
+            .github/workflows/physical-direct-session-validation.yml
+            scripts/run_ci_physical_validation_hardened.sh
+            scripts/run_physical_validation_hardened.py
+            scripts/run_physical_validation_guided_hardened.py
           )
-          for candidate in "${candidates[@]}"; do
-            if [[ -n "${candidate}" && -x "${candidate}/usr/bin/xcodebuild" ]]; then
-              developer_dir="${candidate}"
-              break
-            fi
-          done
-          if [[ -z "${developer_dir}" ]]; then
-            shopt -s nullglob
-            for app in /Applications/Xcode*.app; do
-              candidate="${app}/Contents/Developer"
-              if [[ -x "${candidate}/usr/bin/xcodebuild" ]]; then
-                developer_dir="${candidate}"
-                break
-              fi
-            done
-            shopt -u nullglob
-          fi
-          if [[ -n "${developer_dir}" ]]; then
-            echo "DEVELOPER_DIR=${developer_dir}" >> "${GITHUB_ENV}"
-            swift_path="$(DEVELOPER_DIR="${developer_dir}" xcrun --find swift 2>/dev/null || true)"
-            if [[ -n "${swift_path}" && -x "${swift_path}" ]]; then
-              echo "$(dirname "${swift_path}")" >> "${GITHUB_PATH}"
-            fi
-            echo "A preinstalled full Xcode developer directory was resolved."
-          else
-            echo "No preinstalled full Xcode developer directory was found." >&2
-          fi
-
-          xcodegen_path="$(command -v xcodegen 2>/dev/null || true)"
-          if [[ -z "${xcodegen_path}" ]]; then
-            for candidate in \
-              /opt/homebrew/bin/xcodegen \
-              /opt/homebrew/opt/xcodegen/bin/xcodegen \
-              /usr/local/bin/xcodegen; do
-              if [[ -x "${candidate}" ]]; then
-                xcodegen_path="${candidate}"
-                echo "$(dirname "${candidate}")" >> "${GITHUB_PATH}"
-                break
-              fi
-            done
-          fi
-          if [[ -n "${xcodegen_path}" ]]; then
-            echo "A preinstalled xcodegen executable was resolved."
-          else
-            echo "No preinstalled xcodegen executable was found." >&2
-          fi
-
-      - name: Collect runner tooling and power diagnostics
-        id: diagnostics
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          rm -f preflight-diagnostics.raw.log preflight-diagnostics.log
-          status=0
-          run_check() {
-            "$@" >> preflight-diagnostics.raw.log 2>&1 || {
-              command_status=$?
-              if [[ "${status}" -eq 0 ]]; then
-                status="${command_status}"
-              fi
-            }
-          }
-          {
-            echo "diagnostics-version=2"
-            echo "candidate-sha=${CANDIDATE_SHA}"
-            echo "architecture=$(uname -m)"
-            echo "runner-user=$(id -un 2>/dev/null || true)"
-            echo "console-user=$(stat -f '%Su' /dev/console 2>/dev/null || true)"
-            echo "developer-dir=${DEVELOPER_DIR:-unset}"
-            echo "xcodegen-path=$(command -v xcodegen 2>/dev/null || true)"
-          } >> preflight-diagnostics.raw.log
-          run_check sw_vers
-          run_check command -v xcode-select
-          run_check xcode-select -p
-          run_check command -v xcodebuild
-          run_check xcodebuild -version
-          run_check command -v python3
-          run_check python3 --version
-          run_check command -v xcodegen
-          run_check xcodegen --version
-          run_check command -v xcrun
-          run_check xcrun --find swift
-          run_check command -v swift
-          run_check swift --version
-          set +e
-          python3 - <<'PYCODE' >> preflight-diagnostics.raw.log 2>&1
-          from pathlib import Path
-          import importlib.util
-          import json
-          import sys
-
-          path = Path("scripts/run_physical_validation.py")
-          spec = importlib.util.spec_from_file_location("macvitals_physical_harness", path)
-          if spec is None or spec.loader is None:
-              raise SystemExit("Could not load physical validation harness")
-          module = importlib.util.module_from_spec(spec)
-          sys.modules[spec.name] = module
-          spec.loader.exec_module(module)
-          power = module.power_snapshot()
-          print(json.dumps({
-              "batteryPresent": power.get("batteryPresent"),
-              "powerSource": power.get("source"),
-              "state": power.get("state"),
-          }, sort_keys=True))
-          PYCODE
-          python_status=$?
-          set -e
-          if [[ "${python_status}" -ne 0 && "${status}" -eq 0 ]]; then
-            status="${python_status}"
-          fi
-          pmset -g therm >> preflight-diagnostics.raw.log 2>&1 || true
-          echo "status=${status}" >> "${GITHUB_OUTPUT}"
-          echo "Runner diagnostics exit status: ${status}"
-
-      - name: Validate tooling and physical host without credentials
-        if: success() && steps.diagnostics.outputs.status == '0'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for command_name in python3 stat sw_vers xcodebuild xcodegen xcrun swift pmset; do
-            command -v "${command_name}" >/dev/null 2>&1 || {
-              echo "Required preinstalled runner tool is missing: ${command_name}" >&2
+          for path in "${required[@]}"; do
+            [[ -f "${path}" && ! -L "${path}" ]] || {
+              echo "Authoritative hardened physical path is missing or unsafe: ${path}" >&2
               exit 1
             }
           done
-          sw_vers
-          xcode-select -p
-          xcodebuild -version
-          xcodegen --version
-          swift --version
-          runner_user="$(id -un)"
-          console_user="$(stat -f '%Su' /dev/console 2>/dev/null || true)"
-          echo "Runner user is registered; console-session state will be enforced by the physical collector."
-          if [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" && "${console_user}" != "${runner_user}" ]]; then
-            echo "Active console user differs from runner user; GUI-dependent gates may report unsupported." >&2
-          fi
-          pmset -g batt || true
-          pmset -g therm || true
           python3 -m py_compile \
-            scripts/materialize_app_icon.py \
-            scripts/validate_localizations.py \
-            scripts/validate_output_path.py \
-            scripts/validate_release_metadata.py \
-            scripts/collect_runtime_metrics.py \
-            scripts/validate_runtime_metrics.py \
-            scripts/run_physical_validation.py \
-            scripts/run_physical_validation_guided.py \
-            scripts/prepare_physical_artifact.py \
-            scripts/sign_notarize_release.py \
-            scripts/signed_release_entrypoint.py
-          bash -n \
-            scripts/package_release.sh \
-            scripts/verify_release.sh \
-            scripts/collect_runtime_metrics.sh \
-            scripts/run_ci_runtime_smoke.sh \
-            scripts/run_ci_physical_validation.sh
-          bash scripts/run_ci_physical_validation.sh --self-test
-          python3 scripts/run_physical_validation.py self-test
-          python3 scripts/run_physical_validation_guided.py self-test
-          python3 scripts/prepare_physical_artifact.py self-test
-
-      - name: Generate project and lint
-        if: success() && steps.diagnostics.outputs.status == '0'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python3 scripts/materialize_app_icon.py
-          python3 scripts/validate_localizations.py
-          xcodegen generate
-          swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
-
-      - name: Run native arm64 tests
-        if: success() && steps.diagnostics.outputs.status == '0'
-        shell: bash
-        run: >-
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
-          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
-          CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
-
-      - name: Build and verify exact unsigned candidate
-        id: package
-        if: success() && steps.diagnostics.outputs.status == '0'
-        shell: bash
-        env:
-          BUILD_NUMBER: ${{ steps.identity.outputs.build_number }}
-          CODE_SIGNING_ALLOWED: NO
-        run: bash scripts/package_release.sh "${CANDIDATE_VERSION}"
-
-      - name: Collect physical and local-only Instruments evidence
-        id: physical
-        if: success() && steps.diagnostics.outputs.status == '0'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          rm -f physical-validation-run.raw.log physical-validation-run.log
-          set +e
-          bash scripts/run_ci_physical_validation.sh \
-            "${CANDIDATE_VERSION}" \
-            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
-            "${CANDIDATE_SHA}" \
-            > physical-validation-run.raw.log 2>&1
-          status=$?
-          set -e
-          echo "status=${status}" >> "${GITHUB_OUTPUT}"
-          echo "Physical collection exit status: ${status}"
-
-      - name: Sanitize and authorize evidence upload
-        id: privacy
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          REDACT_HOME="${HOME:-}" REDACT_USER="$(id -un 2>/dev/null || true)" REDACT_HOST="$(hostname 2>/dev/null || true)" python3 - <<'PYCODE'
-          from pathlib import Path
-          import os
-          import re
-
-          physical_raw = Path("physical-validation-run.raw.log")
-          physical_safe = Path("physical-validation-run.log")
-          preflight_raw = Path("preflight-diagnostics.raw.log")
-          preflight_safe = Path("preflight-diagnostics.log")
-          evidence_root = Path("physical-validation-results")
-          ready = Path("physical-evidence-upload-ready.txt")
-          ready.unlink(missing_ok=True)
-
-          home = os.environ.get("REDACT_HOME", "")
-          user = os.environ.get("REDACT_USER", "")
-          host = os.environ.get("REDACT_HOST", "")
-          replacements = [(home, "<HOME>"), (host, "<HOST>")]
-          if len(user) >= 3:
-              replacements.append((user, "<USER>"))
-
-          path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
-          temp_pattern = re.compile(r"/private/tmp/macvitals-instruments\.[^/\s<]+")
-          battery_id_pattern = re.compile(r"\bInternalBattery-\d+(?:\s+\(id=\d+\))?")
-
-          def sanitize(text: str) -> str:
-              text = path_pattern.sub("<HOME>", text)
-              text = temp_pattern.sub("<TRACE_WORKSPACE>", text)
-              text = battery_id_pattern.sub("<BATTERY_ID>", text)
-              for value, replacement in replacements:
-                  if value:
-                      text = text.replace(value, replacement)
-              return text
-
-          def verify_clean(text: str, source: Path) -> None:
-              forbidden = [value for value, _ in replacements if value]
-              forbidden.append("InternalBattery-")
-              for value in forbidden:
-                  if value and value in text:
-                      raise SystemExit(f"Privacy scan failed for {source.name}")
-              if path_pattern.search(text) or temp_pattern.search(text):
-                  raise SystemExit(f"Path privacy scan failed for {source.name}")
-
-          def sanitize_log(raw: Path, safe: Path, fallback: str, size_limit: int) -> None:
-              raw_text = fallback
-              if raw.exists():
-                  if raw.is_symlink() or not raw.is_file() or raw.stat().st_nlink != 1:
-                      raise SystemExit(f"Unsafe raw log: {raw.name}")
-                  if raw.stat().st_size > size_limit:
-                      raise SystemExit(f"Raw log exceeds size limit: {raw.name}")
-                  payload = raw.read_bytes()
-                  if b"\x00" in payload:
-                      raise SystemExit(f"Raw log is unexpectedly binary: {raw.name}")
-                  raw_text = payload.decode("utf-8", errors="strict")
-              safe_text = sanitize(raw_text)
-              verify_clean(safe_text, raw)
-              safe.write_text(safe_text, encoding="utf-8")
-              raw.unlink(missing_ok=True)
-
-          sanitize_log(preflight_raw, preflight_safe, "Runner diagnostics log was not created.\n", 4 * 1024 * 1024)
-          sanitize_log(physical_raw, physical_safe, "Physical collection log was not created.\n", 20 * 1024 * 1024)
-
-          total_size = 0
-          if evidence_root.exists():
-              if evidence_root.is_symlink() or not evidence_root.is_dir():
-                  raise SystemExit("Physical evidence root is unsafe")
-              for path in sorted(evidence_root.rglob("*")):
-                  if path.is_symlink():
-                      raise SystemExit(f"Symlink is forbidden in physical evidence: {path.name}")
-                  if path.is_dir():
-                      continue
-                  if not path.is_file() or path.stat().st_nlink != 1:
-                      raise SystemExit(f"Unsafe physical evidence entry: {path.name}")
-                  total_size += path.stat().st_size
-                  if total_size > 100 * 1024 * 1024:
-                      raise SystemExit("Physical evidence exceeds the 100 MiB upload limit")
-                  payload = path.read_bytes()
-                  if b"\x00" in payload:
-                      raise SystemExit(f"Binary evidence is forbidden from upload: {path.name}")
-                  text = sanitize(payload.decode("utf-8", errors="strict"))
-                  verify_clean(text, path)
-                  path.write_text(text, encoding="utf-8")
-
-          ready.write_text("privacy-scan=passed\n", encoding="utf-8")
-          PYCODE
-          echo "ready=true" >> "${GITHUB_OUTPUT}"
-          tail -n 200 preflight-diagnostics.log
-          tail -n 200 physical-validation-run.log
-
-      - name: Add conservative job summary
-        if: always()
-        shell: bash
-        env:
-          DIAGNOSTICS_STATUS: ${{ steps.diagnostics.outputs.status }}
-          PHYSICAL_STATUS: ${{ steps.physical.outputs.status }}
-          PRIVACY_READY: ${{ steps.privacy.outputs.ready }}
-        run: |
+            scripts/run_physical_validation_hardened.py \
+            scripts/run_physical_validation_guided_hardened.py
+          bash -n scripts/run_ci_physical_validation_hardened.sh
           {
-            echo "## Physical Apple Silicon validation"
+            echo "## Legacy physical queue superseded"
             echo
-            echo "- Exact commit: \`${CANDIDATE_SHA}\`"
-            echo "- Architecture: \`$(uname -m)\`"
-            echo "- Runner labels: \`self-hosted\`, \`macOS\`, \`ARM64\`"
-            echo "- Runner diagnostics exit: \`${DIAGNOSTICS_STATUS:-not-run}\`"
-            echo "- Physical collector exit: \`${PHYSICAL_STATUS:-not-run}\`"
-            echo "- Evidence privacy gate: \`${PRIVACY_READY:-failed-or-not-run}\`"
-            echo "- No manual or independent gate is auto-approved."
-            echo "- Raw Instruments traces remain local on the runner."
+            echo "This job intentionally performs no physical-device validation."
+            echo "It replaces the obsolete duplicate self-hosted queue only."
+            echo "Physical acceptance remains exclusively in Physical Direct-Session Validation."
+            echo "No human, Instruments, independent-review, signing or publication gate is approved here."
           } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Upload redacted physical evidence
-        id: evidence_upload
-        if: always() && steps.privacy.outputs.ready == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: physical-apple-silicon-${{ steps.identity.outputs.short_sha }}
-          path: |
-            preflight-diagnostics.log
-            physical-validation-run.log
-            physical-evidence-upload-ready.txt
-            physical-validation-results/
-            dist/BUILD_STATUS.txt
-            dist/BUILD_MANIFEST.json
-            dist/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload exact tested unsigned candidate
-        if: >-
-          always() &&
-          steps.package.outcome == 'success' &&
-          steps.identity.outputs.version != '' &&
-          hashFiles('dist/BUILD_MANIFEST.json') != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: MacVitals-${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.short_sha }}-arm64-unsigned
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Clean generated workspace data
-        if: always()
-        shell: bash
-        run: |
-          rm -rf build dist physical-validation-results physical-validation-apps staged-physical-artifacts MacVitals.xcodeproj MacVitals/Resources/AppIcon.icns
-          rm -f preflight-diagnostics.raw.log preflight-diagnostics.log physical-validation-run.raw.log physical-validation-run.log physical-evidence-upload-ready.txt
-          git clean -ffdX || true
-
-      - name: Enforce physical and privacy results
-        if: always()
-        shell: bash
-        env:
-          DIAGNOSTICS_STATUS: ${{ steps.diagnostics.outputs.status }}
-          PHYSICAL_STATUS: ${{ steps.physical.outputs.status }}
-          PRIVACY_READY: ${{ steps.privacy.outputs.ready }}
-        run: |
-          set -Eeuo pipefail
-          [[ "${PRIVACY_READY:-}" == "true" ]] || {
-            echo "Physical evidence privacy gate did not pass" >&2
-            exit 1
-          }
-          [[ "${DIAGNOSTICS_STATUS:-}" =~ ^[0-9]+$ ]] || {
-            echo "Runner diagnostics did not produce a valid exit status" >&2
-            exit 1
-          }
-          if [[ "${DIAGNOSTICS_STATUS}" -ne 0 ]]; then
-            echo "Runner diagnostics failed with exit ${DIAGNOSTICS_STATUS}; sanitized diagnostics were uploaded" >&2
-            exit "${DIAGNOSTICS_STATUS}"
-          fi
-          [[ "${PHYSICAL_STATUS:-}" =~ ^[0-9]+$ ]] || {
-            echo "Physical collector did not produce a valid exit status" >&2
-            exit 1
-          }
-          if [[ "${PHYSICAL_STATUS}" -ne 0 ]]; then
-            echo "Physical collector failed with exit ${PHYSICAL_STATUS}; sanitized evidence was retained" >&2
-            exit "${PHYSICAL_STATUS}"
-          fi
