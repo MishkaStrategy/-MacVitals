@@ -7,6 +7,10 @@ final class MetricDisplayTextTests: XCTestCase {
     for value in [Double.nan, .infinity, -.infinity, -0.01, 100.01] {
       XCTAssertEqual(MetricNumberFormatter.percentage(value), "—")
     }
+    XCTAssertNil(MetricNumberFormatter.temperatureCelsius(.nan))
+    XCTAssertNil(MetricNumberFormatter.temperatureCelsius(.infinity))
+    XCTAssertNil(MetricNumberFormatter.temperatureCelsius(-20.01))
+    XCTAssertNil(MetricNumberFormatter.temperatureCelsius(100.01))
     XCTAssertNil(MetricNumberFormatter.ratedWatts(.nan))
     XCTAssertNil(MetricNumberFormatter.ratedWatts(-1))
     XCTAssertNil(MetricNumberFormatter.decimalWatts(.infinity))
@@ -18,6 +22,9 @@ final class MetricDisplayTextTests: XCTestCase {
   func testMetricNumberFormatterFormatsValidBoundaries() {
     XCTAssertEqual(MetricNumberFormatter.percentage(0), "0%")
     XCTAssertEqual(MetricNumberFormatter.percentage(99.6), "100%")
+    XCTAssertEqual(MetricNumberFormatter.temperatureCelsius(32.4), "32.4 °C")
+    XCTAssertEqual(MetricNumberFormatter.temperatureCelsius(-20), "-20.0 °C")
+    XCTAssertEqual(MetricNumberFormatter.temperatureCelsius(100), "100.0 °C")
     XCTAssertEqual(MetricNumberFormatter.ratedWatts(67.4), "Rated 67 W")
     XCTAssertEqual(MetricNumberFormatter.decimalWatts(12.34, estimated: true), "~12.3 W")
     XCTAssertEqual(MetricNumberFormatter.decimalWatts(-4.25, absolute: true), "4.2 W")
@@ -41,6 +48,7 @@ final class MetricDisplayTextTests: XCTestCase {
 
       let outputs = [
         MetricNumberFormatter.percentage(raw),
+        MetricNumberFormatter.temperatureCelsius(raw),
         MetricNumberFormatter.ratedWatts(raw),
         MetricNumberFormatter.decimalWatts(raw),
         MetricNumberFormatter.decimalWatts(raw, estimated: true),
@@ -99,10 +107,25 @@ final class MetricDisplayTextTests: XCTestCase {
     }
   }
 
-  func testBatteryDisplayFormatsPresentBatteryAndInvalidPercentage() {
+  func testBatteryDisplayFormatsPercentageAndTemperature() {
     let now = Date(timeIntervalSince1970: 100)
-    let valid = MetricValue(
-      value: battery(present: true, percentage: 49.6),
+    let metric = MetricValue(
+      value: battery(present: true, percentage: 49.6, temperatureCelsius: 32.4),
+      unit: .percent,
+      availability: .available,
+      quality: .experimental,
+      source: .iokitRegistry,
+      timestamp: now,
+      isEstimated: false,
+      message: nil)
+
+    XCTAssertEqual(BatteryDisplayText.summary(metric), "50% · 32.4 °C")
+  }
+
+  func testBatteryDisplayKeepsAvailableValueWhenOtherFieldIsInvalid() {
+    let now = Date(timeIntervalSince1970: 100)
+    let percentageOnly = MetricValue(
+      value: battery(present: true, percentage: 49.6, temperatureCelsius: .nan),
       unit: .percent,
       availability: .available,
       quality: .direct,
@@ -110,18 +133,28 @@ final class MetricDisplayTextTests: XCTestCase {
       timestamp: now,
       isEstimated: false,
       message: nil)
-    let invalid = MetricValue(
-      value: battery(present: true, percentage: .nan),
+    let temperatureOnly = MetricValue(
+      value: battery(present: true, percentage: .nan, temperatureCelsius: 32.4),
       unit: .percent,
       availability: .available,
-      quality: .direct,
+      quality: .experimental,
+      source: .iokitRegistry,
+      timestamp: now,
+      isEstimated: false,
+      message: nil)
+    let neither = MetricValue(
+      value: battery(present: true, percentage: .nan, temperatureCelsius: .infinity),
+      unit: .percent,
+      availability: .available,
+      quality: .unknown,
       source: .iokitPowerSources,
       timestamp: now,
       isEstimated: false,
       message: nil)
 
-    XCTAssertEqual(BatteryDisplayText.summary(valid), "50%")
-    XCTAssertEqual(BatteryDisplayText.summary(invalid), "—")
+    XCTAssertEqual(BatteryDisplayText.summary(percentageOnly), "50%")
+    XCTAssertEqual(BatteryDisplayText.summary(temperatureOnly), "32.4 °C")
+    XCTAssertEqual(BatteryDisplayText.summary(neither), "—")
   }
 
   func testEveryPowerStatusHasAccurateDisplayMetadata() {
@@ -145,7 +178,11 @@ final class MetricDisplayTextTests: XCTestCase {
     XCTAssertEqual(PowerSufficiencyStatus.notConnected.symbolName, "battery.75percent")
   }
 
-  private func battery(present: Bool, percentage: Double?) -> BatteryStats {
+  private func battery(
+    present: Bool,
+    percentage: Double?,
+    temperatureCelsius: Double? = nil
+  ) -> BatteryStats {
     BatteryStats(
       present: present,
       percentage: percentage,
@@ -159,10 +196,9 @@ final class MetricDisplayTextTests: XCTestCase {
       maxCapacityMah: nil,
       designCapacityMah: nil,
       healthPercent: nil,
-      temperatureCelsius: nil,
+      temperatureCelsius: temperatureCelsius,
       voltageVolts: nil,
       currentAmperes: nil,
       batteryPowerWatts: nil)
   }
-
 }
