@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require the reviewed XcodeGen version before project generation."""
+"""Require an empirically validated XcodeGen version before project generation."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-EXPECTED_VERSION = "2.46.0"
+SUPPORTED_VERSIONS = ("2.45.4", "2.46.0")
 _VERSION_RE = re.compile(r"(?:^|\b)(\d+\.\d+\.\d+)(?:\b|$)")
 
 
@@ -52,16 +52,20 @@ def installed_version(binary: Path) -> str:
 
 def verify(binary: Path) -> str:
     version = installed_version(binary)
-    if version != EXPECTED_VERSION:
+    if version not in SUPPORTED_VERSIONS:
+        supported = ", ".join(SUPPORTED_VERSIONS)
         raise VersionError(
-            f"MacVitals requires reviewed XcodeGen {EXPECTED_VERSION}; found {version}"
+            f"MacVitals requires an empirically validated XcodeGen version "
+            f"({supported}); found {version}"
         )
     return version
 
 
 def self_test() -> None:
-    assert parse_version("Version: 2.46.0") == "2.46.0"
+    assert parse_version("Version: 2.45.4") == "2.45.4"
     assert parse_version("XcodeGen 2.46.0\n") == "2.46.0"
+    assert all(version in SUPPORTED_VERSIONS for version in ("2.45.4", "2.46.0"))
+    assert "2.47.0" not in SUPPORTED_VERSIONS
     for invalid in ("", "Version unknown", "2.46", "2.46.0 and 2.47.0"):
         try:
             parse_version(invalid)
