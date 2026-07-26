@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import IOKit
 import IOKit.ps
@@ -20,6 +21,63 @@ nonisolated enum BatterySourceResolution: Equatable, Sendable {
     }
     if sourceCount == 0 { return .absent }
     return classifiedSourceCount == sourceCount ? .absent : .providerError
+  }
+}
+
+nonisolated enum BatteryHardwareKind: Equatable, Sendable {
+  case portable
+  case desktop
+  case unknown
+
+  static func classify(modelIdentifier: String?) -> Self {
+    guard let modelIdentifier else { return .unknown }
+    let normalized = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty else { return .unknown }
+    if normalized.hasPrefix("MacBook") { return .portable }
+    if normalized.hasPrefix("Macmini")
+      || normalized.hasPrefix("MacStudio")
+      || normalized.hasPrefix("MacPro")
+      || normalized.hasPrefix("iMac")
+    {
+      return .desktop
+    }
+    return .unknown
+  }
+}
+
+nonisolated struct BatteryAbsenceConfirmation: Equatable, Sendable {
+  static let confirmationDuration: TimeInterval = 10
+  static let minimumSamples = 3
+
+  private(set) var firstObservedAt: Date?
+  private(set) var sampleCount = 0
+
+  mutating func reset() {
+    firstObservedAt = nil
+    sampleCount = 0
+  }
+
+  mutating func evaluate(
+    timestamp: Date,
+    absenceCandidate: Bool,
+    smartBatteryServiceFound: Bool
+  ) -> Bool {
+    guard absenceCandidate, !smartBatteryServiceFound else {
+      reset()
+      return false
+    }
+
+    if let firstObservedAt, timestamp < firstObservedAt {
+      reset()
+    }
+    if firstObservedAt == nil {
+      firstObservedAt = timestamp
+    }
+    sampleCount += 1
+
+    guard let firstObservedAt else { return false }
+    return sampleCount >= Self.minimumSamples
+      && timestamp.timeIntervalSince(firstObservedAt) >= Self.confirmationDuration
   }
 }
 
@@ -48,15 +106,25 @@ nonisolated enum BatteryExternalPowerResolution: Equatable, Sendable {
   }
 }
 
-struct BatteryProvider: Sendable {
+final class BatteryProvider: @unchecked Sendable {
+  private let hardwareKind: BatteryHardwareKind
+  private let absenceLock = NSLock()
+  private var absenceConfirmation = BatteryAbsenceConfirmation()
+
+  init(hardwareKind: BatteryHardwareKind = BatteryHardwareKind.classify(modelIdentifier: Self.readHardwareModel())) {
+    self.hardwareKind = hardwareKind
+  }
+
   func sample() -> MetricValue<BatteryStats> {
     let now = Date()
     guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+      resetAbsenceConfirmation()
       return unavailableBattery(
         timestamp: now,
         message: "IOPSCopyPowerSourcesInfo failed")
     }
     guard let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
+      resetAbsenceConfirmation()
       return unavailableBattery(
         timestamp: now,
         message: "IOPSCopyPowerSourcesList failed")
@@ -69,16 +137,32 @@ struct BatteryProvider: Sendable {
       internalBatteryFound: lookup.description != nil)
     {
     case .providerError:
+      resetAbsenceConfirmation()
       return unavailableBattery(
         timestamp: now,
         message: "Power source descriptions or types were unavailable")
     case .absent:
+      let smartBatteryFound = smartBatteryServiceExists()
+      guard hardwareKind == .desktop else {
+        resetAbsenceConfirmation()
+        return unavailableBattery(
+          timestamp: now,
+          message: "No internal battery source was reported on a non-desktop or unknown Mac model")
+      }
+      guard confirmAbsence(timestamp: now, smartBatteryServiceFound: smartBatteryFound) else {
+        return unavailableBattery(
+          timestamp: now,
+          message: smartBatteryFound
+            ? "AppleSmartBattery exists while the power-source list reports no internal battery"
+            : "Confirming that this desktop Mac has no internal battery")
+      }
       return absentBattery(timestamp: now)
     case .present:
-      break
+      resetAbsenceConfirmation()
     }
 
     guard let description = lookup.description else {
+      resetAbsenceConfirmation()
       return unavailableBattery(
         timestamp: now,
         message: "Internal battery resolution was inconsistent")
@@ -191,6 +275,21 @@ struct BatteryProvider: Sendable {
     return (nil, classifiedSourceCount)
   }
 
+  private func resetAbsenceConfirmation() {
+    absenceLock.lock()
+    absenceConfirmation.reset()
+    absenceLock.unlock()
+  }
+
+  private func confirmAbsence(timestamp: Date, smartBatteryServiceFound: Bool) -> Bool {
+    absenceLock.lock()
+    defer { absenceLock.unlock() }
+    return absenceConfirmation.evaluate(
+      timestamp: timestamp,
+      absenceCandidate: true,
+      smartBatteryServiceFound: smartBatteryServiceFound)
+  }
+
   private func unavailableBattery(
     timestamp: Date,
     message: String
@@ -235,6 +334,15 @@ struct BatteryProvider: Sendable {
       message: "No internal battery")
   }
 
+  private func smartBatteryServiceExists() -> Bool {
+    let service = IOServiceGetMatchingService(
+      kIOMainPortDefault,
+      IOServiceMatching("AppleSmartBattery"))
+    guard service != 0 else { return false }
+    IOObjectRelease(service)
+    return true
+  }
+
   private func readSmartBatteryRegistry() -> [String: Any] {
     let service = IOServiceGetMatchingService(
       kIOMainPortDefault,
@@ -252,5 +360,13 @@ struct BatteryProvider: Sendable {
       let dictionary = properties?.takeRetainedValue() as? [String: Any]
     else { return [:] }
     return dictionary
+  }
+
+  private static func readHardwareModel() -> String? {
+    var size = 0
+    guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 1 else { return nil }
+    var buffer = [CChar](repeating: 0, count: size)
+    guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else { return nil }
+    return String(cString: buffer)
   }
 }
