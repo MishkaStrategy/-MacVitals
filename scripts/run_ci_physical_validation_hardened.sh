@@ -101,18 +101,21 @@ self_test() {
   TEMP_RUNNER="${SCRIPT_DIR}/.run_ci_physical_validation_hardened.selftest.$$.sh"
   build_hardened_runner "${TEMP_RUNNER}"
   bash -n "${TEMP_RUNNER}"
-  python3 - "${TEMP_RUNNER}" <<'PY'
+  python3 - "${TEMP_RUNNER}" "$0" <<'PY'
 from pathlib import Path
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+runner = Path(sys.argv[1]).read_text(encoding="utf-8")
+wrapper = Path(sys.argv[2]).read_text(encoding="utf-8")
 for required in (
     'run_physical_validation_hardened.py',
     'module.base.host_snapshot()',
     'record_instrument "Power Profiler" "energy-log" 300',
 ):
-    if required not in text:
+    if required not in runner:
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
+if 'GITHUB_SHA="${EXPECTED_SHA}"' not in wrapper:
+    raise SystemExit("Hardened wrapper does not bind child verification to the exact checkout SHA")
 print("Hardened physical runner wrapper self-test passed")
 PY
   rm -f -- "${TEMP_RUNNER}"
@@ -123,6 +126,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   self_test
   exit 0
 fi
+
+[[ $# -eq 3 ]] || fail "Usage: $0 <version> <MacVitals.app> <expected-commit-sha>"
+EXPECTED_SHA="$3"
+[[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "Expected commit must be a full lowercase SHA-1"
 
 REAL_XCRUN="$(command -v xcrun || true)"
 [[ -n "${REAL_XCRUN}" && -x "${REAL_XCRUN}" ]] || fail "Real xcrun is unavailable"
@@ -136,4 +143,5 @@ PATH="${SHIM_ROOT}:${PATH}" \
 PYTHONPATH="${SCRIPT_DIR}" \
 PYTHONNOUSERSITE=1 \
 MACVITALS_REAL_XCRUN="${REAL_XCRUN}" \
+GITHUB_SHA="${EXPECTED_SHA}" \
   bash "${TEMP_RUNNER}" "$@"
