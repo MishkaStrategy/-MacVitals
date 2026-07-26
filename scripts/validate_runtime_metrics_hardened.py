@@ -52,7 +52,12 @@ def validate(summary: dict[str, object], limits: base.Limits) -> list[str]:
 
 
 def self_test() -> None:
-    _original_self_test()
+    base.validate = _original_validate
+    try:
+        _original_self_test()
+    finally:
+        base.validate = validate
+
     passing = {
         "schemaVersion": 3,
         "process": {
