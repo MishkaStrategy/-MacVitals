@@ -59,7 +59,11 @@ nonisolated enum BatteryDisplayText {
   static func summary(_ metric: MetricValue<BatteryStats>) -> String {
     guard let battery = metric.value else { return metric.availability.displayName }
     guard battery.present else { return L10n.string("No battery") }
-    return MetricNumberFormatter.percentage(battery.percentage)
+
+    let percentage = MetricNumberFormatter.percentage(battery.percentage)
+    let temperature = MetricNumberFormatter.temperatureCelsius(battery.temperatureCelsius)
+    let values = [percentage == "—" ? nil : percentage, temperature].compactMap { $0 }
+    return values.isEmpty ? "—" : values.joined(separator: " · ")
   }
 }
 
@@ -108,6 +112,11 @@ nonisolated enum GPUMemoryDisplayText {
 nonisolated enum MetricNumberFormatter {
   static func percentage(_ value: Double?) -> String {
     boundedRoundedInteger(value, range: 0...100).map { "\($0)%" } ?? "—"
+  }
+
+  static func temperatureCelsius(_ value: Double?) -> String? {
+    guard let value, value.isFinite, (-20...100).contains(value) else { return nil }
+    return L10n.format("%.1f °C", value)
   }
 
   static func ratedWatts(_ value: Double?) -> String? {
