@@ -80,9 +80,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 -m py_compile scripts/run_physical_validation_hardened.py
+          python3 -m py_compile scripts/run_physical_validation_hardened.py scripts/repair_sanitized_physical_xml.py
           bash -n scripts/run_ci_physical_validation_hardened.sh
           python3 scripts/run_physical_validation_hardened.py self-test
+          python3 scripts/repair_sanitized_physical_xml.py --self-test
           bash scripts/run_ci_physical_validation_hardened.sh --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
@@ -231,6 +232,7 @@ jobs:
 
           ready.write_text("privacy-scan=passed\n", encoding="utf-8")
           PYCODE
+          python3 scripts/repair_sanitized_physical_xml.py physical-validation-results
           echo "ready=true" >> "${GITHUB_OUTPUT}"
           tail -n 300 physical-direct-session.log
 
