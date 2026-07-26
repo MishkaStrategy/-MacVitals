@@ -111,7 +111,11 @@ final class BatteryProvider: @unchecked Sendable {
   private let absenceLock = NSLock()
   private var absenceConfirmation = BatteryAbsenceConfirmation()
 
-  init(hardwareKind: BatteryHardwareKind = BatteryHardwareKind.classify(modelIdentifier: Self.readHardwareModel())) {
+  init() {
+    hardwareKind = BatteryHardwareKind.classify(modelIdentifier: Self.readHardwareModel())
+  }
+
+  init(hardwareKind: BatteryHardwareKind) {
     self.hardwareKind = hardwareKind
   }
 
