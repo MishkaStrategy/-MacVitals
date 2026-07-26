@@ -29,7 +29,8 @@ jobs:
             scripts/prepare_physical_artifact.py \
             scripts/prepare_physical_artifact_hardened.py \
             scripts/validate_runtime_metrics.py \
-            scripts/validate_runtime_metrics_hardened.py
+            scripts/validate_runtime_metrics_hardened.py \
+            scripts/verify_xcodegen_version.py
 
       - name: Run hardened regression self-tests
         run: |
@@ -37,6 +38,7 @@ jobs:
           python3 scripts/run_physical_validation_guided_hardened.py self-test
           python3 scripts/prepare_physical_artifact_hardened.py self-test
           python3 scripts/validate_runtime_metrics_hardened.py --self-test
+          python3 scripts/verify_xcodegen_version.py --self-test
 
       - name: Validate shell routing contracts
         run: |
