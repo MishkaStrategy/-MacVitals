@@ -131,7 +131,7 @@ jobs:
               "MacVitals-0.0.${GITHUB_RUN_NUMBER}.dmg" \
               BUILD_STATUS.txt BUILD_MANIFEST.json SHA256SUMS.txt
           )
-          printf '6\n' | python3 scripts/prepare_physical_artifact.py stage "${artifact}"
+          printf '6\n' | python3 scripts/prepare_physical_artifact_hardened.py stage "${artifact}"
 
       - name: Upload hosted physical harness smoke
         if: always()
