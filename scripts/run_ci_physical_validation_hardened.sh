@@ -42,6 +42,11 @@ replacements = (
         "harness assignment",
     ),
     (
+        'module.host_snapshot()',
+        'module.base.host_snapshot()',
+        "canonical host snapshot delegation",
+    ),
+    (
         'record_instrument "Energy Log" "energy-log" 300',
         '''if grep -Fq "Energy Log" "${TEMP_APP_ROOT}/templates.raw.txt"; then
   record_instrument "Energy Log" "energy-log" 300
@@ -81,6 +86,8 @@ expected = path.with_name("run_physical_validation.py")
 actual = Path(module.base.__file__).resolve()
 if actual != expected:
     raise SystemExit(f"Hardened harness imported unexpected base module: {actual}")
+if not callable(getattr(module.base, "host_snapshot", None)):
+    raise SystemExit("Canonical host snapshot is unavailable through hardened base")
 print("Hardened harness importlib regression self-test passed")
 PY
 }
@@ -101,6 +108,7 @@ import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 for required in (
     'run_physical_validation_hardened.py',
+    'module.base.host_snapshot()',
     'record_instrument "Power Profiler" "energy-log" 300',
 ):
     if required not in text:
