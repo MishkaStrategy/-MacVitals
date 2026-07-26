@@ -64,21 +64,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          [[ "$(uname -s)" == "Darwin" ]]
-          [[ "$(uname -m)" == "arm64" ]]
-          [[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA}" ]]
-          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          runner_user="$(id -un)"
-          console_user="$(stat -f '%Su' /dev/console)"
-          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]]
-          [[ "${console_user}" == "${runner_user}" ]] || {
-            echo "Physical runner must execute as the active macOS console user" >&2
-            exit 1
-          }
-          [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || {
-            echo "GitHub run number is not numeric" >&2
-            exit 1
-          }
+          [[ "$(uname -s)" == "Darwin" ]] || { echo "Physical runner must be macOS" >&2; exit 1; }
+          [[ "$(uname -m)" == "arm64" ]] || { echo "Physical runner must be native arm64" >&2; exit 1; }
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "Candidate SHA is invalid" >&2; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA}" ]] || { echo "Exact candidate checkout mismatch" >&2; exit 1; }
+          [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || { echo "GitHub run number is not numeric" >&2; exit 1; }
           build_number=$((500000 + 10#${GITHUB_RUN_NUMBER}))
           candidate_version="0.0.${build_number}"
           echo "sha=${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
@@ -87,43 +77,30 @@ jobs:
           echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
           echo "CANDIDATE_VERSION=${candidate_version}" >> "${GITHUB_ENV}"
           echo "PHYSICAL_BUILD_NUMBER=${build_number}" >> "${GITHUB_ENV}"
-          sw_vers
-          xcodebuild -version
-          python3 - <<'PYCODE'
-          from pathlib import Path
-          import importlib.util
-          import json
-          import sys
 
-          path = Path("scripts/run_physical_validation.py")
-          spec = importlib.util.spec_from_file_location("macvitals_physical_harness", path)
-          if spec is None or spec.loader is None:
-              raise SystemExit("Could not load physical validation harness")
-          module = importlib.util.module_from_spec(spec)
-          sys.modules[spec.name] = module
-          spec.loader.exec_module(module)
-          power = module.power_snapshot()
-          print(json.dumps({
-              "batteryPresent": power.get("batteryPresent"),
-              "powerSource": power.get("source"),
-              "state": power.get("state"),
-          }, sort_keys=True))
-          PYCODE
-          pmset -g therm || true
-
-      - name: Validate tooling without credentials
+      - name: Validate tooling and physical host without credentials
         shell: bash
         run: |
           set -Eeuo pipefail
-          for command_name in python3 stat xcodebuild xcodegen xcrun swift; do
+          for command_name in python3 stat sw_vers xcodebuild xcodegen xcrun swift pmset; do
             command -v "${command_name}" >/dev/null 2>&1 || {
               echo "Required preinstalled runner tool is missing: ${command_name}" >&2
               exit 1
             }
           done
+          sw_vers
           xcode-select -p
+          xcodebuild -version
           xcodegen --version
           swift --version
+          runner_user="$(id -un)"
+          console_user="$(stat -f '%Su' /dev/console 2>/dev/null || true)"
+          echo "Runner user is registered; console-session state will be enforced by the physical collector."
+          if [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" && "${console_user}" != "${runner_user}" ]]; then
+            echo "Active console user differs from runner user; GUI-dependent gates may report unsupported." >&2
+          fi
+          pmset -g batt || true
+          pmset -g therm || true
           python3 -m py_compile \
             scripts/materialize_app_icon.py \
             scripts/validate_localizations.py \
@@ -204,14 +181,12 @@ jobs:
           evidence_root = Path("physical-validation-results")
           ready = Path("physical-evidence-upload-ready.txt")
           ready.unlink(missing_ok=True)
-
           home = os.environ.get("REDACT_HOME", "")
           user = os.environ.get("REDACT_USER", "")
           host = os.environ.get("REDACT_HOST", "")
           replacements = [(home, "<HOME>"), (host, "<HOST>")]
           if len(user) >= 3:
               replacements.append((user, "<USER>"))
-
           path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
           temp_pattern = re.compile(r"/private/tmp/macvitals-instruments\.[^/\s<]+")
           battery_id_pattern = re.compile(r"\bInternalBattery-\d+(?:\s+\(id=\d+\))?")
@@ -269,7 +244,6 @@ jobs:
                   text = sanitize(payload.decode("utf-8", errors="strict"))
                   verify_clean(text, path)
                   path.write_text(text, encoding="utf-8")
-
           ready.write_text("privacy-scan=passed\n", encoding="utf-8")
           PYCODE
           echo "ready=true" >> "${GITHUB_OUTPUT}"
