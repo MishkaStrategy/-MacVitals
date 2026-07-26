@@ -2,6 +2,9 @@
 
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+XCODEGEN_VERIFIER="${SCRIPT_DIR}/verify_xcodegen_version.py"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -60,6 +63,7 @@ done
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "macOS is required"
 [[ "$(uname -m)" == "arm64" ]] || fail "Native Apple Silicon arm64 is required"
+[[ -f "${XCODEGEN_VERIFIER}" && ! -L "${XCODEGEN_VERIFIER}" ]] || fail "XcodeGen version verifier is missing or unsafe"
 
 find_brew() {
   local candidate
@@ -178,7 +182,7 @@ fi
 [[ -n "${xcodegen_path}" && -x "${xcodegen_path}" ]] || fail "xcodegen is unavailable"
 
 note "Active developer directory: ${active_developer_dir:-unset}"
-"${xcodegen_path}" --version
+python3 "${XCODEGEN_VERIFIER}" --binary "${xcodegen_path}" || fail "The installed XcodeGen version is not the reviewed MacVitals version"
 /usr/bin/xcodebuild -version
 /usr/bin/xcrun swift --version
 /usr/bin/xcrun --find xctrace >/dev/null
@@ -205,5 +209,5 @@ XcodeGen: ${xcodegen_path}
 System Git: ${git_output}
 
 Next step:
-  Re-run Physical Apple Silicon Validation for the exact PR head.
+  Re-run Physical Direct-Session Validation for the exact PR head.
 EOF
