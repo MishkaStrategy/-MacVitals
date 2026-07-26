@@ -67,6 +67,7 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "export" ]]; then
     if [[ "${previous}" == "--output" ]]; then output="${value}"; fi
     previous="${value}"
   done
+  [[ -n "${output}" && ! -e "${output}" ]] || exit 65
   printf '<trace-toc/>\n' > "${output}"
   exit 54
 fi
@@ -102,7 +103,8 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "record" ]]; then
   [[ ${status} -ne 0 ]] || exit 0
 
   if [[ -n "${output_path}" ]] && trace_has_payload "${output_path}"; then
-    toc_path="$(mktemp)"
+    toc_root="$(mktemp -d)"
+    toc_path="${toc_root}/toc.xml"
     set +e
     "${REAL_XCRUN}" xctrace export --input "${output_path}" --toc --output "${toc_path}" >/dev/null 2>&1
     export_status=$?
@@ -110,10 +112,10 @@ if [[ "${1:-}" == "xctrace" && "${2:-}" == "record" ]]; then
     if valid_xml_file "${toc_path}"; then
       printf 'MacVitals hardening: xctrace record returned %s and TOC export returned %s, but the saved trace has a valid XML TOC; retaining it for human review.\n' \
         "${status}" "${export_status}" >&2
-      rm -f "${toc_path}"
+      rm -rf "${toc_root}"
       exit 0
     fi
-    rm -f "${toc_path}"
+    rm -rf "${toc_root}"
   fi
   exit "${status}"
 fi
