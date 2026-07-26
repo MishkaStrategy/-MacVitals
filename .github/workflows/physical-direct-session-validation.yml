@@ -80,6 +80,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          python3 -m py_compile scripts/run_physical_validation_hardened.py
+          bash -n scripts/run_ci_physical_validation_hardened.sh
+          python3 scripts/run_physical_validation_hardened.py self-test
+          bash scripts/run_ci_physical_validation_hardened.sh --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
           xcodegen generate
@@ -117,7 +121,7 @@ jobs:
           SHIM
           chmod 700 "${shim_root}/launchctl"
           set +e
-          PATH="${shim_root}:${PATH}" bash scripts/run_ci_physical_validation.sh \
+          PATH="${shim_root}:${PATH}" bash scripts/run_ci_physical_validation_hardened.sh \
             "${CANDIDATE_VERSION}" \
             build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
             "${CANDIDATE_SHA}" \
@@ -174,7 +178,17 @@ jobs:
                       value = value.replace(source, replacement)
               return value
 
+          def verify_clean(value: str, label: str) -> None:
+              forbidden = [source for source, _ in replacements if source]
+              forbidden.append("InternalBattery-")
+              for source in forbidden:
+                  if source and source in value:
+                      raise SystemExit(f"Direct-session privacy scan failed for {label}")
+              if path_pattern.search(value) or temp_pattern.search(value):
+                  raise SystemExit(f"Direct-session path privacy scan failed for {label}")
+
           text = clean(text)
+          verify_clean(text, safe.name)
           safe.write_text(text, encoding="utf-8")
           raw.unlink(missing_ok=True)
 
@@ -195,12 +209,10 @@ jobs:
                   payload = path.read_bytes()
                   if b"\x00" in payload:
                       raise SystemExit("Binary physical evidence is forbidden")
-                  path.write_text(clean(payload.decode("utf-8", errors="strict")), encoding="utf-8")
+                  cleaned = clean(payload.decode("utf-8", errors="strict"))
+                  verify_clean(cleaned, str(path))
+                  path.write_text(cleaned, encoding="utf-8")
 
-          combined = safe.read_text(encoding="utf-8")
-          for source, _ in replacements:
-              if source and source in combined:
-                  raise SystemExit("Direct-session privacy scan failed")
           ready.write_text("privacy-scan=passed\n", encoding="utf-8")
           PYCODE
           echo "ready=true" >> "${GITHUB_OUTPUT}"
