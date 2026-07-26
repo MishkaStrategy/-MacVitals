@@ -15,7 +15,7 @@ WARNING = (
     "and a successful Gatekeeper assessment may be described as ready for "
     "frictionless distribution."
 )
-SUPPORTED_XCODEGEN_VERSION = "2.46.0"
+SUPPORTED_XCODEGEN_VERSIONS = ("2.45.4", "2.46.0")
 MANIFEST_KEYS = {
     "schemaVersion",
     "product",
@@ -67,6 +67,15 @@ def validate_supported_architectures(architectures: tuple[str, ...]) -> None:
         )
 
 
+def validate_xcodegen_version(value: object) -> str:
+    if not isinstance(value, str) or value not in SUPPORTED_XCODEGEN_VERSIONS:
+        raise ValidationError(
+            "Manifest xcodeGenVersion must be one of the empirically validated "
+            f"versions {SUPPORTED_XCODEGEN_VERSIONS!r}; found {value!r}"
+        )
+    return value
+
+
 def read_manifest(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -87,6 +96,7 @@ def validate_manifest(manifest: dict[str, object], expected: ExpectedMetadata) -
         )
 
     validate_supported_architectures(expected.architectures)
+    validate_xcodegen_version(manifest.get("xcodeGenVersion"))
     fixed_values: dict[str, object] = {
         "schemaVersion": 1,
         "product": "MacVitals",
@@ -94,7 +104,6 @@ def validate_manifest(manifest: dict[str, object], expected: ExpectedMetadata) -
         "buildNumber": expected.build_number,
         "bundleIdentifier": expected.bundle_identifier,
         "minimumMacOS": expected.minimum_macos,
-        "xcodeGenVersion": SUPPORTED_XCODEGEN_VERSION,
         "architectures": list(expected.architectures),
         "signingStatus": expected.signing_status,
         "notarizationStatus": expected.notarization_status,
@@ -187,7 +196,7 @@ def valid_fixture() -> tuple[dict[str, object], ExpectedMetadata]:
         "minimumMacOS": expected.minimum_macos,
         "gitCommit": expected.expected_git_commit,
         "xcodeVersion": "Xcode 16.4; Build version 16F6",
-        "xcodeGenVersion": SUPPORTED_XCODEGEN_VERSION,
+        "xcodeGenVersion": "2.46.0",
         "architectures": list(expected.architectures),
         "signingStatus": expected.signing_status,
         "notarizationStatus": expected.notarization_status,
@@ -243,6 +252,30 @@ def run_self_test() -> None:
                 [
                     f"MacVitals {expected.version} ({expected.build_number})",
                     f"Git commit: {commit}",
+                    f"Architectures: {' '.join(expected.architectures)}",
+                    f"Signing status: {expected.signing_status}",
+                    f"Notarization status: {expected.notarization_status}",
+                    "",
+                    WARNING,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        validate_paths(manifest_path, status_path, expected)
+
+    alternate = dict(manifest)
+    alternate["xcodeGenVersion"] = "2.45.4"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        manifest_path = root / "BUILD_MANIFEST.json"
+        status_path = root / "BUILD_STATUS.txt"
+        manifest_path.write_text(json.dumps(alternate), encoding="utf-8")
+        status_path.write_text(
+            "\n".join(
+                [
+                    f"MacVitals {expected.version} ({expected.build_number})",
+                    f"Git commit: {alternate['gitCommit']}",
                     f"Architectures: {' '.join(expected.architectures)}",
                     f"Signing status: {expected.signing_status}",
                     f"Notarization status: {expected.notarization_status}",
