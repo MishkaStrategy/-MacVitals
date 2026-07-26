@@ -50,7 +50,7 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
 
 
 guide.run = run
-+guide.self_test = self_test
+guide.self_test = self_test
 
 
 if __name__ == "__main__":
