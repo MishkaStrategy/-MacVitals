@@ -12,7 +12,42 @@ The runner must have these labels:
 
 No custom runner label is required.
 
-The workflow has read-only repository permissions, receives no Apple signing secrets, does not use `sudo`, accepts only the owner-created same-repository `feature/macvitals-v1` pull request (or an owner-dispatched post-merge `main` run), checks out the exact candidate SHA and refuses a non-arm64 host or candidate. The runner account must also be the currently logged-in macOS console user with an available `gui/<uid>` launchd domain; physical app and Instruments commands are entered through that GUI bootstrap domain even when the runner listener itself was installed as a service. The required toolchain must already be installed; the workflow does not mutate the physical Mac with Homebrew installs. Official checkout and artifact-upload actions are pinned to immutable release commit SHAs rather than floating tags. Physical candidates use the reserved `0.0.500001+` numeric range so they cannot collide with the normal Pull Request workflow candidate numbering.
+The workflow has read-only repository permissions, receives no Apple signing secrets, does not use `sudo`, accepts only the owner-created same-repository `feature/macvitals-v1` pull request (or an owner-dispatched post-merge `main` run), checks out the exact candidate SHA and refuses a non-arm64 host or candidate. The required build and Instruments toolchain must already be installed before validation. Official checkout and artifact-upload actions are pinned to immutable release commit SHAs rather than floating tags. Physical candidates use the reserved `0.0.500001+` numeric range so they cannot collide with normal Pull Request workflow candidate numbering.
+
+## Provision the physical runner
+
+Apple Command Line Tools alone are insufficient: physical validation needs a full Xcode installation because `xcodebuild` and Instruments `xctrace` are supplied by Xcode. Install a Swift 6-capable Xcode from the Mac App Store or Apple Developer downloads and place it under `/Applications/Xcode*.app`.
+
+After Xcode is present, run this command from a checkout of `feature/macvitals-v1` in an interactive Terminal session:
+
+```bash
+bash scripts/provision_physical_runner.sh --apply
+```
+
+The helper is idempotent and performs only runner provisioning:
+
+- requires native macOS `arm64`;
+- finds a full Xcode with Swift 6, the macOS SDK and `xctrace`;
+- installs `xcodegen` through an already installed Homebrew when needed;
+- selects that Xcode with `xcode-select`;
+- accepts the Xcode license and completes `xcodebuild -runFirstLaunch`;
+- verifies Xcode, Swift 6, the macOS SDK, `xctrace` and `xcodegen`.
+
+It never downloads Xcode, requests Apple/signing credentials, signs or notarizes code, changes Git history, creates a tag, merges the pull request or publishes a release. `sudo` is used only by this explicit interactive provisioning command for `xcode-select`, license acceptance and first-launch components. The GitHub Actions validation workflow itself remains non-mutating and does not use `sudo`.
+
+A read-only inspection is available with:
+
+```bash
+bash scripts/provision_physical_runner.sh --check
+```
+
+When several Xcode applications are installed, select one explicitly:
+
+```bash
+bash scripts/provision_physical_runner.sh --apply --xcode-app /Applications/Xcode.app
+```
+
+After provisioning succeeds, any new synchronize event on the Draft PR triggers the exact-head physical workflow. A documentation-only commit is sufficient; no merge, tag or release action is needed.
 
 ## Automated evidence
 
