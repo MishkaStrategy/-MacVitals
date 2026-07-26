@@ -35,6 +35,40 @@ source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 text = source.read_text(encoding="utf-8")
 
+process_cleanup = r'''terminate_exact_candidate_processes() {
+  local pid
+  local command_line
+  local remaining=()
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    if [[ "${command_line}" == "${EXECUTABLE}" || "${command_line}" == "${EXECUTABLE} "* ]]; then
+      kill -TERM "${pid}" 2>/dev/null || true
+      remaining+=("${pid}")
+    fi
+  done < <(pgrep -x MacVitals 2>/dev/null || true)
+
+  if [[ ${#remaining[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local attempt
+  for attempt in {1..20}; do
+    local alive=0
+    for pid in "${remaining[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+      fi
+    done
+    [[ ${alive} -eq 0 ]] && return 0
+    sleep 0.25
+  done
+  for pid in "${remaining[@]}"; do
+    kill -KILL "${pid}" 2>/dev/null || true
+  done
+}
+
+'''
+
 replacements = (
     (
         'HARNESS="${REPOSITORY}/scripts/run_physical_validation.py"',
@@ -45,6 +79,37 @@ replacements = (
         'module.host_snapshot()',
         'module.base.host_snapshot()',
         "canonical host snapshot delegation",
+    ),
+    (
+        'cd "${REPOSITORY}"',
+        process_cleanup + 'cd "${REPOSITORY}"',
+        "exact-candidate process cleanup function",
+    ),
+    (
+        '''  printf 'Running physical scenario %s for %s seconds at %s-second interval\\n' "${scenario}" "${duration}" "${interval}"
+  if ! gui_exec caffeinate''',
+        '''  printf 'Running physical scenario %s for %s seconds at %s-second interval\\n' "${scenario}" "${duration}" "${interval}"
+  terminate_exact_candidate_processes
+  if ! gui_exec caffeinate''',
+        "scenario process cleanup",
+    ),
+    (
+        '''  printf 'Running physical scenario stability-six-hour for 21600 seconds with %s-second external-power monitoring\\n' "${poll_seconds}"
+
+  set +e''',
+        '''  printf 'Running physical scenario stability-six-hour for 21600 seconds with %s-second external-power monitoring\\n' "${poll_seconds}"
+  terminate_exact_candidate_processes
+
+  set +e''',
+        "stability process cleanup",
+    ),
+    (
+        '''  set +e
+  gui_exec env HOME="${TRACE_HOME}" LC_ALL=C LANG=C xcrun xctrace record''',
+        '''  terminate_exact_candidate_processes
+  set +e
+  gui_exec env HOME="${TRACE_HOME}" LC_ALL=C LANG=C xcrun xctrace record''',
+        "Instruments process cleanup",
     ),
     (
         'record_instrument "Energy Log" "energy-log" 300',
@@ -111,9 +176,13 @@ for required in (
     'run_physical_validation_hardened.py',
     'module.base.host_snapshot()',
     'record_instrument "Power Profiler" "energy-log" 300',
+    'terminate_exact_candidate_processes()',
+    'command_line == "${EXECUTABLE}"',
 ):
     if required not in runner:
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
+if runner.count('terminate_exact_candidate_processes\n') < 3:
+    raise SystemExit("Exact-candidate process cleanup is not applied to all automated launch paths")
 if 'GITHUB_SHA="${EXPECTED_SHA}"' not in wrapper:
     raise SystemExit("Hardened wrapper does not bind child verification to the exact checkout SHA")
 print("Hardened physical runner wrapper self-test passed")
