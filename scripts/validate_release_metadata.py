@@ -10,12 +10,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-
 WARNING = (
     "Only a Developer ID signed app with a validated stapled notarization ticket "
     "and a successful Gatekeeper assessment may be described as ready for "
     "frictionless distribution."
 )
+SUPPORTED_XCODEGEN_VERSION = "2.46.0"
 MANIFEST_KEYS = {
     "schemaVersion",
     "product",
@@ -25,6 +25,7 @@ MANIFEST_KEYS = {
     "minimumMacOS",
     "gitCommit",
     "xcodeVersion",
+    "xcodeGenVersion",
     "architectures",
     "signingStatus",
     "notarizationStatus",
@@ -93,6 +94,7 @@ def validate_manifest(manifest: dict[str, object], expected: ExpectedMetadata) -
         "buildNumber": expected.build_number,
         "bundleIdentifier": expected.bundle_identifier,
         "minimumMacOS": expected.minimum_macos,
+        "xcodeGenVersion": SUPPORTED_XCODEGEN_VERSION,
         "architectures": list(expected.architectures),
         "signingStatus": expected.signing_status,
         "notarizationStatus": expected.notarization_status,
@@ -185,6 +187,7 @@ def valid_fixture() -> tuple[dict[str, object], ExpectedMetadata]:
         "minimumMacOS": expected.minimum_macos,
         "gitCommit": expected.expected_git_commit,
         "xcodeVersion": "Xcode 16.4; Build version 16F6",
+        "xcodeGenVersion": SUPPORTED_XCODEGEN_VERSION,
         "architectures": list(expected.architectures),
         "signingStatus": expected.signing_status,
         "notarizationStatus": expected.notarization_status,
@@ -255,6 +258,14 @@ def run_self_test() -> None:
     extra = dict(manifest)
     extra["unexpected"] = "value"
     expect_invalid(extra, expected)
+
+    missing_xcodegen = dict(manifest)
+    del missing_xcodegen["xcodeGenVersion"]
+    expect_invalid(missing_xcodegen, expected)
+
+    wrong_xcodegen = dict(manifest)
+    wrong_xcodegen["xcodeGenVersion"] = "2.47.0"
+    expect_invalid(wrong_xcodegen, expected)
 
     bad_commit = dict(manifest)
     bad_commit["gitCommit"] = "not-a-commit"
