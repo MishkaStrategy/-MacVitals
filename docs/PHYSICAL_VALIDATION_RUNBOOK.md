@@ -1,8 +1,26 @@
 # Physical Apple Silicon Validation Runbook
 
-This runbook executes the remaining machine-dependent MacVitals checks without changing the supported scope or claiming results that were not observed.
+This runbook executes machine-dependent MacVitals checks without changing the supported scope or claiming results that were not observed.
 
-The harness is intended for native Apple Silicon only. Intel and universal validation are outside the project scope.
+The harness is intended for native Apple Silicon (`arm64`) only. Intel and universal validation are outside the MacVitals v1 scope.
+
+## Mandatory hardened entrypoint
+
+Use only:
+
+```text
+scripts/run_physical_validation_hardened.py
+```
+
+Do not use the underlying compatibility module directly for release acceptance. The hardened entrypoint preserves the canonical collection logic and adds fail-closed power parsing and acceptance rules.
+
+The hardened rules guarantee that:
+
+- empty, failed or indeterminate `pmset` output is not interpreted as a battery-less Mac;
+- a scenario cannot receive review `pass` until its automated status is `pass`;
+- an automated `fail` or `not-run` remains open during finalization;
+- `unsupported` is accepted only for the hardware-specific `batteryless-desktop` scenario;
+- manual, Instruments, independent-review, signing, notarization and Gatekeeper gates require a real explicit `pass` to close.
 
 ## Safety and evidence contract
 
@@ -14,246 +32,142 @@ The harness:
 - records parsed `pmset -g batt` power state without retaining the raw battery identifier;
 - pins runtime evidence to the exact executable, PID, UID and process start identity;
 - stores every run in a new directory below `physical-validation-results/`;
-- leaves manual, Instruments, independent-review and signing gates as `not-tested` until a reviewer explicitly records a result;
-- fails its privacy scan if generated text evidence contains `/Users/<name>` or `/home/<name>`.
+- leaves human, Instruments, independent-review and signed-release gates open until real evidence is reviewed;
+- fails its privacy scan if generated text evidence contains a user home path.
 
 The harness does not use `sudo`, does not modify system power settings and does not publish evidence automatically.
 
 ## Prepare the exact candidate
 
+The preferred path is the resource-limited outer-artifact staging flow documented in [`PHYSICAL_VALIDATION_GUIDED.md`](PHYSICAL_VALIDATION_GUIDED.md).
+
+For a manually installed exact candidate:
+
 1. Download the intended `MacVitals-<version>-arm64-unsigned` workflow artifact.
-2. Extract its five files into the repository `dist/` directory:
+2. Extract its five files into `dist/`:
    - `MacVitals-<version>.zip`;
    - `MacVitals-<version>.dmg`;
    - `BUILD_STATUS.txt`;
    - `BUILD_MANIFEST.json`;
    - `SHA256SUMS.txt`.
 3. Install or extract that exact build as `/Applications/MacVitals.app`.
-4. From the repository root run:
+4. Run:
 
 ```bash
-python3 scripts/run_physical_validation.py prepare \
+python3 scripts/run_physical_validation_hardened.py prepare \
   --version <version> \
   --app /Applications/MacVitals.app
 ```
 
-Preparation verifies checksums, ZIP/DMG parity, metadata, signing/notarization classification, exact arm64 architecture and executable identity. It then creates:
+Preparation verifies checksums, ZIP/DMG parity, metadata, signing/notarization classification, exact arm64 architecture and executable identity. It creates a new session:
 
 ```text
 physical-validation-results/session-<UTC>-<PID>/
 ```
 
-Use the exact session path printed by the command in every following step.
+Use the exact printed session path in every following command.
 
-## Primary MacBook scenarios
+## Run a scenario
 
-### Battery idle
-
-Disconnect external power before starting and keep the popover closed:
+Use this template:
 
 ```bash
-python3 scripts/run_physical_validation.py run \
+python3 scripts/run_physical_validation_hardened.py run \
   --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario battery-idle \
+  --scenario <scenario> \
   --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2
+  --duration <seconds> \
+  --interval <seconds> \
+  --review-status pending-review
 ```
 
-The automated portion fails if the machine does not remain on battery power.
+Approved profiles:
 
-### External-power idle
+| Scenario | Duration | Interval | Required physical state/action |
+|---|---:|---:|---|
+| `battery-idle` | 900 s | 2 s | Disconnect external power and remain on battery. |
+| `external-power-idle` | 900 s | 2 s | Connect the intended adapter and keep it connected. |
+| `adapter-transition` | 300 s | 2 s | Start on AC, disconnect, then reconnect during the run. |
+| `sleep-wake` | 300 s | 2 s | Sleep long enough to create a visible gap, then wake. |
+| `popover-closed` | 900 s | 2 s | Keep the popover closed. |
+| `popover-open` | 900 s | 2 s | Keep the popover open. |
+| `high-frequency` | 900 s | 0.5 s | Set the application interval to 0.5 seconds. |
+| `stress` | 900 s | 2 s | Run a documented bounded CPU/memory workload. |
+| `stability-six-hour` | 21600 s | 2 s | Keep release settings unchanged on verifiable external power. |
+| `batteryless-desktop` | 900 s | 2 s | Run only on an Apple Silicon desktop with no battery. |
 
-Connect the normal Apple-recommended adapter and keep the popover closed:
+Do not reproduce critical memory pressure when it would risk data loss. Notes must not contain personal paths, serial numbers or unrelated user data.
 
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario external-power-idle \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2
-```
+## Scenario-specific automated requirements
 
-### Adapter disconnect and reconnect
+- `battery-idle` must start and remain on battery.
+- `external-power-idle` must start and remain on external power.
+- `adapter-transition` must capture both battery and external-power states.
+- `sleep-wake` must contain a plausible suspended wall-clock interval while process identity remains controlled.
+- `high-frequency` rejects an interval above 0.5 seconds.
+- `stability-six-hour` rejects a duration below 21,600 seconds.
+- `batteryless-desktop` requires an explicit reliable `batteryPresent=false`; unknown power output cannot satisfy it.
 
-Start on external power. During the five-minute run, disconnect the adapter after approximately one minute and reconnect it after another minute:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario adapter-transition \
-  --app /Applications/MacVitals.app \
-  --duration 300 \
-  --interval 2
-```
-
-The harness samples parsed power state throughout the run and fails unless both battery and external-power states are captured.
-
-Repeat this scenario for each available connection class, such as MagSafe, direct USB-C, dock/display power delivery and a lower-wattage adapter. Add the connection type as a note, never a serial number.
-
-### Sleep and wake
-
-Start the run, wait approximately one minute, put the Mac to sleep for at least thirty seconds, wake it and let the command finish:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario sleep-wake \
-  --app /Applications/MacVitals.app \
-  --duration 300 \
-  --interval 2
-```
-
-The automated check requires a plausible suspended wall-clock interval and stable process identity. Review the application after wake to confirm fresh samples, correct power state and no stale alert storm.
-
-## UI-state and workload scenarios
-
-Run the following separately so each evidence directory has one clear workload.
-
-### Popover closed
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario popover-closed \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2
-```
-
-### Popover open
-
-Open the MacVitals popover before starting:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario popover-open \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2
-```
-
-### High-frequency sampling
-
-Set MacVitals to its 0.5-second interval before starting:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario high-frequency \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 0.5
-```
-
-The harness rejects a `high-frequency` run whose evidence interval is above 0.5 seconds.
-
-### Controlled stress
-
-Start a documented, bounded CPU/memory workload in another terminal, then run:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario stress \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2 \
-  --note "Describe the controlled workload without paths or personal data"
-```
-
-Do not reproduce critical memory pressure when it would risk data loss.
-
-### Six-hour stability
-
-Keep the intended release settings unchanged throughout the run:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario stability-six-hour \
-  --app /Applications/MacVitals.app \
-  --duration 21600 \
-  --interval 2
-```
-
-The harness rejects a shorter run under this scenario name.
-
-## Battery-less Apple Silicon desktop
-
-On an Apple Silicon desktop, run:
-
-```bash
-python3 scripts/run_physical_validation.py run \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario batteryless-desktop \
-  --app /Applications/MacVitals.app \
-  --duration 900 \
-  --interval 2
-```
-
-The automated portion fails if `pmset` reports a battery. On a MacBook, record this scenario as unsupported rather than pretending it ran:
-
-```bash
-python3 scripts/run_physical_validation.py review \
-  --session physical-validation-results/session-<UTC>-<PID> \
-  --scenario batteryless-desktop \
-  --status unsupported \
-  --note "Requires a separate Apple Silicon desktop"
-```
+Repeat `adapter-transition` for each available connection class, such as MagSafe, direct USB-C, dock/display power delivery and a lower-wattage adapter. Record only the connection class, never a serial number.
 
 ## Review scenario evidence
 
-Automated success means only that the collector, identity, timing, privacy and scenario-specific machine invariants passed. It does not replace human review of sensor semantics or UI behavior.
+Automated success confirms collector, identity, timing, privacy and scenario-specific machine invariants only. It does not replace human review of sensor semantics or UI behavior.
 
-After inspecting a scenario, record the review decision:
+After reviewing a scenario that has automated `pass`, record the decision:
 
 ```bash
-python3 scripts/run_physical_validation.py review \
+python3 scripts/run_physical_validation_hardened.py review \
   --session physical-validation-results/session-<UTC>-<PID> \
   --scenario adapter-transition \
   --status pass \
   --note "No stale values or repeated alert storm observed"
 ```
 
-Use `fail`, `not-tested` or `unsupported` honestly when applicable.
+The command rejects `pass` when automated evidence has not passed.
+
+Use `fail` or `not-tested` honestly. `unsupported` is accepted only for `batteryless-desktop`, for example on a MacBook:
+
+```bash
+python3 scripts/run_physical_validation_hardened.py review \
+  --session physical-validation-results/session-<UTC>-<PID> \
+  --scenario batteryless-desktop \
+  --status unsupported \
+  --note "Requires a separate Apple Silicon desktop"
+```
 
 ## Manual and Instruments gates
 
-Record a manual gate only after the corresponding evidence has been reviewed. Example:
+Record a manual gate only after the corresponding evidence has genuinely been reviewed:
 
 ```bash
-python3 scripts/run_physical_validation.py manual \
+python3 scripts/run_physical_validation_hardened.py manual \
   --session physical-validation-results/session-<UTC>-<PID> \
   --gate voiceOver \
   --status pass \
   --note "All Preferences tabs and menu-bar controls reviewed"
 ```
 
-Supported manual gate names are visible with:
+View supported names with:
 
 ```bash
-python3 scripts/run_physical_validation.py manual --help
+python3 scripts/run_physical_validation_hardened.py manual --help
 ```
 
-Instruments traces remain separate binary evidence. Record only their reviewed result and redacted filename; do not claim the harness itself measured wakeups, Energy Impact, allocations or leaks.
+Manual gates reject `unsupported`. Leave a gate `not-tested` or `pending-review` until the real evidence exists.
 
-The authoring assistant must not mark `independentReviewer` as passed. That gate requires a separate reviewer.
+Instruments traces remain separate local binary evidence. Record only the reviewed result and redacted reference; collection alone is not a pass.
 
-Signing, notarization, stapling and Gatekeeper gates must remain `not-tested` until the final signed artifacts exist.
+The authoring assistant must not mark `independentReviewer` as passed. That requires a separate real reviewer. Developer ID signing, notarization, stapling and clean-Mac Gatekeeper must remain open until separately authorized signed artifacts exist and are genuinely tested.
 
 ## Finalize the record
 
-Generate the conservative Markdown acceptance report:
-
 ```bash
-python3 scripts/run_physical_validation.py finalize \
+python3 scripts/run_physical_validation_hardened.py finalize \
   --session physical-validation-results/session-<UTC>-<PID>
 ```
 
-Exit status `2` means open or unreviewed gates remain. This is intentional and must not be bypassed by deleting scenarios or weakening the acceptance rules.
+Exit status `2` means required automated evidence, human review or manual gates remain open. Finalization evaluates both `automatedStatus` and `reviewStatus`; editing only the review state cannot hide a failed or unrun scenario.
 
 A complete session contains:
 
@@ -266,4 +180,4 @@ A complete session contains:
 - `ACCEPTANCE.md`;
 - an explicit list of every still-open release gate.
 
-Do not commit unreviewed physical evidence automatically. First inspect it for privacy, then attach or commit only the redacted acceptance record and evidence approved by the project reviewer.
+Do not commit unreviewed physical evidence automatically. Inspect it for privacy first, keep raw Instruments traces local, and attach only the redacted records approved for review.
