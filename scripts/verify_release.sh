@@ -74,6 +74,7 @@ if found != expected:
     )
 PY
 
+python3 "${ROOT_DIR}/scripts/validate_app_zip.py" "${ZIP_PATH}"
 ditto -x -k "${ZIP_PATH}" "${WORK_DIR}/zip"
 ZIP_APP="${WORK_DIR}/zip/MacVitals.app"
 [[ -d "${ZIP_APP}" ]] || {
