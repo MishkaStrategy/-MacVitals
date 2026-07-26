@@ -20,7 +20,8 @@ The workflow `.github/workflows/signed-release-candidate.yml`:
 - verifies that the commit is present on `origin/main` before signing material is used;
 - uses the protected `signed-release` GitHub environment;
 - has read-only repository permissions;
-- routes all credential-backed execution through `scripts/signed_release_entrypoint.py`;
+- routes all credential-backed execution through `scripts/signed_release_entrypoint_hardened.py`, which launches `scripts/sign_notarize_release_hardened.py` in the isolated subprocess boundary;
+- preserves and revalidates the exact supported XcodeGen provenance (`2.45.4` or `2.46.0`) from unsigned archive through signed manifest;
 - rejects equal, nested, external, repository-root and symlink-escape output/work/evidence paths before signing material is used;
 - imports the Developer ID certificate into a temporary keychain;
 - deletes the temporary keychain, certificate and notary API key file in an `always()` cleanup step;
@@ -85,31 +86,32 @@ The workflow checks out that SHA directly and verifies that it is contained in `
 
 ## Pipeline stages
 
-The workflow, `scripts/signed_release_entrypoint.py` and `scripts/sign_notarize_release.py` perform:
+The workflow, `scripts/signed_release_entrypoint_hardened.py` and `scripts/sign_notarize_release_hardened.py` perform:
 
 1. Exact checkout and `origin/main` ancestry verification.
-2. Python compilation and deterministic self-tests, including adversarial path-isolation cases.
+2. Python compilation and deterministic self-tests, including adversarial path-isolation and provenance cases.
 3. Resolution of signed output, work and evidence roots; all three must be mutually non-overlapping strict repository children with no symlink escape.
-4. SwiftFormat lint and native arm64 unit tests.
-5. Temporary keychain creation and Developer ID certificate import.
-6. A fresh unsigned arm64 archive through the existing package/release verifier.
-7. Exact manifest, version, build, commit and architecture validation.
-8. Developer ID Application signing with Hardened Runtime, trusted timestamp and project entitlements.
-9. Strict app signature, authority, Team ID, timestamp and arm64 verification.
-10. Application ZIP submission to Apple notarization with `--wait`.
-11. Retention of the application submission response and notarization log.
-12. Stapling and validation of the application ticket.
-13. Creation of the final ZIP and DMG from the stapled application.
-14. Developer ID signing and verification of the DMG.
-15. DMG submission to Apple notarization with `--wait`.
-16. Retention of the DMG submission response and notarization log.
-17. Stapling and validation of the DMG ticket.
-18. Gatekeeper assessment of both the application and DMG.
-19. Regeneration of signed/notarized provenance and SHA-256 files after stapling.
-20. Full `verify_release.sh` validation against the exact requested commit.
-21. Privacy scanning of text evidence and metadata.
-22. Upload of private candidate and evidence workflow artifacts.
-23. Guaranteed cleanup of temporary signing material.
+4. Verification that the installed XcodeGen is one of the empirically validated versions (`2.45.4` or `2.46.0`).
+5. SwiftFormat lint and native arm64 unit tests.
+6. Temporary keychain creation and Developer ID certificate import.
+7. A fresh unsigned arm64 archive through the existing package/release verifier.
+8. Exact manifest, version, build, commit, architecture and XcodeGen provenance validation.
+9. Developer ID Application signing with Hardened Runtime, trusted timestamp and project entitlements.
+10. Strict app signature, authority, Team ID, timestamp and arm64 verification.
+11. Application ZIP submission to Apple notarization with `--wait`.
+12. Retention of the application submission response and notarization log.
+13. Stapling and validation of the application ticket.
+14. Creation of the final ZIP and DMG from the stapled application.
+15. Developer ID signing and verification of the DMG.
+16. DMG submission to Apple notarization with `--wait`.
+17. Retention of the DMG submission response and notarization log.
+18. Stapling and validation of the DMG ticket.
+19. Gatekeeper assessment of both the application and DMG.
+20. Regeneration of signed/notarized provenance and SHA-256 files after stapling while preserving the original supported XcodeGen version.
+21. Full `verify_release.sh` validation against the exact requested commit, including structural/resource/CRC validation of the final signed application ZIP before extraction.
+22. Privacy scanning of text evidence and metadata.
+23. Upload of private candidate and evidence workflow artifacts.
+24. Guaranteed cleanup of temporary signing material.
 
 Any failed stage prevents the private candidate artifact from being uploaded as successful.
 
@@ -132,6 +134,7 @@ It contains one version/build/commit directory with:
 The manifest must report:
 
 - `architectures: ["arm64"]`;
+- `xcodeGenVersion: "2.45.4"` or `"2.46.0"`, matching the exact unsigned build provenance;
 - `signingStatus: "developer-id-signed"`;
 - `notarizationStatus: "ticket-present"`;
 - the exact authorized `main` commit SHA.
@@ -164,6 +167,8 @@ A separate reviewer must verify:
 - the DMG has a trusted Developer ID timestamp;
 - both stapler validations and hosted Gatekeeper assessments passed;
 - final checksums match the downloaded artifact;
+- signed manifest preserves the supported XcodeGen version from the unsigned candidate;
+- the final signed ZIP passes structure, path, entry-type, resource-limit and CRC validation;
 - no secret, username or home path appears in retained evidence.
 
 The authoring assistant must not mark `docs/audits/final-independent-audit.md` complete based on its own review.
@@ -179,8 +184,8 @@ After downloading the private candidate onto a clean Apple Silicon Mac:
 5. Run Gatekeeper assessment for the application and DMG.
 6. Open the DMG and install the app normally.
 7. Confirm the first launch does not require a manual security bypass.
-8. Execute the physical validation runbook against this exact signed candidate when final signed-build confirmation is required.
-9. Record the signed/notarized/Gatekeeper manual gates through the physical acceptance harness.
+8. Execute the hardened physical validation runbook against this exact signed candidate when final signed-build confirmation is required.
+9. Record the signed/notarized/Gatekeeper manual gates through the hardened physical acceptance harness.
 
 A hosted Gatekeeper pass does not replace this clean-Mac installation test.
 
