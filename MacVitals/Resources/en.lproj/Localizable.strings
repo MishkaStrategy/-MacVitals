@@ -39,6 +39,7 @@
 "Rated %d W" = "Rated %d W";
 "~%.1f W" = "~%.1f W";
 "%.1f W" = "%.1f W";
+"%.1f °C" = "%.1f °C";
 "Not measured" = "Not measured";
 "Sufficient" = "Sufficient";
 "Insufficient" = "Insufficient";
