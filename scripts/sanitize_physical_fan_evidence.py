@@ -12,7 +12,9 @@ from typing import NoReturn
 
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
 HOME_RE = re.compile(r"/(?:Users|home)/[^/\s<]+")
-TEMP_RE = re.compile(r"/private/(?:tmp|var)/[^\s<]+")
+MACOS_TEMP_RE = re.compile(
+    r"(?<![\w.-])(?:/private)?/(?:tmp|var/(?:tmp|folders))(?:/[^\s<\"']*)?"
+)
 
 
 class SanitizationError(RuntimeError):
@@ -39,7 +41,7 @@ def clean(text: str, replacements: list[tuple[str, str]]) -> str:
     for source, target in replacements:
         text = text.replace(source, target)
     text = HOME_RE.sub("<HOME>", text)
-    return TEMP_RE.sub("<TEMP>", text)
+    return MACOS_TEMP_RE.sub("<TEMP>", text)
 
 
 def verify_clean(
@@ -48,7 +50,7 @@ def verify_clean(
     for source, _ in replacements:
         if source in text:
             fail(f"Private value remained in {relative}")
-    if HOME_RE.search(text) or TEMP_RE.search(text):
+    if HOME_RE.search(text) or MACOS_TEMP_RE.search(text):
         fail(f"Private path remained in {relative}")
 
 
@@ -103,13 +105,35 @@ def self_test() -> int:
         root.mkdir()
         log = root / "build.log"
         log.write_text(
-            "/Users/alice/work/project/build\n/private/tmp/probe.123\nalice-mac alice\n",
+            "\n".join(
+                [
+                    "/Users/alice/work/project/build",
+                    "/private/tmp/probe.123/output",
+                    "/tmp/probe.456/output",
+                    "/var/tmp/probe.789/output",
+                    "/private/var/tmp/probe.987/output",
+                    "/var/folders/ab/cdef/T/cache.swiftmodule",
+                    "/private/var/folders/xy/zyx/T/cache.swiftmodule",
+                    "file:///var/folders/zz/cache/object.o",
+                    "alice-mac alice",
+                ]
+            )
+            + "\n",
             encoding="utf-8",
         )
         sanitize(root, replacements)
         text = log.read_text(encoding="utf-8")
         assert "/Users/" not in text
-        assert "/private/tmp/" not in text
+        for prefix in (
+            "/private/tmp",
+            "/tmp",
+            "/var/tmp",
+            "/private/var/tmp",
+            "/var/folders",
+            "/private/var/folders",
+        ):
+            assert prefix not in text
+        assert text.count("<TEMP>") == 7
         assert "alice-mac" not in text
         assert (root / "PRIVACY_SCAN_PASSED.txt").read_text(encoding="utf-8") == (
             "privacy-scan=passed\n"
