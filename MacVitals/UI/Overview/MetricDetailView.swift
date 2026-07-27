@@ -17,7 +17,7 @@ nonisolated enum MetricDetailKind: String, Identifiable, Sendable {
     case .memory: return L10n.string("Memory")
     case .gpu: return L10n.string("GPU")
     case .battery: return L10n.string("Battery")
-    case .temperature: return L10n.string("Temperature")
+    case .temperature: return TemperatureL10n.string("Temperature")
     case .fans: return L10n.string("Fans")
     }
   }
@@ -219,18 +219,18 @@ struct MetricDetailView: View {
   private var temperatureBreakdown: some View {
     HStack(spacing: 12) {
       temperatureValue(
-        title: "Processor",
+        title: TemperatureL10n.string("Processor"),
         value: coordinator.snapshot.temperature.value?.processorCelsius,
         symbol: "cpu")
       temperatureValue(
-        title: "Battery",
+        title: L10n.string("Battery"),
         value: coordinator.snapshot.temperature.value?.batteryCelsius,
         symbol: "battery.75percent")
     }
   }
 
   private func temperatureValue(
-    title: LocalizedStringKey,
+    title: String,
     value: Double?,
     symbol: String
   ) -> some View {
