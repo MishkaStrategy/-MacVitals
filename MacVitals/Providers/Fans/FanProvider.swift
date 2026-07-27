@@ -110,7 +110,7 @@ nonisolated final class FanProvider: @unchecked Sendable {
   private func mode(index: Int, source: any AppleSMCReading) -> FanMode {
     for key in ["F\(index)md", "F\(index)Md"] {
       guard let raw = try? source.readKey(key), let value = raw.bytes.first else { continue }
-      return value == 0 ? .automatic : .manual
+      return FanMode.decodeSMCByte(value)
     }
     return .unknown
   }
