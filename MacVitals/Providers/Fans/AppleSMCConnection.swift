@@ -5,6 +5,7 @@ nonisolated enum AppleSMCCommand: UInt8 {
   case kernelIndex = 2
   case readBytes = 5
   case writeBytes = 6
+  case getKeyFromIndex = 8
   case readKeyInfo = 9
 }
 
@@ -72,28 +73,32 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
 
   func readKey(_ key: String) throws -> AppleSMCKeyValue {
     try lock.withLock {
-      let keyCode = try Self.fourCharacterCode(key)
-      var infoInput = AppleSMCParam()
-      infoInput.key = keyCode
-      infoInput.data8 = AppleSMCCommand.readKeyInfo.rawValue
-      let infoOutput = try call(infoInput)
-      try Self.validateFirmwareResult(infoOutput.result)
+      try readKeyLocked(key)
+    }
+  }
 
-      let size = Int(infoOutput.keyInfo.dataSize)
-      guard (1...32).contains(size) else { throw AppleSMCError.invalidPayload }
-
-      var readInput = AppleSMCParam()
-      readInput.key = keyCode
-      readInput.keyInfo.dataSize = infoOutput.keyInfo.dataSize
-      readInput.data8 = AppleSMCCommand.readBytes.rawValue
-      let readOutput = try call(readInput)
-      try Self.validateFirmwareResult(readOutput.result)
-
-      let bytes = withUnsafeBytes(of: readOutput.bytes) { rawBuffer in
-        Array(rawBuffer.prefix(size))
+  func keyNames(maximumCount: Int = 2_048) throws -> [String] {
+    guard maximumCount > 0 else { return [] }
+    return try lock.withLock {
+      let countValue = try readKeyLocked("#KEY")
+      guard let decodedCount = AppleSMCDataDecoder.unsignedInteger(countValue), decodedCount >= 0 else {
+        throw AppleSMCError.invalidPayload
       }
-      let type = Self.fourCharacterString(infoOutput.keyInfo.dataType)
-      return AppleSMCKeyValue(bytes: bytes, dataType: type)
+
+      let count = min(decodedCount, maximumCount)
+      var names: [String] = []
+      names.reserveCapacity(count)
+      for index in 0..<count {
+        var input = AppleSMCParam()
+        input.data8 = AppleSMCCommand.getKeyFromIndex.rawValue
+        input.data32 = UInt32(index)
+        let output = try call(input)
+        try Self.validateFirmwareResult(output.result)
+        let name = Self.fourCharacterString(output.key)
+        guard name.count == 4, name.unicodeScalars.allSatisfy({ $0.isASCII }) else { continue }
+        names.append(name)
+      }
+      return names
     }
   }
 
@@ -119,6 +124,31 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
       let output = try call(writeInput)
       try Self.validateFirmwareResult(output.result)
     }
+  }
+
+  private func readKeyLocked(_ key: String) throws -> AppleSMCKeyValue {
+    let keyCode = try Self.fourCharacterCode(key)
+    var infoInput = AppleSMCParam()
+    infoInput.key = keyCode
+    infoInput.data8 = AppleSMCCommand.readKeyInfo.rawValue
+    let infoOutput = try call(infoInput)
+    try Self.validateFirmwareResult(infoOutput.result)
+
+    let size = Int(infoOutput.keyInfo.dataSize)
+    guard (1...32).contains(size) else { throw AppleSMCError.invalidPayload }
+
+    var readInput = AppleSMCParam()
+    readInput.key = keyCode
+    readInput.keyInfo.dataSize = infoOutput.keyInfo.dataSize
+    readInput.data8 = AppleSMCCommand.readBytes.rawValue
+    let readOutput = try call(readInput)
+    try Self.validateFirmwareResult(readOutput.result)
+
+    let bytes = withUnsafeBytes(of: readOutput.bytes) { rawBuffer in
+      Array(rawBuffer.prefix(size))
+    }
+    let type = Self.fourCharacterString(infoOutput.keyInfo.dataType)
+    return AppleSMCKeyValue(bytes: bytes, dataType: type)
   }
 
   private func call(_ input: AppleSMCParam) throws -> AppleSMCParam {
