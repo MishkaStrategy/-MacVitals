@@ -27,9 +27,9 @@ private func emit(_ document: FanProbeDocument) throws {
   FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
-let sample = FanProvider().sample()
-let fans = sample.value?.fans ?? []
-let document = FanProbeDocument(
+private let sample = FanProvider().sample()
+private let fans = sample.value?.fans ?? []
+private let document = FanProbeDocument(
   schemaVersion: 1,
   recordedAt: sample.timestamp,
   architecture: "arm64",
