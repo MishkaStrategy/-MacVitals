@@ -43,16 +43,19 @@ nonisolated enum FanControlCodeSigning {
   static func currentFacts() -> FanControlSigningFacts? {
     var dynamicCode: SecCode?
     guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess,
-      let dynamicCode,
-      let metadata = metadata(dynamicCode: dynamicCode),
-      allowedIdentifier(metadata.identifier)
+      let dynamicCode
     else { return nil }
+    return validatedFacts(dynamicCode: dynamicCode)
+  }
 
-    return facts(
-      dynamicCode: dynamicCode,
-      metadata: metadata,
-      expectedIdentifier: metadata.identifier,
-      expectedTeamIdentifier: metadata.teamIdentifier)
+  static func facts(pid: pid_t) -> FanControlSigningFacts? {
+    guard pid > 0 else { return nil }
+    let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
+    var dynamicCode: SecCode?
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &dynamicCode) == errSecSuccess,
+      let dynamicCode
+    else { return nil }
+    return validatedFacts(dynamicCode: dynamicCode)
   }
 
   static func facts(
@@ -60,40 +63,27 @@ nonisolated enum FanControlCodeSigning {
     expectedIdentifier: String,
     expectedTeamIdentifier: String
   ) -> FanControlSigningFacts? {
-    guard pid > 0,
-      allowedIdentifier(expectedIdentifier),
-      FanControlSigningPolicy.validTeamIdentifier(expectedTeamIdentifier)
+    guard let signingFacts = facts(pid: pid),
+      FanControlSigningPolicy.accepts(
+        signingFacts,
+        expectedIdentifier: expectedIdentifier,
+        expectedTeamIdentifier: expectedTeamIdentifier)
     else { return nil }
-
-    let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
-    var dynamicCode: SecCode?
-    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &dynamicCode) == errSecSuccess,
-      let dynamicCode,
-      let metadata = metadata(dynamicCode: dynamicCode),
-      metadata.identifier == expectedIdentifier,
-      metadata.teamIdentifier == expectedTeamIdentifier
-    else { return nil }
-
-    return facts(
-      dynamicCode: dynamicCode,
-      metadata: metadata,
-      expectedIdentifier: expectedIdentifier,
-      expectedTeamIdentifier: expectedTeamIdentifier)
+    return signingFacts
   }
 
-  private static func facts(
-    dynamicCode: SecCode,
-    metadata: Metadata,
-    expectedIdentifier: String,
-    expectedTeamIdentifier: String
-  ) -> FanControlSigningFacts {
-    FanControlSigningFacts(
+  private static func validatedFacts(dynamicCode: SecCode) -> FanControlSigningFacts? {
+    guard let metadata = metadata(dynamicCode: dynamicCode),
+      allowedIdentifier(metadata.identifier)
+    else { return nil }
+
+    return FanControlSigningFacts(
       identifier: metadata.identifier,
       teamIdentifier: metadata.teamIdentifier,
       developerIDRequirementValid: satisfiesDeveloperIDRequirement(
         dynamicCode: dynamicCode,
-        identifier: expectedIdentifier,
-        teamIdentifier: expectedTeamIdentifier),
+        identifier: metadata.identifier,
+        teamIdentifier: metadata.teamIdentifier),
       getTaskAllow: metadata.getTaskAllow)
   }
 
