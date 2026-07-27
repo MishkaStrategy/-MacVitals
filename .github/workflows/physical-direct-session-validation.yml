@@ -20,9 +20,10 @@ jobs:
       github.actor == github.repository_owner &&
       github.event.pull_request.head.ref == 'feature/macvitals-v1'
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 540
+    timeout-minutes: 180
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      MACVITALS_RUN_LONG_STABILITY: "0"
 
     steps:
       - name: Register runner privacy masks
@@ -80,15 +81,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 -m py_compile scripts/run_physical_validation_hardened.py scripts/repair_sanitized_physical_xml.py
+          python3 -m py_compile \
+            scripts/run_physical_validation_hardened.py \
+            scripts/repair_sanitized_physical_xml.py \
+            scripts/validate_fan_evidence.py
           bash -n scripts/run_ci_physical_validation_hardened.sh
           python3 scripts/run_physical_validation_hardened.py self-test
           python3 scripts/repair_sanitized_physical_xml.py --self-test
+          python3 scripts/validate_fan_evidence.py --self-test
           bash scripts/run_ci_physical_validation_hardened.sh --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
           xcodegen generate
-          swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+          swift format lint --recursive MacVitals MacVitalsFanProbe MacVitalsFanHelper MacVitalsTests MacVitalsUITests
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
@@ -115,6 +120,38 @@ jobs:
               )
           print("Physical candidate manifest is bound to the exact checkout")
           PY
+
+      - name: Collect read-only fan RPM evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_root="physical-validation-results"
+          probe_root="${PWD}/build/fan-probe"
+          probe="${probe_root}/Release/MacVitalsFanProbe"
+          raw_evidence="${evidence_root}/fan-evidence.raw.json"
+          evidence="${evidence_root}/fan-evidence.json"
+          error_log="${evidence_root}/fan-evidence-error.log"
+          rm -rf -- "${probe_root}"
+          mkdir -p -- "${evidence_root}" "${probe_root}"
+          xcodebuild -project MacVitals.xcodeproj -target MacVitalsFanProbe \
+            -configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO SYMROOT="${probe_root}" build
+          [[ -x "${probe}" && ! -L "${probe}" ]] || { echo "Fan probe executable is missing" >&2; exit 1; }
+          [[ "$(lipo -archs "${probe}")" == "arm64" ]] || { echo "Fan probe is not exactly arm64" >&2; exit 1; }
+          set +e
+          "${probe}" > "${raw_evidence}" 2> "${error_log}"
+          probe_status=$?
+          set -e
+          if [[ ${probe_status} -ne 0 ]]; then
+            cat "${error_log}" >&2
+            exit "${probe_status}"
+          fi
+          rm -f -- "${error_log}"
+          mv -- "${raw_evidence}" "${evidence}"
+          python3 scripts/validate_fan_evidence.py \
+            --require-available \
+            --require-automatic \
+            "${evidence}"
 
       - name: Collect through same-UID direct GUI session
         id: physical
@@ -233,6 +270,10 @@ jobs:
           ready.write_text("privacy-scan=passed\n", encoding="utf-8")
           PYCODE
           python3 scripts/repair_sanitized_physical_xml.py physical-validation-results
+          python3 scripts/validate_fan_evidence.py \
+            --require-available \
+            --require-automatic \
+            physical-validation-results/fan-evidence.json
           echo "ready=true" >> "${GITHUB_OUTPUT}"
           tail -n 300 physical-direct-session.log
 
