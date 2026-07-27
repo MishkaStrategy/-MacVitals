@@ -144,7 +144,7 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
       let raw = try? source.readKey(key),
       let byte = raw.bytes.first
     else { return .unknown }
-    return byte == 0 ? .automatic : .manual
+    return FanMode.decodeSMCByte(byte)
   }
 
   private func modeKey(index: Int) throws -> String {
