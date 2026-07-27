@@ -72,7 +72,7 @@ nonisolated enum DiagnosticSnapshotRedactor {
       maxCapacityMah: nonnegativeFinite(value.maxCapacityMah),
       designCapacityMah: nonnegativeFinite(value.designCapacityMah),
       healthPercent: validPercentage(value.healthPercent),
-      temperatureCelsius: finite(value.temperatureCelsius),
+      temperatureCelsius: validTemperatureCelsius(value.temperatureCelsius),
       voltageVolts: nonnegativeFinite(value.voltageVolts),
       currentAmperes: finite(value.currentAmperes),
       batteryPowerWatts: finite(value.batteryPowerWatts))
@@ -186,6 +186,11 @@ nonisolated enum DiagnosticSnapshotRedactor {
 
   private static func validPercentage(_ value: Double?) -> Double? {
     guard let value = finite(value), (0...100).contains(value) else { return nil }
+    return value
+  }
+
+  private static func validTemperatureCelsius(_ value: Double?) -> Double? {
+    guard let value = finite(value), (-20...100).contains(value) else { return nil }
     return value
   }
 
