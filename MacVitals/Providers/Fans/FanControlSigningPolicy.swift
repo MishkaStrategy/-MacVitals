@@ -72,6 +72,23 @@ nonisolated enum FanControlCodeSigning {
     return signingFacts
   }
 
+  static func developerIDRequirementSource(
+    identifier: String,
+    teamIdentifier: String
+  ) -> String? {
+    guard allowedIdentifier(identifier),
+      FanControlSigningPolicy.validTeamIdentifier(teamIdentifier)
+    else { return nil }
+
+    return """
+      anchor apple generic and anchor trusted
+      and identifier \"\(identifier)\"
+      and certificate 1[field.1.2.840.113635.100.6.2.6] exists
+      and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
+      and certificate leaf[subject.OU] = \"\(teamIdentifier)\"
+      """
+  }
+
   private static func validatedFacts(dynamicCode: SecCode) -> FanControlSigningFacts? {
     guard let metadata = metadata(dynamicCode: dynamicCode),
       allowedIdentifier(metadata.identifier)
@@ -117,17 +134,11 @@ nonisolated enum FanControlCodeSigning {
     identifier: String,
     teamIdentifier: String
   ) -> Bool {
-    guard allowedIdentifier(identifier),
-      FanControlSigningPolicy.validTeamIdentifier(teamIdentifier)
+    guard let source = developerIDRequirementSource(
+      identifier: identifier,
+      teamIdentifier: teamIdentifier)
     else { return false }
 
-    let source = """
-      anchor apple generic and anchor trusted
-      and identifier \"\(identifier)\"
-      and certificate 1[field.1.2.840.113635.100.6.2.6] exists
-      and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
-      and certificate leaf[subject.OU] = \"\(teamIdentifier)\"
-      """
     var requirement: SecRequirement?
     guard SecRequirementCreateWithString(source as CFString, [], &requirement) == errSecSuccess,
       let requirement
