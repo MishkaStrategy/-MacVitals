@@ -105,6 +105,23 @@ final class DiagnosticSnapshotRedactorTests: XCTestCase {
         timestamp: invalidDate,
         isEstimated: false,
         message: nil),
+      fans: MetricValue(
+        value: FanStats(fans: [
+          FanReading(
+            index: 0,
+            currentRPM: .nan,
+            targetRPM: .infinity,
+            minimumRPM: 6_000,
+            maximumRPM: 1_200,
+            mode: .manual)
+        ]),
+        unit: .rpm,
+        availability: .available,
+        quality: .experimental,
+        source: .appleSMC,
+        timestamp: invalidDate,
+        isEstimated: false,
+        message: nil),
       power: MetricValue(
         value: PowerAssessment(
           status: .unknown,
@@ -136,10 +153,55 @@ final class DiagnosticSnapshotRedactorTests: XCTestCase {
     XCTAssertNil(redacted.adapter.value?.ratedPowerWatts)
     XCTAssertNil(redacted.gpu.value?.registryID)
     XCTAssertNil(redacted.gpu.value?.systemUtilizationPercent)
+    XCTAssertNil(redacted.fans.value)
+    XCTAssertEqual(redacted.fans.availability, .providerError)
     XCTAssertNil(redacted.power.value)
     XCTAssertEqual(redacted.power.availability, .providerError)
     XCTAssertFalse(json.contains("NaN"))
     XCTAssertFalse(json.contains("Infinity"))
     XCTAssertFalse(json.contains("123456"))
+  }
+
+  func testValidFanTelemetryIsPreservedWithinBounds() throws {
+    let now = Date(timeIntervalSince1970: 100)
+    let metric = MetricValue(
+      value: FanStats(fans: [
+        FanReading(
+          index: 0,
+          currentRPM: 2_100,
+          targetRPM: 2_400,
+          minimumRPM: 1_200,
+          maximumRPM: 6_000,
+          mode: .automatic),
+        FanReading(
+          index: 1,
+          currentRPM: 2_200,
+          targetRPM: 2_500,
+          minimumRPM: 1_300,
+          maximumRPM: 6_100,
+          mode: .manual),
+      ]),
+      unit: MetricUnit.rpm,
+      availability: MetricAvailability.available,
+      quality: MeasurementQuality.experimental,
+      source: MetricSource.appleSMC,
+      timestamp: now,
+      isEstimated: false,
+      message: nil)
+    let redacted = DiagnosticSnapshotRedactor.redact(
+      SystemSnapshot(
+        timestamp: now,
+        cpu: .unavailable(unit: .percent),
+        memory: .unavailable(unit: .bytes),
+        battery: .unavailable(unit: .percent),
+        adapter: .unavailable(unit: .watts),
+        gpu: .unavailable(unit: .percent),
+        fans: metric,
+        power: .unavailable(unit: .watts)))
+
+    let fans = try XCTUnwrap(redacted.fans.value?.fans)
+    XCTAssertEqual(fans.count, 2)
+    XCTAssertEqual(fans[0].currentRPM, 2_100)
+    XCTAssertEqual(fans[1].mode, .manual)
   }
 }
