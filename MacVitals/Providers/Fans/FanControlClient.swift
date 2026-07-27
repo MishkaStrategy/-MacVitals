@@ -31,14 +31,31 @@ nonisolated enum FanControlClientState: Sendable, Equatable {
 }
 
 nonisolated enum FanControlSigningIdentity {
+  static func teamIdentifier() -> String? {
+    var dynamicCode: SecCode?
+    guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess,
+      let dynamicCode,
+      SecCodeCheckValidity(dynamicCode, [], nil) == errSecSuccess
+    else { return nil }
+
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(dynamicCode, [], &staticCode) == errSecSuccess,
+      let staticCode
+    else { return nil }
+
+    var information: CFDictionary?
+    guard SecCodeCopySigningInformation(staticCode, [], &information) == errSecSuccess,
+      let values = information as? [String: Any],
+      let identifier = values[kSecCodeInfoIdentifier as String] as? String,
+      identifier == "com.mishkacher.MacVitals",
+      let team = values[kSecCodeInfoTeamIdentifier as String] as? String,
+      !team.isEmpty
+    else { return nil }
+    return team
+  }
+
   static func hasTeamIdentifier() -> Bool {
-    guard let task = SecTaskCreateFromSelf(nil),
-      let value = SecTaskCopyValueForEntitlement(
-        task,
-        "com.apple.developer.team-identifier" as CFString,
-        nil)
-    else { return false }
-    return (value as? String)?.isEmpty == false
+    teamIdentifier() != nil
   }
 }
 
