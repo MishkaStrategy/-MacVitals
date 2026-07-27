@@ -14,6 +14,29 @@ nonisolated enum BatterylessPowerAssessment {
   }
 }
 
+nonisolated enum SystemPowerAssessmentResolver {
+  static func resolve(
+    assessment: PowerAssessment,
+    battery: BatteryStats?,
+    externalPowerState: ExternalPowerState
+  ) -> PowerAssessment {
+    guard assessment.estimatedSystemPowerWatts == nil,
+      externalPowerState == .disconnected,
+      let batteryPower = battery?.batteryPowerWatts,
+      batteryPower.isFinite,
+      batteryPower < 0
+    else { return assessment }
+
+    return PowerAssessment(
+      status: assessment.status,
+      confidence: assessment.confidence,
+      batteryPowerWatts: assessment.batteryPowerWatts ?? batteryPower,
+      estimatedSystemPowerWatts: abs(batteryPower),
+      powerBalanceWatts: assessment.powerBalanceWatts,
+      explanation: assessment.explanation)
+  }
+}
+
 actor SystemSampler {
   private let cpuProvider = CPUProvider()
   private let memoryProvider = MemoryProvider()
@@ -55,7 +78,7 @@ actor SystemSampler {
       batteryPercent: batteryValue?.percentage,
       batteryTimestamp: battery.timestamp,
       adapterTimestamp: adapter.timestamp)
-    let (assessment, powerModelMilliseconds) = measure {
+    let (rawAssessment, powerModelMilliseconds) = measure {
       if let directAssessment = BatterylessPowerAssessment.make(battery: batteryValue) {
         evaluator.reset()
         return directAssessment
@@ -66,6 +89,10 @@ actor SystemSampler {
       }
       return evaluator.evaluate(powerSample)
     }
+    let assessment = SystemPowerAssessmentResolver.resolve(
+      assessment: rawAssessment,
+      battery: batteryValue,
+      externalPowerState: externalPowerState)
     let power = MetricValue(
       value: assessment,
       unit: .watts,
