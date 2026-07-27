@@ -15,7 +15,7 @@ private struct FanProbeDocument: Codable, Sendable {
   let unit: MetricUnit
   let fanCount: Int
   let fans: [FanReading]
-  let message: String?
+  let message: String
 }
 
 private func emit(_ document: FanProbeDocument) throws {
@@ -39,7 +39,7 @@ private let document = FanProbeDocument(
   unit: sample.unit,
   fanCount: fans.count,
   fans: fans,
-  message: sample.message)
+  message: sample.message ?? "")
 
 do {
   try emit(document)
