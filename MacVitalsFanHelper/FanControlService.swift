@@ -31,25 +31,23 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
     newConnection.exportedInterface = NSXPCInterface(with: FanControlXPCProtocol.self)
     newConnection.exportedObject = self
-    newConnection.invalidationHandler = { [weak self] in
-      self?.queue.async { self?.restoreAllAutomatic() }
-    }
-    newConnection.interruptionHandler = { [weak self] in
-      self?.queue.async { self?.restoreAllAutomatic() }
-    }
+    let service = self
+    newConnection.invalidationHandler = { service.scheduleRestoreAllAutomatic() }
+    newConnection.interruptionHandler = { service.scheduleRestoreAllAutomatic() }
     newConnection.resume()
     return true
   }
 
   func status(reply: @escaping (Bool, String?) -> Void) {
-    queue.async {
+    let result: (Bool, String?) = queue.sync {
       do {
-        let count = try self.fanCount()
-        reply(count > 0, count > 0 ? nil : "AppleSMC exposes no fans")
+        let count = try fanCount()
+        return (count > 0, count > 0 ? nil : "AppleSMC exposes no fans")
       } catch {
-        reply(false, error.localizedDescription)
+        return (false, error.localizedDescription)
       }
     }
+    reply(result.0, result.1)
   }
 
   func setFanBoost(
@@ -58,45 +56,52 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     leaseSeconds: Double,
     reply: @escaping (Bool, Double, String?) -> Void
   ) {
-    queue.async {
+    let result: (Bool, Double, String?) = queue.sync {
       do {
-        let fan = try self.reading(index: index)
+        let fan = try reading(index: index)
         let plan = try FanControlSafetyPolicy.plan(
           fan: fan,
           requestedRPM: requestedRPM,
           leaseSeconds: leaseSeconds,
           thermalSeverity: FanThermalSeverity(ProcessInfo.processInfo.thermalState))
-        try self.enableManualMode(index: index)
-        try self.writeTargetRPM(index: index, rpm: plan.targetRPM)
-        self.leases[index] = Date().addingTimeInterval(plan.leaseSeconds)
-        reply(true, plan.targetRPM, nil)
+        try enableManualMode(index: index)
+        try writeTargetRPM(index: index, rpm: plan.targetRPM)
+        leases[index] = Date().addingTimeInterval(plan.leaseSeconds)
+        return (true, plan.targetRPM, nil)
       } catch {
-        self.restoreAutomatic(index: index)
-        reply(false, 0, error.localizedDescription)
+        restoreAutomatic(index: index)
+        return (false, 0, error.localizedDescription)
       }
     }
+    reply(result.0, result.1, result.2)
   }
 
   func setFanAutomatic(index: Int, reply: @escaping (Bool, String?) -> Void) {
-    queue.async {
+    let result: (Bool, String?) = queue.sync {
       do {
-        try self.restoreAutomaticThrowing(index: index)
-        reply(true, nil)
+        try restoreAutomaticThrowing(index: index)
+        return (true, nil)
       } catch {
-        reply(false, error.localizedDescription)
+        return (false, error.localizedDescription)
       }
     }
+    reply(result.0, result.1)
   }
 
   func setAllFansAutomatic(reply: @escaping (Bool, String?) -> Void) {
-    queue.async {
+    let result: (Bool, String?) = queue.sync {
       do {
-        try self.restoreAllAutomaticThrowing()
-        reply(true, nil)
+        try restoreAllAutomaticThrowing()
+        return (true, nil)
       } catch {
-        reply(false, error.localizedDescription)
+        return (false, error.localizedDescription)
       }
     }
+    reply(result.0, result.1)
+  }
+
+  private func scheduleRestoreAllAutomatic() {
+    queue.async { [service = self] in service.restoreAllAutomatic() }
   }
 
   private func smc() throws -> AppleSMCConnection {
@@ -115,7 +120,8 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
   }
 
   private func reading(index: Int) throws -> FanReading {
-    guard index >= 0, index < try fanCount() else { throw FanControlSafetyError.invalidFan }
+    let count = try fanCount()
+    guard index >= 0, index < count else { throw FanControlSafetyError.invalidFan }
     let source = try smc()
     func number(_ key: String) -> Double? {
       guard let value = try? source.readKey(key) else { return nil }
@@ -134,8 +140,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
   private func readMode(index: Int) -> FanMode {
     guard let key = try? modeKey(index: index),
-      let raw = try? connection?.readKey(key),
-      let byte = raw?.bytes.first
+      let source = try? smc(),
+      let raw = try? source.readKey(key),
+      let byte = raw.bytes.first
     else { return .unknown }
     return byte == 0 ? .automatic : .manual
   }
@@ -196,7 +203,8 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
   private func restoreAutomaticThrowing(index: Int) throws {
     let source = try smc()
-    guard index >= 0, index < try fanCount() else { throw FanControlSafetyError.invalidFan }
+    let count = try fanCount()
+    guard index >= 0, index < count else { throw FanControlSafetyError.invalidFan }
     let key = try modeKey(index: index)
     try source.writeKey(key, bytes: [0])
     leases.removeValue(forKey: index)
@@ -230,7 +238,7 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
   private func startWatchdog() {
     let timer = DispatchSource.makeTimerSource(queue: queue)
     timer.schedule(deadline: .now() + 5, repeating: 5)
-    timer.setEventHandler { [weak self] in self?.watchdogTick() }
+    timer.setEventHandler { [service = self] in service.watchdogTick() }
     timer.resume()
     self.timer = timer
   }
@@ -271,12 +279,18 @@ nonisolated enum FanControlPeerValidator {
 
   private static func signingInformation(pid: pid_t) -> (identifier: String, teamIdentifier: String)? {
     let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
-    var code: SecCode?
-    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
-      let code
+    var dynamicCode: SecCode?
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &dynamicCode) == errSecSuccess,
+      let dynamicCode
     else { return nil }
+
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(dynamicCode, [], &staticCode) == errSecSuccess,
+      let staticCode
+    else { return nil }
+
     var information: CFDictionary?
-    guard SecCodeCopySigningInformation(code, [], &information) == errSecSuccess,
+    guard SecCodeCopySigningInformation(staticCode, [], &information) == errSecSuccess,
       let values = information as? [String: Any],
       let identifier = values[kSecCodeInfoIdentifier as String] as? String,
       let team = values[kSecCodeInfoTeamIdentifier as String] as? String
