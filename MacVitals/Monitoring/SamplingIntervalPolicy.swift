@@ -1,8 +1,8 @@
 import Foundation
 
 nonisolated enum SamplingIntervalPolicy {
-  static let supportedValues: [TimeInterval] = [0.5, 1, 2, 5, 10]
-  static let defaultValue: TimeInterval = 2
+  static let supportedValues: [TimeInterval] = [5]
+  static let defaultValue: TimeInterval = 5
 
   static func normalized(_ value: TimeInterval) -> TimeInterval {
     guard value.isFinite, value > 0 else { return defaultValue }

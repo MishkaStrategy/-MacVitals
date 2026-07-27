@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
-    statusController = StatusItemController(coordinator: coordinator, settings: settings)
+    statusController = StatusItemController(
+      coordinator: coordinator,
+      settings: settings,
+      fanControl: fanControl)
 
     notificationCoordinator.onAuthorizationStateChange = { [weak self] state in
       self?.settings.setNotificationAuthorizationState(state)

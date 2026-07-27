@@ -33,7 +33,7 @@ struct PreferencesView: View {
   private var generalTab: some View {
     Form {
       Picker("Update interval", selection: $settings.samplingInterval) {
-        ForEach([0.5, 1, 2, 5, 10], id: \.self) {
+        ForEach(SamplingIntervalPolicy.supportedValues, id: \.self) {
           Text("\($0, specifier: "%g") s").tag($0)
         }
       }

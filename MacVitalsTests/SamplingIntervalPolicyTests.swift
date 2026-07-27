@@ -3,24 +3,17 @@ import XCTest
 
 final class SamplingIntervalPolicyTests: XCTestCase {
   func testNormalizesNonFiniteAndNonPositiveValuesToDefault() {
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(.nan), 2)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(.infinity), 2)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(-.infinity), 2)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(0), 2)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(-1), 2)
+    XCTAssertEqual(SamplingIntervalPolicy.normalized(.nan), 5)
+    XCTAssertEqual(SamplingIntervalPolicy.normalized(.infinity), 5)
+    XCTAssertEqual(SamplingIntervalPolicy.normalized(-.infinity), 5)
+    XCTAssertEqual(SamplingIntervalPolicy.normalized(0), 5)
+    XCTAssertEqual(SamplingIntervalPolicy.normalized(-1), 5)
   }
 
-  func testPreservesSupportedValues() {
-    for value in SamplingIntervalPolicy.supportedValues {
-      XCTAssertEqual(SamplingIntervalPolicy.normalized(value), value)
+  func testUsesFiveSecondCadenceForEveryInput() {
+    for value in [-10.0, 0.5, 1, 2, 5, 10, 100] {
+      XCTAssertEqual(SamplingIntervalPolicy.normalized(value), 5)
     }
-  }
-
-  func testChoosesNearestSupportedValueAndUsesLowerValueForTie() {
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(0.7), 0.5)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(1.5), 1)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(4.2), 5)
-    XCTAssertEqual(SamplingIntervalPolicy.normalized(100), 10)
   }
 
   func testSleepNanosecondsCannotTrapOnCorruptInputs() {
@@ -28,16 +21,16 @@ final class SamplingIntervalPolicyTests: XCTestCase {
       SamplingIntervalPolicy.sleepNanoseconds(
         intervalSeconds: .infinity,
         elapsedMilliseconds: .infinity),
-      2_000_000_000)
+      5_000_000_000)
     XCTAssertEqual(
       SamplingIntervalPolicy.sleepNanoseconds(
         intervalSeconds: .nan,
         elapsedMilliseconds: .nan),
-      2_000_000_000)
+      5_000_000_000)
     XCTAssertEqual(
       SamplingIntervalPolicy.sleepNanoseconds(
-        intervalSeconds: 2,
+        intervalSeconds: 5,
         elapsedMilliseconds: 1_000),
-      1_000_000_000)
+      4_000_000_000)
   }
 }

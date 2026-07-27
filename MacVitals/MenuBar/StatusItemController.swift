@@ -9,12 +9,21 @@ final class StatusItemController: NSObject {
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
+  private let fanControl: FanControlClient
 
-  init(coordinator: MetricsCoordinator, settings: SettingsStore) {
+  init(
+    coordinator: MetricsCoordinator,
+    settings: SettingsStore,
+    fanControl: FanControlClient
+  ) {
     self.coordinator = coordinator
     self.settings = settings
+    self.fanControl = fanControl
     super.init()
-    let root = OverviewView().environmentObject(coordinator).environmentObject(settings)
+    let root = OverviewView()
+      .environmentObject(coordinator)
+      .environmentObject(settings)
+      .environmentObject(fanControl)
     popover.contentViewController = NSHostingController(rootView: root)
     popover.behavior = .transient
     popover.contentSize = NSSize(

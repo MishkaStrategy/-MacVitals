@@ -18,6 +18,20 @@ final class GPUCapabilityMapperTests: XCTestCase {
     XCTAssertEqual(stats.isRemovable, false)
     XCTAssertEqual(stats.recommendedWorkingSetBytes, 8_000_000_000)
     XCTAssertNil(stats.systemUtilizationPercent)
-    XCTAssertEqual(stats.utilizationAvailability, .unsupported)
+    XCTAssertEqual(stats.utilizationAvailability, .temporarilyUnavailable)
+  }
+
+  func testMapsCapabilityCheckedUtilization() {
+    let stats = GPUCapabilityMapper.makeStats(
+      name: "Test GPU",
+      registryID: 42,
+      hasUnifiedMemory: true,
+      isLowPower: true,
+      isRemovable: false,
+      recommendedWorkingSetBytes: 8_000_000_000,
+      systemUtilizationPercent: 63)
+
+    XCTAssertEqual(stats.systemUtilizationPercent, 63)
+    XCTAssertEqual(stats.utilizationAvailability, .available)
   }
 }
