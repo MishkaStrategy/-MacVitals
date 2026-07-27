@@ -217,8 +217,8 @@ struct FanControlView: View {
 
       Picker(L10n.string("Boost duration"), selection: $boostDurationMinutes) {
         Text("5 min").tag(5)
+        Text("10 min").tag(10)
         Text("15 min").tag(15)
-        Text("30 min").tag(30)
       }
       .labelsHidden()
       .pickerStyle(.segmented)
