@@ -25,10 +25,15 @@ struct FanControlView: View {
             fanSection(fan)
           }
         } else {
-          ContentUnavailableView(
-            "Fan data unavailable",
-            systemImage: "fan",
-            description: Text(coordinator.snapshot.fans.message ?? L10n.string("Collecting data")))
+          VStack(spacing: 8) {
+            Image(systemName: "fan").font(.title2)
+            Text("Fan data unavailable").font(.headline)
+            Text(coordinator.snapshot.fans.message ?? L10n.string("Collecting data"))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity)
+          .padding()
         }
       }
       .accessibilityIdentifier("fanControlList")
@@ -74,9 +79,7 @@ struct FanControlView: View {
       LabeledContent("Current speed", value: MetricNumberFormatter.rpm(fan.currentRPM) ?? "—")
       LabeledContent("Target speed", value: MetricNumberFormatter.rpm(fan.targetRPM) ?? "—")
       LabeledContent("Mode", value: fan.mode.displayName)
-      LabeledContent(
-        "Hardware range",
-        value: hardwareRange(fan))
+      LabeledContent("Hardware range", value: hardwareRange(fan))
 
       if let range = FanControlSafetyPolicy.safeBoostRange(for: fan) {
         let binding = rpmBinding(for: fan, range: range)
