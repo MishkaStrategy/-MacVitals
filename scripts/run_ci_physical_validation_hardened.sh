@@ -104,6 +104,49 @@ replacements = (
         "stability process cleanup",
     ),
     (
+        '''STABILITY_FACTS="$(power_facts)"
+STABILITY_SOURCE="$(printf '%s\\n' "${STABILITY_FACTS}" | sed -n '1p')"
+if [[ "${STABILITY_SOURCE}" == "AC Power" || "${STABILITY_SOURCE}" == Adapter* ]]; then
+  run_stability_scenario
+else
+  python3 "${HARNESS}" review \\
+    --session "${SESSION}" \\
+    --scenario "stability-six-hour" \\
+    --status "not-tested" \\
+    --note "Six-hour stability requires external power; skipped to prevent battery depletion"
+  printf 'Six-hour stability requires external power; current source is %s\\n' "${STABILITY_SOURCE}" >&2
+  REQUIRED_SCENARIO_GAPS=$((REQUIRED_SCENARIO_GAPS + 1))
+fi''',
+        '''LONG_STABILITY_MODE="${MACVITALS_RUN_LONG_STABILITY:-0}"
+case "${LONG_STABILITY_MODE}" in
+  0|1) ;;
+  *) fail "MACVITALS_RUN_LONG_STABILITY must be 0 or 1" ;;
+esac
+if [[ "${LONG_STABILITY_MODE}" == "1" ]]; then
+  STABILITY_FACTS="$(power_facts)"
+  STABILITY_SOURCE="$(printf '%s\\n' "${STABILITY_FACTS}" | sed -n '1p')"
+  if [[ "${STABILITY_SOURCE}" == "AC Power" || "${STABILITY_SOURCE}" == Adapter* ]]; then
+    run_stability_scenario
+  else
+    python3 "${HARNESS}" review \\
+      --session "${SESSION}" \\
+      --scenario "stability-six-hour" \\
+      --status "not-tested" \\
+      --note "Six-hour stability requires external power; skipped to prevent battery depletion"
+    printf 'Six-hour stability requires external power; current source is %s\\n' "${STABILITY_SOURCE}" >&2
+    REQUIRED_SCENARIO_GAPS=$((REQUIRED_SCENARIO_GAPS + 1))
+  fi
+else
+  python3 "${HARNESS}" review \\
+    --session "${SESSION}" \\
+    --scenario "stability-six-hour" \\
+    --status "not-tested" \\
+    --note "Six-hour stability is opt-in and is not part of the bounded pull-request physical run"
+  printf '%s\\n' 'Six-hour stability is opt-in; bounded physical validation continues without it'
+fi''',
+        "long stability opt-in",
+    ),
+    (
         '''  set +e
   gui_exec env HOME="${TRACE_HOME}" LC_ALL=C LANG=C xcrun xctrace record''',
         '''  terminate_exact_candidate_processes
@@ -178,6 +221,8 @@ for required in (
     'record_instrument "Power Profiler" "energy-log" 300',
     'terminate_exact_candidate_processes()',
     '"${command_line}" == "${EXECUTABLE}"',
+    'MACVITALS_RUN_LONG_STABILITY',
+    'Six-hour stability is opt-in',
 ):
     if required not in runner:
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
