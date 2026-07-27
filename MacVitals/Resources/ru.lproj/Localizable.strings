@@ -8,6 +8,7 @@
 "Memory" = "Память";
 "GPU" = "GPU";
 "Battery" = "Батарея";
+"Fans" = "Вентиляторы";
 "Unavailable" = "Недоступно";
 "Metal" = "Metal";
 "Memory data unavailable" = "Данные памяти недоступны";
@@ -19,11 +20,13 @@
 "memory type unavailable" = "тип памяти недоступен";
 "%@ · %@ · utilization unavailable" = "%@ · %@ · утилизация недоступна";
 "No battery" = "Батарея отсутствует";
+"No fan" = "Вентиляторы отсутствуют";
 "Diagnostics" = "Диагностика";
 "Quit" = "Завершить";
 "Collecting data" = "Сбор данных";
 "Memory, swap and pressure details" = "Сведения о памяти, свопе и давлении";
 "GPU details" = "Сведения о GPU";
+"Fan details" = "Сведения о вентиляторах";
 "CPU history" = "История CPU";
 "Time" = "Время";
 "Normal" = "Нормальное";
@@ -40,6 +43,7 @@
 "~%.1f W" = "~%.1f Вт";
 "%.1f W" = "%.1f Вт";
 "%.1f °C" = "%.1f °C";
+"%d RPM" = "%d об/мин";
 "Not measured" = "Не измеряется";
 "Sufficient" = "Достаточно";
 "Insufficient" = "Недостаточно";
@@ -47,6 +51,8 @@
 "On battery" = "От батареи";
 "Sensor conflict" = "Конфликт датчиков";
 "Unknown" = "Неизвестно";
+"Automatic" = "Автоматически";
+"Manual boost" = "Ручное усиление";
 
 "General" = "Основные";
 "Alerts" = "Уведомления";
@@ -93,10 +99,15 @@
 "Mach host statistics" = "Статистика хоста Mach";
 "IOKit power sources" = "Источники питания IOKit";
 "IOKit registry" = "Реестр IOKit";
+"Apple SMC" = "Apple SMC";
 "Derived power model" = "Расчётная модель питания";
 "%.2f s" = "%.2f с";
 "%.3f ms" = "%.3f мс";
 "%@ · %@" = "%@ · %@";
+"%@ current · %@ target · %@" = "текущая %@ · целевая %@ · %@";
+"Fan %d" = "Вентилятор %d";
+"Fan %d: %@ · %@" = "Вентилятор %d: %@ · %@";
+"Range %@ – %@" = "Диапазон %@ – %@";
 
 "Adapter power" = "Мощность адаптера";
 "Power status" = "Состояние питания";
@@ -145,3 +156,29 @@
 "The Mac is on adapter power and the battery is effectively full" = "Mac питается от адаптера, батарея практически полностью заряжена";
 "No sustained battery discharge is detected" = "Устойчивый разряд батареи не обнаружен";
 "Power state cannot be determined" = "Не удалось определить состояние питания";
+
+"Fan data unavailable" = "Данные вентиляторов недоступны";
+"Current speed" = "Текущая скорость";
+"Target speed" = "Целевая скорость";
+"Mode" = "Режим";
+"Hardware range" = "Аппаратный диапазон";
+"Cooling boost" = "Усиление охлаждения";
+"Apply 15-minute Boost" = "Включить усиление на 15 минут";
+"Use System Automatic" = "Использовать системный автоматический режим";
+"This fan does not expose a safe controllable RPM range." = "Этот вентилятор не предоставляет безопасный управляемый диапазон оборотов.";
+"Fan control is experimental. MacVitals only allows temporary cooling boosts and never permits a target below the current safety floor. macOS automatic control is restored when the lease expires or the helper disconnects." = "Управление вентиляторами является экспериментальным. MacVitals разрешает только временное усиление охлаждения и не позволяет задавать скорость ниже текущего безопасного порога. Автоматическое управление macOS восстанавливается после истечения времени или отключения помощника.";
+"Enable Control" = "Включить управление";
+"Review Approval" = "Проверить разрешение";
+"Ready" = "Готово";
+"Fan RPM monitoring is available. Control requires an approved signed helper." = "Мониторинг оборотов доступен. Для управления требуется одобренный подписанный помощник.";
+"Fan control helper is not installed." = "Помощник управления вентиляторами не установлен.";
+"Administrator approval is required in Login Items." = "Требуется одобрение администратора в разделе «Объекты входа».";
+"Fan control helper is ready." = "Помощник управления вентиляторами готов.";
+"Fan control helper is missing from this app build." = "В этой сборке отсутствует помощник управления вентиляторами.";
+"Fan control helper status is unknown." = "Состояние помощника управления вентиляторами неизвестно.";
+"Cooling boost set to %d RPM." = "Усиление охлаждения установлено на %d об/мин.";
+"Fan control request failed." = "Не удалось изменить скорость вентилятора.";
+"System automatic fan control restored." = "Системное автоматическое управление вентиляторами восстановлено.";
+"Could not restore automatic fan control." = "Не удалось восстановить автоматическое управление вентиляторами.";
+"Fan control helper connection was interrupted." = "Соединение с помощником управления вентиляторами прервано.";
+"Fan control helper did not pass its self-check." = "Помощник управления вентиляторами не прошёл самопроверку.";
