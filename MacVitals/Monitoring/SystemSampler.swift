@@ -22,9 +22,10 @@ nonisolated enum SystemPowerAssessmentResolver {
   ) -> PowerAssessment {
     guard assessment.estimatedSystemPowerWatts == nil,
       externalPowerState == .disconnected,
+      battery?.state == .discharging,
       let batteryPower = battery?.batteryPowerWatts,
       batteryPower.isFinite,
-      batteryPower < 0
+      abs(batteryPower) > 0.01
     else { return assessment }
 
     return PowerAssessment(
