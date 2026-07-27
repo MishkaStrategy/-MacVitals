@@ -14,7 +14,7 @@ struct PowerFlowView: View {
 
       HStack(alignment: .firstTextBaseline) {
         VStack(alignment: .leading, spacing: 2) {
-          Text("System draw")
+          Text("System")
             .font(.caption)
             .foregroundStyle(.secondary)
           Text(systemPower)
@@ -43,7 +43,7 @@ struct PowerFlowView: View {
     .padding(12)
     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("System power")
+    .accessibilityLabel("Power")
     .accessibilityValue(systemPower)
   }
 
@@ -76,7 +76,7 @@ struct PowerFlowView: View {
     MetricNumberFormatter.decimalWatts(
       resolvedSystemPowerWatts,
       estimated: snapshot.power.isEstimated)
-      ?? L10n.string("Power sensor unavailable")
+      ?? L10n.string("Not measured")
   }
 
   private var ratedPower: String {
@@ -92,22 +92,21 @@ struct PowerFlowView: View {
 
   private var powerSourceTitle: String {
     guard let battery = snapshot.battery.value else {
-      return L10n.string("Sensor unavailable")
+      return L10n.string("Unknown")
     }
     if battery.externalPowerConnected {
-      return L10n.string("On adapter")
+      return L10n.string("Adapter")
     }
     return L10n.string("On battery")
   }
 
   private var powerSourceDetail: String {
     if resolvedSystemPowerWatts != nil {
-      if snapshot.power.isEstimated {
-        return L10n.string("Estimate from battery voltage and current")
-      }
-      return L10n.string("Measured by Apple system power telemetry")
+      return snapshot.power.isEstimated
+        ? L10n.string("Estimated")
+        : L10n.string("IOKit registry")
     }
-    return L10n.string("Waiting for system power telemetry")
+    return L10n.string("Collecting data")
   }
 
   private var statusLabel: some View {
