@@ -1,0 +1,198 @@
+name: Physical Fan RPM Probe
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-fan-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fan-rpm-probe:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.actor == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feature/macvitals-v1'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Register runner privacy masks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for value in "${HOME:-}" "${USER:-}" "$(id -un)" "$(hostname)" "${RUNNER_NAME:-}" "${GITHUB_WORKSPACE}"; do
+            if [[ -n "${value}" && ${#value} -ge 3 ]]; then echo "::add-mask::${value}"; fi
+          done
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact ARM64 checkout
+        id: identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == "Darwin" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA}" ]]
+          echo "short_sha=${CANDIDATE_SHA:0:12}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve preinstalled developer tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          developer_dir="$(xcode-select -p)"
+          [[ -x "${developer_dir}/usr/bin/xcodebuild" ]] || { echo "Full Xcode is unavailable" >&2; exit 1; }
+          echo "DEVELOPER_DIR=${developer_dir}" >> "${GITHUB_ENV}"
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              echo "$(dirname "${candidate}")" >> "${GITHUB_PATH}"
+              exit 0
+            fi
+          done
+          echo "xcodegen is unavailable" >&2
+          exit 1
+
+      - name: Build and run read-only fan probe
+        id: probe
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_root="fan-probe-evidence"
+          build_root="${PWD}/build/fan-probe-only"
+          probe="${build_root}/Release/MacVitalsFanProbe"
+          raw_json="${evidence_root}/fan-evidence.raw.json"
+          safe_json="${evidence_root}/fan-evidence.json"
+          raw_error="${evidence_root}/fan-probe.raw.log"
+          safe_error="${evidence_root}/fan-probe.log"
+          status_file="${evidence_root}/STATUS.txt"
+          rm -rf -- "${evidence_root}" "${build_root}"
+          mkdir -p -- "${evidence_root}" "${build_root}"
+
+          set +e
+          python3 scripts/validate_fan_evidence.py --self-test > "${evidence_root}/validator-self-test.log" 2>&1
+          validator_self_test_status=$?
+          xcodegen generate > "${evidence_root}/xcodegen.log" 2>&1
+          xcodegen_status=$?
+          if [[ ${xcodegen_status} -eq 0 ]]; then
+            xcodebuild -project MacVitals.xcodeproj -target MacVitalsFanProbe \
+              -configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+              CODE_SIGNING_ALLOWED=NO SYMROOT="${build_root}" build \
+              > "${evidence_root}/probe-build.log" 2>&1
+            build_status=$?
+          else
+            build_status=125
+          fi
+
+          architecture="unavailable"
+          probe_status=125
+          if [[ ${build_status} -eq 0 && -x "${probe}" && ! -L "${probe}" ]]; then
+            architecture="$(lipo -archs "${probe}" 2>/dev/null || true)"
+            "${probe}" > "${raw_json}" 2> "${raw_error}"
+            probe_status=$?
+          fi
+          set -e
+
+          REDACT_HOME="${HOME:-}" REDACT_USER="$(id -un 2>/dev/null || true)" REDACT_HOST="$(hostname 2>/dev/null || true)" \
+            python3 - "${raw_json}" "${safe_json}" "${raw_error}" "${safe_error}" <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import sys
+
+          raw_json, safe_json, raw_log, safe_log = map(Path, sys.argv[1:])
+          replacements = [
+              (os.environ.get("REDACT_HOME", ""), "<HOME>"),
+              (os.environ.get("REDACT_USER", ""), "<USER>"),
+              (os.environ.get("REDACT_HOST", ""), "<HOST>"),
+          ]
+          path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
+          temp_pattern = re.compile(r"/private/(?:tmp|var)/[^\s<]+")
+
+          def clean(text: str) -> str:
+              text = path_pattern.sub("<HOME>", text)
+              text = temp_pattern.sub("<TEMP>", text)
+              for source, replacement in replacements:
+                  if source and len(source) >= 3:
+                      text = text.replace(source, replacement)
+              return text
+
+          if raw_json.is_file() and not raw_json.is_symlink():
+              safe_json.write_text(clean(raw_json.read_text(encoding="utf-8", errors="strict")), encoding="utf-8")
+          else:
+              safe_json.write_text("{}\n", encoding="utf-8")
+          if raw_log.is_file() and not raw_log.is_symlink():
+              safe_log.write_text(clean(raw_log.read_text(encoding="utf-8", errors="strict")), encoding="utf-8")
+          else:
+              safe_log.write_text("Fan probe produced no stderr.\n", encoding="utf-8")
+          raw_json.unlink(missing_ok=True)
+          raw_log.unlink(missing_ok=True)
+          PY
+
+          set +e
+          python3 scripts/validate_fan_evidence.py "${safe_json}" > "${evidence_root}/structural-validation.log" 2>&1
+          structural_status=$?
+          python3 scripts/validate_fan_evidence.py --require-available --require-automatic "${safe_json}" \
+            > "${evidence_root}/strict-validation.log" 2>&1
+          strict_status=$?
+          set -e
+
+          cat > "${status_file}" <<EOF
+          candidateSha=${CANDIDATE_SHA}
+          architecture=${architecture}
+          validatorSelfTestStatus=${validator_self_test_status}
+          xcodegenStatus=${xcodegen_status}
+          buildStatus=${build_status}
+          probeStatus=${probe_status}
+          structuralValidationStatus=${structural_status}
+          strictValidationStatus=${strict_status}
+          smcWritesAttempted=false
+          privilegedHelperStarted=false
+          EOF
+
+          echo "build_status=${build_status}" >> "${GITHUB_OUTPUT}"
+          echo "probe_status=${probe_status}" >> "${GITHUB_OUTPUT}"
+          echo "structural_status=${structural_status}" >> "${GITHUB_OUTPUT}"
+          echo "strict_status=${strict_status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload fan probe evidence before enforcement
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-fan-probe-${{ steps.identity.outputs.short_sha }}
+          path: fan-probe-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce fan evidence
+        if: always()
+        shell: bash
+        env:
+          BUILD_STATUS: ${{ steps.probe.outputs.build_status }}
+          PROBE_STATUS: ${{ steps.probe.outputs.probe_status }}
+          STRUCTURAL_STATUS: ${{ steps.probe.outputs.structural_status }}
+          STRICT_STATUS: ${{ steps.probe.outputs.strict_status }}
+        run: |
+          set -Eeuo pipefail
+          for value in "${BUILD_STATUS:-}" "${PROBE_STATUS:-}" "${STRUCTURAL_STATUS:-}" "${STRICT_STATUS:-}"; do
+            [[ "${value}" =~ ^[0-9]+$ ]] || { echo "Fan probe status output is invalid" >&2; exit 1; }
+          done
+          [[ "${BUILD_STATUS}" -eq 0 ]] || { echo "Fan probe build failed" >&2; exit "${BUILD_STATUS}"; }
+          [[ "${PROBE_STATUS}" -eq 0 ]] || { echo "Fan provider did not return available physical RPM evidence" >&2; exit "${PROBE_STATUS}"; }
+          [[ "${STRUCTURAL_STATUS}" -eq 0 ]] || { echo "Fan evidence structure is invalid" >&2; exit "${STRUCTURAL_STATUS}"; }
+          [[ "${STRICT_STATUS}" -eq 0 ]] || { echo "Fan evidence did not satisfy available/automatic safety gates" >&2; exit "${STRICT_STATUS}"; }
