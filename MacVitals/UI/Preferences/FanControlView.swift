@@ -17,10 +17,7 @@ struct FanControlView: View {
 
       Group {
         if compact {
-          ScrollView {
-            fanCards
-          }
-          .frame(maxHeight: 245)
+          fanCards
         } else {
           ScrollView {
             fanCards
@@ -78,7 +75,7 @@ struct FanControlView: View {
   @ViewBuilder
   private var fanCards: some View {
     if let fans = coordinator.snapshot.fans.value?.fans, !fans.isEmpty {
-      LazyVStack(spacing: 8) {
+      VStack(spacing: 8) {
         ForEach(fans) { fan in
           fanCard(fan)
         }
@@ -101,9 +98,8 @@ struct FanControlView: View {
   private var controlActivationButton: some View {
     switch fanControl.state {
     case .monitoringOnly:
-      Label("Signed build required", systemImage: "lock.fill")
-        .font(.caption.bold())
-        .foregroundStyle(.secondary)
+      Button("Enable Control") { fanControl.prepareControl() }
+        .accessibilityIdentifier("enableFanControlButton")
     case .notRegistered:
       Button("Enable Control") { fanControl.requestApproval() }
         .accessibilityIdentifier("enableFanControlButton")
@@ -125,7 +121,7 @@ struct FanControlView: View {
   }
 
   private func fanCard(_ fan: FanReading) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 7) {
       HStack {
         Text(L10n.format("Fan %d", fan.index + 1))
           .font(.headline)
@@ -144,7 +140,7 @@ struct FanControlView: View {
         let binding = rpmBinding(for: fan, range: range)
         HStack(spacing: 8) {
           Slider(value: binding, in: range, step: 100)
-            .frame(maxWidth: compact ? 260 : 360)
+            .frame(maxWidth: compact ? 300 : 360)
             .accessibilityIdentifier("fanBoostSlider.\(fan.index)")
           Text(MetricNumberFormatter.rpm(binding.wrappedValue) ?? "—")
             .font(.caption.monospacedDigit())
@@ -153,15 +149,23 @@ struct FanControlView: View {
 
         HStack(spacing: 8) {
           Button("Boost 15 min") {
-            fanControl.setBoost(fan: fan, requestedRPM: binding.wrappedValue)
+            if fanControl.state.canControl {
+              fanControl.setBoost(fan: fan, requestedRPM: binding.wrappedValue)
+            } else {
+              fanControl.prepareControl()
+            }
           }
-          .disabled(!fanControl.state.canControl || fanControl.operationInProgress)
+          .disabled(fanControl.operationInProgress)
           .accessibilityIdentifier("applyFanBoost.\(fan.index)")
 
           Button("Automatic") {
-            fanControl.setAutomatic(fanIndex: fan.index)
+            if fanControl.state.canControl {
+              fanControl.setAutomatic(fanIndex: fan.index)
+            } else {
+              fanControl.prepareControl()
+            }
           }
-          .disabled(!fanControl.state.canControl || fanControl.operationInProgress)
+          .disabled(fanControl.operationInProgress)
           .accessibilityIdentifier("restoreFanAuto.\(fan.index)")
 
           if fanControl.operationInProgress {
@@ -174,7 +178,7 @@ struct FanControlView: View {
           .foregroundStyle(.secondary)
       }
     }
-    .padding(10)
+    .padding(9)
     .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
     .accessibilityIdentifier("fanSection.\(fan.index)")
   }
@@ -183,7 +187,7 @@ struct FanControlView: View {
     switch fanControl.state {
     case .monitoringOnly:
       return L10n.string(
-        "This unsigned test build can monitor fan speed, but macOS will not allow it to control the fans. Control requires a separately signed helper and administrator approval.")
+        "This test build can monitor fan speed. Click Enable Control to see the installation requirement for the privileged helper.")
     case .notRegistered:
       return L10n.string("Enable the helper, then approve it in System Settings when macOS asks.")
     case .approvalRequired:
