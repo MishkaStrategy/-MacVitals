@@ -39,11 +39,35 @@ final class MenuBarRendererTests: XCTestCase {
 
   func testInvalidNumericMetricsUseUnavailablePlaceholders() {
     XCTAssertEqual(
-      MenuBarRenderer.render(snapshot: invalidNumericSnapshot(), metrics: MenuMetric.allCases),
+      MenuBarRenderer.render(snapshot: snapshot(), metrics: MenuMetric.allCases),
       "CPU — · GPU — · RAM — · 🔋 — · ⚡ — · ?")
   }
 
-  private func invalidNumericSnapshot() -> SystemSnapshot {
+  func testBatteryMetricIncludesTemperatureWhenAvailable() {
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(batteryPercentage: 49.6, batteryTemperature: 32.4),
+        metrics: [.battery]),
+      "🔋 50% · 32.4 °C")
+  }
+
+  func testBatteryMetricKeepsAnyValidField() {
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(batteryPercentage: 49.6, batteryTemperature: .nan),
+        metrics: [.battery]),
+      "🔋 50%")
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(batteryPercentage: .nan, batteryTemperature: 32.4),
+        metrics: [.battery]),
+      "🔋 32.4 °C")
+  }
+
+  private func snapshot(
+    batteryPercentage: Double? = -1,
+    batteryTemperature: Double? = nil
+  ) -> SystemSnapshot {
     let now = Date(timeIntervalSince1970: 100)
     return SystemSnapshot(
       timestamp: now,
@@ -89,7 +113,7 @@ final class MenuBarRendererTests: XCTestCase {
       battery: MetricValue(
         value: BatteryStats(
           present: true,
-          percentage: -1,
+          percentage: batteryPercentage,
           state: .unknown,
           externalPowerConnected: false,
           timeRemainingMinutes: nil,
@@ -100,7 +124,7 @@ final class MenuBarRendererTests: XCTestCase {
           maxCapacityMah: nil,
           designCapacityMah: nil,
           healthPercent: nil,
-          temperatureCelsius: nil,
+          temperatureCelsius: batteryTemperature,
           voltageVolts: nil,
           currentAmperes: nil,
           batteryPowerWatts: nil),
