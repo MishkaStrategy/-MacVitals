@@ -1,8 +1,10 @@
 import Foundation
 
 nonisolated enum SamplingIntervalPolicy {
-  static let supportedValues: [TimeInterval] = [5]
+  static let supportedValues: [TimeInterval] = [1, 2, 5, 10, 15, 30]
   static let defaultValue: TimeInterval = 5
+  static let temperatureMinimumInterval: TimeInterval = 5
+  static let historyDuration: TimeInterval = 60 * 60
 
   static func normalized(_ value: TimeInterval) -> TimeInterval {
     guard value.isFinite, value > 0 else { return defaultValue }
@@ -12,6 +14,12 @@ nonisolated enum SamplingIntervalPolicy {
       if lhsDistance == rhsDistance { return lhs < rhs }
       return lhsDistance < rhsDistance
     } ?? defaultValue
+  }
+
+  static func historyCapacity(for interval: TimeInterval) -> Int {
+    let normalizedInterval = normalized(interval)
+    let samples = Int(ceil(historyDuration / normalizedInterval))
+    return max(120, min(3_600, samples))
   }
 
   static func sleepNanoseconds(
