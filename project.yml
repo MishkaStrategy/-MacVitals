@@ -22,6 +22,26 @@ configs:
   Debug: debug
   Release: release
 targets:
+  MacVitalsFanHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - MacVitalsFanHelper
+      - MacVitals/Domain/MetricModels.swift
+      - MacVitals/Providers/Fans/AppleSMCConnection.swift
+      - MacVitals/Providers/Fans/FanValueNormalizer.swift
+      - MacVitals/Providers/Fans/FanControlSafetyPolicy.swift
+      - MacVitals/Providers/Fans/FanControlXPCProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals.FanControl
+        PRODUCT_NAME: MacVitalsFanHelper
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - sdk: IOKit.framework
+      - sdk: Security.framework
   MacVitals:
     type: application
     platform: macOS
@@ -59,9 +79,26 @@ targets:
         CODE_SIGN_ENTITLEMENTS: MacVitals/Resources/MacVitals.entitlements
         ENABLE_APP_SANDBOX: NO
     dependencies:
+      - target: MacVitalsFanHelper
       - sdk: IOKit.framework
       - sdk: ServiceManagement.framework
+      - sdk: Security.framework
       - sdk: Metal.framework
+    postBuildScripts:
+      - name: Bundle managed fan helper
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          app_contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
+          helper_source="$BUILT_PRODUCTS_DIR/MacVitalsFanHelper"
+          helper_destination="$app_contents/Resources/MacVitalsFanHelper"
+          daemon_directory="$app_contents/Library/LaunchDaemons"
+          test -x "$helper_source"
+          mkdir -p "$app_contents/Resources" "$daemon_directory"
+          cp -f "$helper_source" "$helper_destination"
+          chmod 0755 "$helper_destination"
+          cp -f "$SRCROOT/MacVitalsFanHelper/com.mishkacher.MacVitals.FanControl.plist" \
+            "$daemon_directory/com.mishkacher.MacVitals.FanControl.plist"
   MacVitalsTests:
     type: bundle.unit-test
     platform: macOS
@@ -88,6 +125,7 @@ schemes:
   MacVitals:
     build:
       targets:
+        MacVitalsFanHelper: all
         MacVitals: all
         MacVitalsTests: [test]
         MacVitalsUITests: [test]
