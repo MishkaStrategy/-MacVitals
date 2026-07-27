@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import Security
 import ServiceManagement
 
 nonisolated enum FanControlClientState: Sendable, Equatable {
@@ -34,31 +33,18 @@ nonisolated enum FanControlClientState: Sendable, Equatable {
 }
 
 nonisolated enum FanControlSigningIdentity {
-  static func teamIdentifier() -> String? {
-    var dynamicCode: SecCode?
-    guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess,
-      let dynamicCode,
-      SecCodeCheckValidity(dynamicCode, [], nil) == errSecSuccess
+  static func controlTeamIdentifier() -> String? {
+    guard let facts = FanControlCodeSigning.currentFacts(),
+      FanControlSigningPolicy.accepts(
+        facts,
+        expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
+        expectedTeamIdentifier: facts.teamIdentifier)
     else { return nil }
-
-    var staticCode: SecStaticCode?
-    guard SecCodeCopyStaticCode(dynamicCode, [], &staticCode) == errSecSuccess,
-      let staticCode
-    else { return nil }
-
-    var information: CFDictionary?
-    guard SecCodeCopySigningInformation(staticCode, [], &information) == errSecSuccess,
-      let values = information as? [String: Any],
-      let identifier = values[kSecCodeInfoIdentifier as String] as? String,
-      identifier == "com.mishkacher.MacVitals",
-      let team = values[kSecCodeInfoTeamIdentifier as String] as? String,
-      !team.isEmpty
-    else { return nil }
-    return team
+    return facts.teamIdentifier
   }
 
-  static func hasTeamIdentifier() -> Bool {
-    teamIdentifier() != nil
+  static func isDeveloperIDControlBuild() -> Bool {
+    controlTeamIdentifier() != nil
   }
 }
 
@@ -72,7 +58,7 @@ final class FanControlClient: ObservableObject {
   private var connection: NSXPCConnection?
 
   func refreshStatus() {
-    guard FanControlSigningIdentity.hasTeamIdentifier() else {
+    guard FanControlSigningIdentity.isDeveloperIDControlBuild() else {
       invalidateConnection()
       operationInProgress = false
       state = .monitoringOnly
@@ -122,7 +108,7 @@ final class FanControlClient: ObservableObject {
   }
 
   func requestApproval() {
-    guard FanControlSigningIdentity.hasTeamIdentifier() else {
+    guard FanControlSigningIdentity.isDeveloperIDControlBuild() else {
       state = .monitoringOnly
       lastMessage = L10n.string(
         "Fan RPM monitoring is available. Control requires an approved signed helper.")
