@@ -42,6 +42,24 @@ targets:
     dependencies:
       - sdk: IOKit.framework
       - sdk: Security.framework
+  MacVitalsFanProbe:
+    type: tool
+    platform: macOS
+    sources:
+      - MacVitalsFanProbe
+      - MacVitals/Domain/MetricModels.swift
+      - MacVitals/Providers/Fans/AppleSMCConnection.swift
+      - MacVitals/Providers/Fans/FanValueNormalizer.swift
+      - MacVitals/Providers/Fans/FanProvider.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals.FanProbe
+        PRODUCT_NAME: MacVitalsFanProbe
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - sdk: IOKit.framework
   MacVitals:
     type: application
     platform: macOS
@@ -126,6 +144,7 @@ schemes:
     build:
       targets:
         MacVitalsFanHelper: all
+        MacVitalsFanProbe: all
         MacVitals: all
         MacVitalsTests: [test]
         MacVitalsUITests: [test]
