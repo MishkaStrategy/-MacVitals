@@ -27,9 +27,8 @@ nonisolated enum FanControlSigningPolicy {
   }
 
   static func validTeamIdentifier(_ value: String) -> Bool {
-    value.count == 10 && value.unicodeScalars.allSatisfy {
-      ("A"..."Z").contains(Character(String($0))) ||
-        ("0"..."9").contains(Character(String($0)))
+    value.count == 10 && value.unicodeScalars.allSatisfy { scalar in
+      (65...90).contains(scalar.value) || (48...57).contains(scalar.value)
     }
   }
 }
@@ -41,19 +40,18 @@ nonisolated enum FanControlCodeSigning {
     let getTaskAllow: Bool
   }
 
-  static func currentFacts(expectedIdentifier: String) -> FanControlSigningFacts? {
+  static func currentFacts() -> FanControlSigningFacts? {
     var dynamicCode: SecCode?
     guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess,
       let dynamicCode,
       let metadata = metadata(dynamicCode: dynamicCode),
-      metadata.identifier == expectedIdentifier,
-      FanControlSigningPolicy.validTeamIdentifier(metadata.teamIdentifier)
+      allowedIdentifier(metadata.identifier)
     else { return nil }
 
     return facts(
       dynamicCode: dynamicCode,
       metadata: metadata,
-      expectedIdentifier: expectedIdentifier,
+      expectedIdentifier: metadata.identifier,
       expectedTeamIdentifier: metadata.teamIdentifier)
   }
 
@@ -63,6 +61,7 @@ nonisolated enum FanControlCodeSigning {
     expectedTeamIdentifier: String
   ) -> FanControlSigningFacts? {
     guard pid > 0,
+      allowedIdentifier(expectedIdentifier),
       FanControlSigningPolicy.validTeamIdentifier(expectedTeamIdentifier)
     else { return nil }
 
