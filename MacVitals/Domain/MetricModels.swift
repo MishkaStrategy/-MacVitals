@@ -150,11 +150,91 @@ nonisolated struct GPUStats: Codable, Sendable, Equatable {
   let utilizationAvailability: MetricAvailability
 }
 
+nonisolated enum TemperatureSensorCategory: String, Codable, CaseIterable, Sendable {
+  case processor
+  case graphics
+  case memory
+  case storage
+  case battery
+  case power
+  case enclosure
+  case other
+
+  var displayName: String {
+    switch self {
+    case .processor: return TemperatureL10n.string("Processor")
+    case .graphics: return TemperatureL10n.string("Graphics")
+    case .memory: return L10n.string("Memory")
+    case .storage: return TemperatureL10n.string("Storage")
+    case .battery: return L10n.string("Battery")
+    case .power: return L10n.string("Power")
+    case .enclosure: return TemperatureL10n.string("Enclosure")
+    case .other: return TemperatureL10n.string("Other sensors")
+    }
+  }
+
+  var symbolName: String {
+    switch self {
+    case .processor: return "cpu"
+    case .graphics: return "rectangle.3.group"
+    case .memory: return "memorychip"
+    case .storage: return "internaldrive"
+    case .battery: return "battery.75percent"
+    case .power: return "bolt.fill"
+    case .enclosure: return "laptopcomputer"
+    case .other: return "thermometer.variable"
+    }
+  }
+}
+
+nonisolated struct TemperatureReading: Codable, Sendable, Equatable, Identifiable {
+  let id: String
+  let key: String?
+  let name: String
+  let category: TemperatureSensorCategory
+  let celsius: Double
+  let source: MetricSource
+  let isPrimary: Bool
+
+  init(
+    id: String,
+    key: String? = nil,
+    name: String,
+    category: TemperatureSensorCategory,
+    celsius: Double,
+    source: MetricSource,
+    isPrimary: Bool = false
+  ) {
+    self.id = id
+    self.key = key
+    self.name = name
+    self.category = category
+    self.celsius = celsius
+    self.source = source
+    self.isPrimary = isPrimary
+  }
+}
+
 nonisolated struct TemperatureStats: Codable, Sendable, Equatable {
   let processorCelsius: Double?
   let batteryCelsius: Double?
   let maximumCelsius: Double?
   let processorSensorKey: String?
+  let sensors: [TemperatureReading]
+
+  init(
+    processorCelsius: Double?,
+    batteryCelsius: Double?,
+    maximumCelsius: Double?,
+    processorSensorKey: String?,
+    sensors: [TemperatureReading] = []
+  ) {
+    self.processorCelsius = processorCelsius
+    self.batteryCelsius = batteryCelsius
+    self.maximumCelsius = maximumCelsius
+    self.processorSensorKey = processorSensorKey
+    self.sensors = sensors
+  }
 }
 
 nonisolated enum FanMode: String, Codable, Sendable {
@@ -212,6 +292,25 @@ nonisolated struct PowerAssessment: Codable, Sendable, Equatable {
   let estimatedSystemPowerWatts: Double?
   let powerBalanceWatts: Double?
   let explanation: String
+  let adapterInputPowerWatts: Double?
+
+  init(
+    status: PowerSufficiencyStatus,
+    confidence: Double,
+    batteryPowerWatts: Double?,
+    estimatedSystemPowerWatts: Double?,
+    powerBalanceWatts: Double?,
+    explanation: String,
+    adapterInputPowerWatts: Double? = nil
+  ) {
+    self.status = status
+    self.confidence = confidence
+    self.batteryPowerWatts = batteryPowerWatts
+    self.estimatedSystemPowerWatts = estimatedSystemPowerWatts
+    self.powerBalanceWatts = powerBalanceWatts
+    self.explanation = explanation
+    self.adapterInputPowerWatts = adapterInputPowerWatts
+  }
 }
 
 nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
