@@ -145,7 +145,7 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
 
   private static func fourCharacterCode(_ key: String) throws -> UInt32 {
     let bytes = Array(key.utf8)
-    guard bytes.count == 4, bytes.allSatisfy({ $0.isASCII }) else {
+    guard bytes.count == 4, bytes.allSatisfy({ $0 < 0x80 }) else {
       throw AppleSMCError.invalidKey
     }
     return bytes.reduce(0) { ($0 << 8) | UInt32($1) }
