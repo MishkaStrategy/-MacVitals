@@ -5,12 +5,12 @@ import XCTest
 final class FanProviderTests: XCTestCase {
   func testSingleFanSampleReadsRPMRangeAndMode() throws {
     let source = FakeFanSMC(values: [
-      "FNum": ui8(1),
+      "FNum": fanUI8(1),
       "F0Ac": float(2_100),
       "F0Tg": float(2_300),
       "F0Mn": float(1_200),
       "F0Mx": float(6_000),
-      "F0md": ui8(0),
+      "F0md": fanUI8(0),
     ])
     let result = FanProvider(factory: { source }).sample(now: fixedDate)
     let fan = try XCTUnwrap(result.value?.fans.first)
@@ -27,9 +27,9 @@ final class FanProviderTests: XCTestCase {
 
   func testTwoFansSupportDifferentModeKeyCasing() throws {
     let source = FakeFanSMC(values: [
-      "FNum": ui8(2),
-      "F0Ac": float(1_900), "F0Mn": float(1_200), "F0Mx": float(5_800), "F0md": ui8(0),
-      "F1Ac": float(2_000), "F1Mn": float(1_300), "F1Mx": float(5_900), "F1Md": ui8(1),
+      "FNum": fanUI8(2),
+      "F0Ac": float(1_900), "F0Mn": float(1_200), "F0Mx": float(5_800), "F0md": fanUI8(0),
+      "F1Ac": float(2_000), "F1Mn": float(1_300), "F1Mx": float(5_900), "F1Md": fanUI8(1),
     ])
     let fans = try XCTUnwrap(FanProvider(factory: { source }).sample().value?.fans)
 
@@ -39,7 +39,8 @@ final class FanProviderTests: XCTestCase {
   }
 
   func testZeroFansIsUnsupportedRatherThanProviderFailure() throws {
-    let result = FanProvider(factory: { FakeFanSMC(values: ["FNum": ui8(0)]) }).sample()
+    let source = FakeFanSMC(values: ["FNum": fanUI8(0)])
+    let result = FanProvider(factory: { source }).sample()
 
     XCTAssertEqual(result.availability, .unsupported)
     XCTAssertEqual(try XCTUnwrap(result.value).fans, [])
@@ -47,9 +48,8 @@ final class FanProviderTests: XCTestCase {
 
   func testInvalidFanCountFailsClosed() {
     for value in [9, 255] {
-      let result = FanProvider(factory: {
-        FakeFanSMC(values: ["FNum": ui8(UInt8(value))])
-      }).sample()
+      let source = FakeFanSMC(values: ["FNum": fanUI8(UInt8(value))])
+      let result = FanProvider(factory: { source }).sample()
       XCTAssertEqual(result.availability, .providerError)
       XCTAssertNil(result.value)
     }
@@ -57,7 +57,7 @@ final class FanProviderTests: XCTestCase {
 
   func testPartialFanDataRetainsValidFan() throws {
     let source = FakeFanSMC(values: [
-      "FNum": ui8(2),
+      "FNum": fanUI8(2),
       "F0Ac": float(2_100), "F0Mn": float(1_200), "F0Mx": float(6_000),
     ])
     let result = FanProvider(factory: { source }).sample()
@@ -69,7 +69,7 @@ final class FanProviderTests: XCTestCase {
 
   func testNonFiniteCurrentRPMIsOmittedWithoutInventingZero() throws {
     let source = FakeFanSMC(values: [
-      "FNum": ui8(1),
+      "FNum": fanUI8(1),
       "F0Ac": float(.nan),
       "F0Mn": float(1_200),
       "F0Mx": float(6_000),
@@ -83,7 +83,7 @@ final class FanProviderTests: XCTestCase {
 
   func testReversedHardwareRangeRejectsFan() {
     let source = FakeFanSMC(values: [
-      "FNum": ui8(1),
+      "FNum": fanUI8(1),
       "F0Ac": float(2_000),
       "F0Mn": float(6_000),
       "F0Mx": float(1_200),
@@ -118,7 +118,7 @@ final class FanProviderTests: XCTestCase {
   }
 
   func testIntegerDecodersUseSMCBigEndianConvention() {
-    XCTAssertEqual(AppleSMCDataDecoder.unsignedInteger(ui8(2)), 2)
+    XCTAssertEqual(AppleSMCDataDecoder.unsignedInteger(fanUI8(2)), 2)
     XCTAssertEqual(
       AppleSMCDataDecoder.unsignedInteger(.init(bytes: [0x12, 0x34], dataType: "ui16")),
       0x1234)
@@ -140,15 +140,15 @@ final class FanProviderTests: XCTestCase {
 
   private let fixedDate = Date(timeIntervalSince1970: 100)
 
-  private func ui8(_ value: UInt8) -> AppleSMCKeyValue {
-    AppleSMCKeyValue(bytes: [value], dataType: "ui8 ")
-  }
-
   private func float(_ value: Float) -> AppleSMCKeyValue {
     var value = value
     let bytes = withUnsafeBytes(of: &value) { Array($0) }
     return AppleSMCKeyValue(bytes: bytes, dataType: "flt ")
   }
+}
+
+private func fanUI8(_ value: UInt8) -> AppleSMCKeyValue {
+  AppleSMCKeyValue(bytes: [value], dataType: "ui8 ")
 }
 
 private final class FakeFanSMC: AppleSMCReading, @unchecked Sendable {
