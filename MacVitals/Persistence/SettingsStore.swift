@@ -4,7 +4,7 @@ import Foundation
 import SwiftUI
 
 nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendable {
-  case cpu, gpu, memory, battery, fans, adapterPower, powerStatus
+  case cpu, gpu, memory, temperature, battery, fans, systemPower, adapterPower, powerStatus
 
   var id: String { rawValue }
 
@@ -13,9 +13,11 @@ nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendab
     case .cpu: return "cpu"
     case .gpu: return "rectangle.3.group"
     case .memory: return "memorychip"
+    case .temperature: return "thermometer.medium"
     case .battery: return "battery.75percent"
     case .fans: return "fan"
-    case .adapterPower: return "bolt.fill"
+    case .systemPower: return "bolt.horizontal.fill"
+    case .adapterPower: return "powerplug.fill"
     case .powerStatus: return "gauge.with.dots.needle.67percent"
     }
   }
@@ -25,9 +27,11 @@ nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendab
     case .cpu: return L10n.string("CPU")
     case .gpu: return L10n.string("GPU")
     case .memory: return L10n.string("Memory")
+    case .temperature: return TemperatureL10n.string("Temperature")
     case .battery: return L10n.string("Battery")
     case .fans: return L10n.string("Fans")
-    case .adapterPower: return L10n.string("Adapter power")
+    case .systemPower: return L10n.string("System power")
+    case .adapterPower: return L10n.string("Adapter input")
     case .powerStatus: return L10n.string("Power status")
     }
   }
@@ -51,10 +55,10 @@ nonisolated enum MenuPreset: String, Codable, CaseIterable, Identifiable, Sendab
 
   var metrics: [MenuMetric] {
     switch self {
-    case .minimal: return [.powerStatus, .battery]
-    case .performance: return [.cpu, .gpu, .memory]
-    case .power: return [.adapterPower, .powerStatus, .battery]
-    case .battery: return [.battery, .powerStatus]
+    case .minimal: return [.temperature, .fans]
+    case .performance: return [.cpu, .gpu, .memory, .temperature, .fans]
+    case .power: return [.systemPower, .adapterPower, .battery, .temperature]
+    case .battery: return [.battery, .temperature, .systemPower]
     case .everything: return MenuMetric.allCases
     case .custom: return []
     }
@@ -104,7 +108,7 @@ nonisolated enum MenuPresetResolution {
 }
 
 nonisolated enum MenuConfigurationPersistence {
-  static let currentSchemaVersion = 1
+  static let currentSchemaVersion = 2
 
   private struct StoredMenuConfiguration: Codable {
     let schemaVersion: Int
@@ -113,11 +117,17 @@ nonisolated enum MenuConfigurationPersistence {
 
   static func decode(_ data: Data) -> [MenuMetric]? {
     guard let stored = try? JSONDecoder().decode(StoredMenuConfiguration.self, from: data),
-      stored.schemaVersion == currentSchemaVersion
+      (1...currentSchemaVersion).contains(stored.schemaVersion)
     else { return nil }
 
-    return MenuLayoutRules.normalized(
+    let decoded = MenuLayoutRules.normalized(
       stored.enabledMetricIDs.compactMap { MenuMetric(rawValue: $0) })
+    guard stored.schemaVersion == 1 else { return decoded }
+
+    if decoded == [.cpu, .gpu, .memory] { return MenuPreset.performance.metrics }
+    if decoded == [.adapterPower, .powerStatus, .battery] { return MenuPreset.power.metrics }
+    if decoded == [.battery, .powerStatus] { return MenuPreset.battery.metrics }
+    return decoded
   }
 
   static func encode(_ metrics: [MenuMetric]) -> Data? {
