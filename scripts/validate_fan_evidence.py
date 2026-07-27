@@ -7,7 +7,6 @@ import argparse
 import json
 import math
 import re
-import stat
 import tempfile
 from pathlib import Path
 from typing import Any, NoReturn
@@ -33,6 +32,7 @@ EXPECTED_FAN_KEYS = {
     "maximumRPM",
     "mode",
 }
+SYSTEM_CONTROLLED_MODES = {"automatic", "system"}
 ISO8601_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\Z")
 HOME_RE = re.compile(r"/(?:Users|home)/[^/\s]+")
 
@@ -58,9 +58,6 @@ def read_document(path: Path) -> dict[str, Any]:
     path = path.expanduser()
     if not path.exists() or path.is_symlink() or not path.is_file():
         fail("Fan evidence must be a regular non-symlink file")
-    mode = stat.S_IMODE(path.stat().st_mode)
-    if mode & stat.S_IFMT(mode) == stat.S_IFLNK:
-        fail("Fan evidence must not be a symbolic link")
     size = path.stat().st_size
     if size <= 0 or size > MAX_EVIDENCE_BYTES:
         fail("Fan evidence size is invalid")
@@ -110,7 +107,7 @@ def validate_document(
     if require_available and availability != "available":
         fail(f"Fan evidence is not available: {availability}")
     message = value.get("message")
-    if message is not None and (not isinstance(message, str) or len(message) > 1024):
+    if not isinstance(message, str) or len(message) > 1024:
         fail("Fan evidence message is invalid")
 
     fans = value.get("fans")
@@ -146,10 +143,10 @@ def validate_document(
                 fail(f"Fan {index} {label} is outside the hardware range")
 
         mode = fan.get("mode")
-        if mode not in {"automatic", "manual", "unknown"}:
+        if mode not in {"automatic", "system", "manual", "unknown"}:
             fail(f"Fan {index} mode is invalid")
-        if require_automatic and mode != "automatic":
-            fail(f"Fan {index} is not in system automatic mode")
+        if require_automatic and mode not in SYSTEM_CONTROLLED_MODES:
+            fail(f"Fan {index} is not controlled by macOS")
 
 
 def validate_path(
@@ -175,8 +172,8 @@ def valid_fixture() -> dict[str, Any]:
         "fans": [
             {
                 "index": 0,
-                "currentRPM": 1900.0,
-                "targetRPM": 2100.0,
+                "currentRPM": 0.0,
+                "targetRPM": 0.0,
                 "minimumRPM": 1200.0,
                 "maximumRPM": 6000.0,
                 "mode": "automatic",
@@ -187,10 +184,10 @@ def valid_fixture() -> dict[str, Any]:
                 "targetRPM": 2200.0,
                 "minimumRPM": 1300.0,
                 "maximumRPM": 6100.0,
-                "mode": "automatic",
+                "mode": "system",
             },
         ],
-        "message": None,
+        "message": "",
     }
 
 
@@ -219,6 +216,10 @@ def self_test() -> int:
         manual["fans"][0]["mode"] = "manual"
         expect_invalid(manual, root, "manual")
 
+        unknown = valid_fixture()
+        unknown["fans"][0]["mode"] = "unknown"
+        expect_invalid(unknown, root, "unknown")
+
         out_of_range = valid_fixture()
         out_of_range["fans"][0]["currentRPM"] = 7000.0
         expect_invalid(out_of_range, root, "out-of-range")
@@ -232,7 +233,7 @@ def self_test() -> int:
         expect_invalid(wrong_source, root, "wrong-source")
 
         nan_path = root / "nan.json"
-        nan_path.write_text(json.dumps(valid_fixture()).replace("1900.0", "NaN", 1), encoding="utf-8")
+        nan_path.write_text(json.dumps(valid_fixture()).replace("2000.0", "NaN", 1), encoding="utf-8")
         try:
             validate_path(nan_path, require_available=True, require_automatic=True)
         except ValidationError:
