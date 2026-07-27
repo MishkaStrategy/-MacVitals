@@ -21,7 +21,7 @@ struct DiagnosticsView: View {
           snapshot.memory.timestamp)
         row(
           "Battery", snapshot.battery.availability, snapshot.battery.source,
-          snapshot.battery.timestamp)
+          snapshot.battery.timestamp, detail: batteryDetail)
         row(
           "Adapter", snapshot.adapter.availability, snapshot.adapter.source,
           snapshot.adapter.timestamp)
@@ -66,17 +66,29 @@ struct DiagnosticsView: View {
     .padding()
   }
 
+  private var batteryDetail: String? {
+    guard let battery = snapshot.battery.value, battery.present else { return nil }
+    let summary = BatteryDisplayText.summary(snapshot.battery)
+    return summary == "—" ? nil : summary
+  }
+
   private func row(
     _ nameKey: String,
     _ availability: MetricAvailability,
     _ source: MetricSource,
-    _ date: Date
+    _ date: Date,
+    detail: String? = nil
   ) -> some View {
     VStack(alignment: .leading) {
       HStack {
         Text(L10n.string(nameKey))
         Spacer()
         Text(availability.displayName).foregroundStyle(.secondary)
+      }
+      if let detail {
+        Text(detail)
+          .font(.callout.monospacedDigit())
+          .accessibilityIdentifier("\(nameKey.lowercased())MetricValue")
       }
       Text(
         L10n.format(
