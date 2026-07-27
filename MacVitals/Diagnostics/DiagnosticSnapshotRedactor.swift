@@ -9,6 +9,7 @@ nonisolated enum DiagnosticSnapshotRedactor {
       battery: sanitizedBattery(snapshot.battery),
       adapter: sanitizedAdapter(snapshot.adapter),
       gpu: sanitizedGPU(snapshot.gpu),
+      fans: sanitizedFans(snapshot.fans),
       power: sanitizedPower(snapshot.power))
   }
 
@@ -110,6 +111,28 @@ nonisolated enum DiagnosticSnapshotRedactor {
       systemUtilizationPercent: validPercentage(value.systemUtilizationPercent),
       utilizationAvailability: value.utilizationAvailability)
     return replacingValue(metric, sanitized)
+  }
+
+  private static func sanitizedFans(
+    _ metric: MetricValue<FanStats>
+  ) -> MetricValue<FanStats> {
+    guard let value = metric.value else { return sanitizedMetadata(metric) }
+    guard value.fans.count <= FanValueNormalizer.maximumFanCount else {
+      return invalidMetric(metric, message: "Invalid fan telemetry was omitted")
+    }
+    let sanitized = value.fans.compactMap { fan in
+      FanValueNormalizer.reading(
+        index: fan.index,
+        current: fan.currentRPM,
+        target: fan.targetRPM,
+        minimum: fan.minimumRPM,
+        maximum: fan.maximumRPM,
+        mode: fan.mode)
+    }
+    guard sanitized.count == value.fans.count else {
+      return invalidMetric(metric, message: "Invalid fan telemetry was omitted")
+    }
+    return replacingValue(metric, FanStats(fans: sanitized))
   }
 
   private static func sanitizedPower(
