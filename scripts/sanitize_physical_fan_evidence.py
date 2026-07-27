@@ -12,7 +12,9 @@ from typing import NoReturn
 
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
 HOME_RE = re.compile(r"/(?:Users|home)/[^/\s<]+")
-TEMP_RE = re.compile(r"/private/(?:tmp|var)/[^\s<]+")
+TEMP_RE = re.compile(
+    r"(?:/private/(?:tmp|var)|/var/folders|/tmp)(?:/[^\s<]+)+"
+)
 
 
 class SanitizationError(RuntimeError):
@@ -103,14 +105,23 @@ def self_test() -> int:
         root.mkdir()
         log = root / "build.log"
         log.write_text(
-            "/Users/alice/work/project/build\n/private/tmp/probe.123\nalice-mac alice\n",
+            "/Users/alice/work/project/build\n"
+            "/private/tmp/probe.123/output\n"
+            "/private/var/folders/aa/cache/file\n"
+            "/var/folders/ld/session/cache.noindex\n"
+            "/tmp/macvitals-probe/result\n"
+            "alice-mac alice\n",
             encoding="utf-8",
         )
         sanitize(root, replacements)
         text = log.read_text(encoding="utf-8")
         assert "/Users/" not in text
         assert "/private/tmp/" not in text
+        assert "/private/var/" not in text
+        assert "/var/folders/" not in text
+        assert "/tmp/" not in text
         assert "alice-mac" not in text
+        assert text.count("<TEMP>") == 4
         assert (root / "PRIVACY_SCAN_PASSED.txt").read_text(encoding="utf-8") == (
             "privacy-scan=passed\n"
         )
