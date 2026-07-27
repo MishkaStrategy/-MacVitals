@@ -8,6 +8,7 @@
 "Memory" = "Memory";
 "GPU" = "GPU";
 "Battery" = "Battery";
+"Fans" = "Fans";
 "Unavailable" = "Unavailable";
 "Metal" = "Metal";
 "Memory data unavailable" = "Memory data unavailable";
@@ -19,11 +20,13 @@
 "memory type unavailable" = "memory type unavailable";
 "%@ · %@ · utilization unavailable" = "%@ · %@ · utilization unavailable";
 "No battery" = "No battery";
+"No fan" = "No fan";
 "Diagnostics" = "Diagnostics";
 "Quit" = "Quit";
 "Collecting data" = "Collecting data";
 "Memory, swap and pressure details" = "Memory, swap and pressure details";
 "GPU details" = "GPU details";
+"Fan details" = "Fan details";
 "CPU history" = "CPU history";
 "Time" = "Time";
 "Normal" = "Normal";
@@ -40,6 +43,7 @@
 "~%.1f W" = "~%.1f W";
 "%.1f W" = "%.1f W";
 "%.1f °C" = "%.1f °C";
+"%d RPM" = "%d RPM";
 "Not measured" = "Not measured";
 "Sufficient" = "Sufficient";
 "Insufficient" = "Insufficient";
@@ -47,6 +51,8 @@
 "On battery" = "On battery";
 "Sensor conflict" = "Sensor conflict";
 "Unknown" = "Unknown";
+"Automatic" = "Automatic";
+"Manual boost" = "Manual boost";
 
 "General" = "General";
 "Alerts" = "Alerts";
@@ -93,10 +99,15 @@
 "Mach host statistics" = "Mach host statistics";
 "IOKit power sources" = "IOKit power sources";
 "IOKit registry" = "IOKit registry";
+"Apple SMC" = "Apple SMC";
 "Derived power model" = "Derived power model";
 "%.2f s" = "%.2f s";
 "%.3f ms" = "%.3f ms";
 "%@ · %@" = "%@ · %@";
+"%@ current · %@ target · %@" = "%@ current · %@ target · %@";
+"Fan %d" = "Fan %d";
+"Fan %d: %@ · %@" = "Fan %d: %@ · %@";
+"Range %@ – %@" = "Range %@ – %@";
 
 "Adapter power" = "Adapter power";
 "Power status" = "Power status";
@@ -145,3 +156,29 @@
 "The Mac is on adapter power and the battery is effectively full" = "The Mac is on adapter power and the battery is effectively full";
 "No sustained battery discharge is detected" = "No sustained battery discharge is detected";
 "Power state cannot be determined" = "Power state cannot be determined";
+
+"Fan data unavailable" = "Fan data unavailable";
+"Current speed" = "Current speed";
+"Target speed" = "Target speed";
+"Mode" = "Mode";
+"Hardware range" = "Hardware range";
+"Cooling boost" = "Cooling boost";
+"Apply 15-minute Boost" = "Apply 15-minute Boost";
+"Use System Automatic" = "Use System Automatic";
+"This fan does not expose a safe controllable RPM range." = "This fan does not expose a safe controllable RPM range.";
+"Fan control is experimental. MacVitals only allows temporary cooling boosts and never permits a target below the current safety floor. macOS automatic control is restored when the lease expires or the helper disconnects." = "Fan control is experimental. MacVitals only allows temporary cooling boosts and never permits a target below the current safety floor. macOS automatic control is restored when the lease expires or the helper disconnects.";
+"Enable Control" = "Enable Control";
+"Review Approval" = "Review Approval";
+"Ready" = "Ready";
+"Fan RPM monitoring is available. Control requires an approved signed helper." = "Fan RPM monitoring is available. Control requires an approved signed helper.";
+"Fan control helper is not installed." = "Fan control helper is not installed.";
+"Administrator approval is required in Login Items." = "Administrator approval is required in Login Items.";
+"Fan control helper is ready." = "Fan control helper is ready.";
+"Fan control helper is missing from this app build." = "Fan control helper is missing from this app build.";
+"Fan control helper status is unknown." = "Fan control helper status is unknown.";
+"Cooling boost set to %d RPM." = "Cooling boost set to %d RPM.";
+"Fan control request failed." = "Fan control request failed.";
+"System automatic fan control restored." = "System automatic fan control restored.";
+"Could not restore automatic fan control." = "Could not restore automatic fan control.";
+"Fan control helper connection was interrupted." = "Fan control helper connection was interrupted.";
+"Fan control helper did not pass its self-check." = "Fan control helper did not pass its self-check.";
