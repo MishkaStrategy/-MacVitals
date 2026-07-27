@@ -20,6 +20,7 @@ extension MetricSource {
     case .machHostStatistics: return L10n.string("Mach host statistics")
     case .iokitPowerSources: return L10n.string("IOKit power sources")
     case .iokitRegistry: return L10n.string("IOKit registry")
+    case .appleSMC: return L10n.string("Apple SMC")
     case .metal: return L10n.string("Metal")
     case .derivedPowerModel: return L10n.string("Derived power model")
     case .unavailable: return L10n.string("Unavailable")
@@ -55,6 +56,16 @@ extension PowerSufficiencyStatus {
   }
 }
 
+extension FanMode {
+  var displayName: String {
+    switch self {
+    case .automatic: return L10n.string("Automatic")
+    case .manual: return L10n.string("Manual boost")
+    case .unknown: return L10n.string("Unknown")
+    }
+  }
+}
+
 nonisolated enum BatteryDisplayText {
   static func summary(_ metric: MetricValue<BatteryStats>) -> String {
     guard let battery = metric.value else { return metric.availability.displayName }
@@ -64,6 +75,30 @@ nonisolated enum BatteryDisplayText {
     let temperature = MetricNumberFormatter.temperatureCelsius(battery.temperatureCelsius)
     let values = [percentage == "—" ? nil : percentage, temperature].compactMap { $0 }
     return values.isEmpty ? "—" : values.joined(separator: " · ")
+  }
+}
+
+nonisolated enum FanDisplayText {
+  static func summary(_ metric: MetricValue<FanStats>) -> String {
+    guard let stats = metric.value else { return metric.availability.displayName }
+    guard !stats.fans.isEmpty else { return L10n.string("No fan") }
+    let values = stats.fans.compactMap { MetricNumberFormatter.rpm($0.currentRPM) }
+    guard !values.isEmpty else { return "—" }
+    return values.count == 1 ? values[0] : values.joined(separator: " / ")
+  }
+
+  static func menuBar(_ metric: MetricValue<FanStats>) -> String {
+    guard let stats = metric.value, !stats.fans.isEmpty else { return "🌀 —" }
+    let values = stats.fans.compactMap { fan in
+      MetricNumberFormatter.rpmNumber(fan.currentRPM).map(String.init)
+    }
+    return values.isEmpty ? "🌀 —" : "🌀 " + values.joined(separator: "/") + " RPM"
+  }
+
+  static func detail(_ fan: FanReading) -> String {
+    let current = MetricNumberFormatter.rpm(fan.currentRPM) ?? "—"
+    let target = MetricNumberFormatter.rpm(fan.targetRPM) ?? "—"
+    return L10n.format("%@ current · %@ target · %@", current, target, fan.mode.displayName)
   }
 }
 
@@ -117,6 +152,14 @@ nonisolated enum MetricNumberFormatter {
   static func temperatureCelsius(_ value: Double?) -> String? {
     guard let value, value.isFinite, (-20...100).contains(value) else { return nil }
     return L10n.format("%.1f °C", value)
+  }
+
+  static func rpm(_ value: Double?) -> String? {
+    rpmNumber(value).map { L10n.format("%d RPM", $0) }
+  }
+
+  static func rpmNumber(_ value: Double?) -> Int? {
+    boundedRoundedInteger(value, range: FanValueNormalizer.plausibleRPMRange)
   }
 
   static func ratedWatts(_ value: Double?) -> String? {
