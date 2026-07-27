@@ -3,10 +3,10 @@ import XCTest
 
 final class SystemPowerTelemetryNormalizerTests: XCTestCase {
   func testConvertsMilliwattsToWatts() {
-    XCTAssertEqual(
-      SystemPowerTelemetryNormalizer.watts(fromMilliwatts: NSNumber(value: 12_685)),
-      12.685,
-      accuracy: 0.0001)
+    let watts = SystemPowerTelemetryNormalizer.watts(
+      fromMilliwatts: NSNumber(value: 12_685))
+    XCTAssertNotNil(watts)
+    XCTAssertEqual(watts ?? 0, 12.685, accuracy: 0.0001)
   }
 
   func testRejectsNegativeAndImplausibleValues() {
