@@ -35,7 +35,7 @@ final class FanControlRecoveryStoreTests: XCTestCase {
     XCTAssertTrue(try fixture.store.load().isEmpty)
   }
 
-  func testSymlinkLedgerFailsClosed() throws {
+  func testSymlinkAndDanglingSymlinkLedgersFailClosed() throws {
     let fixture = try makeFixture()
     defer { fixture.cleanup() }
 
@@ -49,7 +49,13 @@ final class FanControlRecoveryStoreTests: XCTestCase {
     try FileManager.default.createSymbolicLink(
       at: fixture.ledger,
       withDestinationURL: target)
+    XCTAssertThrowsError(try fixture.store.load())
 
+    try FileManager.default.removeItem(at: fixture.ledger)
+    try FileManager.default.removeItem(at: target)
+    try FileManager.default.createSymbolicLink(
+      at: fixture.ledger,
+      withDestinationURL: target)
     XCTAssertThrowsError(try fixture.store.load())
   }
 
@@ -60,7 +66,8 @@ final class FanControlRecoveryStoreTests: XCTestCase {
     var state = FanControlRecoveryState()
     state.activate(index: 0, deadline: Date().addingTimeInterval(300))
     try fixture.store.save(state)
-    XCTAssertEqual(chmod(fixture.ledger.path, 0o644), 0)
+    let chmodResult = fixture.ledger.path.withCString { Darwin.chmod($0, 0o644) }
+    XCTAssertEqual(chmodResult, 0)
 
     XCTAssertThrowsError(try fixture.store.load())
   }
@@ -81,7 +88,8 @@ final class FanControlRecoveryStoreTests: XCTestCase {
 
     for document in invalidDocuments {
       try Data(document.utf8).write(to: fixture.ledger, options: [.atomic])
-      XCTAssertEqual(chmod(fixture.ledger.path, 0o600), 0)
+      let chmodResult = fixture.ledger.path.withCString { Darwin.chmod($0, 0o600) }
+      XCTAssertEqual(chmodResult, 0)
       XCTAssertThrowsError(try fixture.store.load())
     }
   }
