@@ -4,7 +4,7 @@ import Foundation
 import SwiftUI
 
 nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendable {
-  case cpu, gpu, memory, battery, adapterPower, powerStatus
+  case cpu, gpu, memory, battery, fans, adapterPower, powerStatus
 
   var id: String { rawValue }
 
@@ -14,6 +14,7 @@ nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendab
     case .gpu: return "rectangle.3.group"
     case .memory: return "memorychip"
     case .battery: return "battery.75percent"
+    case .fans: return "fan"
     case .adapterPower: return "bolt.fill"
     case .powerStatus: return "gauge.with.dots.needle.67percent"
     }
@@ -25,6 +26,7 @@ nonisolated enum MenuMetric: String, Codable, CaseIterable, Identifiable, Sendab
     case .gpu: return L10n.string("GPU")
     case .memory: return L10n.string("Memory")
     case .battery: return L10n.string("Battery")
+    case .fans: return L10n.string("Fans")
     case .adapterPower: return L10n.string("Adapter power")
     case .powerStatus: return L10n.string("Power status")
     }
