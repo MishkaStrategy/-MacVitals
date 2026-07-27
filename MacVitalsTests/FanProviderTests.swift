@@ -23,6 +23,7 @@ final class FanProviderTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(fan.minimumRPM), 1_200, accuracy: 0.01)
     XCTAssertEqual(try XCTUnwrap(fan.maximumRPM), 6_000, accuracy: 0.01)
     XCTAssertEqual(fan.mode, .automatic)
+    XCTAssertTrue(fan.mode.isSystemControlled)
   }
 
   func testTwoFansSupportDifferentModeKeyCasing() throws {
@@ -36,6 +37,38 @@ final class FanProviderTests: XCTestCase {
     XCTAssertEqual(fans.count, 2)
     XCTAssertEqual(fans[0].mode, .automatic)
     XCTAssertEqual(fans[1].mode, .manual)
+    XCTAssertFalse(fans[1].mode.isSystemControlled)
+  }
+
+  func testSystemModeByteThreeRemainsMacOSControlled() throws {
+    let source = FakeFanSMC(values: [
+      "FNum": fanUI8(1),
+      "F0Ac": float(0),
+      "F0Tg": float(0),
+      "F0Mn": float(1_499),
+      "F0Mx": float(4_296),
+      "F0md": fanUI8(3),
+    ])
+    let fan = try XCTUnwrap(FanProvider(factory: { source }).sample().value?.fans.first)
+
+    XCTAssertEqual(fan.mode, .system)
+    XCTAssertTrue(fan.mode.isSystemControlled)
+    XCTAssertEqual(fan.currentRPM, 0)
+    XCTAssertEqual(fan.targetRPM, 0)
+  }
+
+  func testUnknownModeByteFailsClosedAsUnknown() throws {
+    let source = FakeFanSMC(values: [
+      "FNum": fanUI8(1),
+      "F0Ac": float(2_000),
+      "F0Mn": float(1_200),
+      "F0Mx": float(6_000),
+      "F0md": fanUI8(2),
+    ])
+    let fan = try XCTUnwrap(FanProvider(factory: { source }).sample().value?.fans.first)
+
+    XCTAssertEqual(fan.mode, .unknown)
+    XCTAssertFalse(fan.mode.isSystemControlled)
   }
 
   func testZeroFansIsUnsupportedRatherThanProviderFailure() throws {
