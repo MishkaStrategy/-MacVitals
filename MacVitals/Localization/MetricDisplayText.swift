@@ -60,6 +60,7 @@ extension FanMode {
   var displayName: String {
     switch self {
     case .automatic: return L10n.string("Automatic")
+    case .system: return L10n.string("System controlled")
     case .manual: return L10n.string("Manual boost")
     case .unknown: return L10n.string("Unknown")
     }
