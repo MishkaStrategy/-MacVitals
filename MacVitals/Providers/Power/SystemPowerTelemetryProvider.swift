@@ -30,13 +30,11 @@ struct SystemPowerTelemetryProvider: Sendable {
       kCFAllocatorDefault,
       0) == KERN_SUCCESS,
       let dictionary = properties?.takeRetainedValue() as? [String: Any],
-      let telemetry = dictionary["PowerTelemetryData"] as? [String: Any]
+      let telemetry = dictionary["PowerTelemetryData"] as? [String: Any],
+      let systemLoad = SystemPowerTelemetryNormalizer.watts(
+        fromMilliwatts: telemetry["SystemLoad"]),
+      systemLoad > 0.01
     else { return nil }
-
-    let systemLoad = SystemPowerTelemetryNormalizer.watts(
-      fromMilliwatts: telemetry["SystemLoad"])
-      ?? SystemPowerTelemetryNormalizer.watts(fromMilliwatts: telemetry["SystemPowerIn"])
-    guard let systemLoad, systemLoad > 0.01 else { return nil }
 
     return SystemPowerTelemetryReading(
       systemLoadWatts: systemLoad,
