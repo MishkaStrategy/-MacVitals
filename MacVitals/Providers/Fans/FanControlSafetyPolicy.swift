@@ -25,7 +25,11 @@ nonisolated struct FanControlPlan: Codable, Sendable, Equatable {
 }
 
 nonisolated struct FanControlRecoveryState: Sendable, Equatable {
-  private(set) var deadlines: [Int: Date] = [:]
+  private(set) var deadlines: [Int: Date]
+
+  init(deadlines: [Int: Date] = [:]) {
+    self.deadlines = deadlines
+  }
 
   var indexes: [Int] { deadlines.keys.sorted() }
   var isEmpty: Bool { deadlines.isEmpty }
@@ -50,6 +54,10 @@ nonisolated struct FanControlRecoveryState: Sendable, Equatable {
     deadlines.keys.contains { $0 != index }
   }
 
+  func hasPendingRecovery(at now: Date) -> Bool {
+    deadlines.values.contains { $0 <= now }
+  }
+
   func expired(at now: Date) -> [Int] {
     deadlines.compactMap { $0.value <= now ? $0.key : nil }.sorted()
   }
@@ -59,6 +67,7 @@ nonisolated enum FanControlSafetyError: LocalizedError, Sendable, Equatable {
   case invalidFan
   case invalidRange
   case invalidRequest
+  case recoveryPending
   case requestBelowSafetyFloor(Double)
 
   var errorDescription: String? {
@@ -66,6 +75,7 @@ nonisolated enum FanControlSafetyError: LocalizedError, Sendable, Equatable {
     case .invalidFan: return "Fan index is outside the supported range"
     case .invalidRange: return "Fan minimum and maximum RPM are invalid"
     case .invalidRequest: return "Requested fan speed or lease is invalid"
+    case .recoveryPending: return "Automatic fan recovery is pending"
     case .requestBelowSafetyFloor(let floor):
       return "Requested speed is below the safe cooling floor of \(Int(floor.rounded())) RPM"
     }
