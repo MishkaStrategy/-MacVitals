@@ -94,7 +94,7 @@ struct MetricDetailView: View {
       }
     }
     .padding(16)
-    .frame(width: kind == .fans ? 600 : 560, height: kind == .fans ? 540 : 360)
+    .frame(width: kind == .fans ? 600 : 560, height: kind == .fans ? 650 : 360)
     .onAppear {
       if kind == .fans { fanControl.refreshStatus() }
     }
@@ -181,7 +181,7 @@ struct MetricDetailView: View {
   private var fanChart: some View {
     if fanPoints.isEmpty {
       unavailableChart
-        .frame(height: 150)
+        .frame(height: 130)
     } else {
       Chart(fanPoints) { point in
         LineMark(
@@ -203,7 +203,7 @@ struct MetricDetailView: View {
           .background(.quaternary.opacity(0.18))
           .clipShape(RoundedRectangle(cornerRadius: 8))
       }
-      .frame(height: 165)
+      .frame(height: 145)
       .accessibilityLabel(L10n.string("Fans"))
     }
   }
