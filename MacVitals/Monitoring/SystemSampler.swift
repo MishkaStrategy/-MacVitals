@@ -59,11 +59,13 @@ actor SystemSampler {
   private let adapterProvider = AdapterProvider()
   private let powerTelemetryProvider = SystemPowerTelemetryProvider()
   private let gpuProvider: any GPUProviding = CapabilityGPUProvider()
+  private let temperatureProvider = TemperatureProvider()
   private let fanProvider = FanProvider()
   private var evaluator = ChargerSufficiencyEvaluator()
 
   func resetForDiscontinuity() {
     cpuProvider.resetBaseline()
+    temperatureProvider.resetConnection()
     fanProvider.resetConnection()
     evaluator.reset()
   }
@@ -76,6 +78,8 @@ actor SystemSampler {
     let (adapter, adapterMilliseconds) = measure { adapterProvider.sample() }
     let telemetry = powerTelemetryProvider.sample()
     let (gpu, gpuMilliseconds) = measure { gpuProvider.sample() }
+    let temperature = temperatureProvider.sample(
+      batteryTemperatureCelsius: battery.value?.temperatureCelsius)
     let (fans, fanMilliseconds) = measure { fanProvider.sample() }
     let batteryValue = battery.value
     let adapterValue = adapter.value
@@ -130,6 +134,7 @@ actor SystemSampler {
       battery: battery,
       adapter: adapter,
       gpu: gpu,
+      temperature: temperature,
       fans: fans,
       power: power)
     let totalEnd = DispatchTime.now().uptimeNanoseconds
