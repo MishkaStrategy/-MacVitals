@@ -20,7 +20,18 @@ struct OverviewView: View {
           Text("Privacy-first Mac diagnostics").foregroundStyle(.secondary)
         }
         Spacer()
-        settingsButton
+        Button {
+          selectedDetail = nil
+          PreferencesWindowPresenter.shared.show(
+            coordinator: coordinator,
+            settings: settings,
+            fanControl: fanControl)
+        } label: {
+          Image(systemName: "gearshape")
+        }
+        .buttonStyle(.plain)
+        .help("Preferences")
+        .accessibilityLabel("Preferences")
       }
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
         MetricCard(
@@ -43,12 +54,17 @@ struct OverviewView: View {
           value: batteryText,
           symbol: "battery.75percent",
           action: { selectedDetail = .battery })
+        MetricCard(
+          title: "Temperature",
+          value: temperatureText,
+          symbol: "thermometer.medium",
+          action: { selectedDetail = .temperature })
+        MetricCard(
+          title: "Fans",
+          value: FanDisplayText.summary(coordinator.snapshot.fans),
+          symbol: "fan",
+          action: { selectedDetail = .fans })
       }
-      MetricCard(
-        title: "Fans",
-        value: FanDisplayText.summary(coordinator.snapshot.fans),
-        symbol: "fan",
-        action: { selectedDetail = .fans })
       memorySummary
       gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot)
@@ -77,27 +93,6 @@ struct OverviewView: View {
           .environmentObject(coordinator)
           .environmentObject(fanControl)
       }
-    }
-  }
-
-  @ViewBuilder
-  private var settingsButton: some View {
-    if #available(macOS 14.0, *) {
-      SettingsLink {
-        Image(systemName: "gearshape")
-      }
-      .buttonStyle(.plain)
-      .help("Preferences")
-      .accessibilityLabel("Preferences")
-    } else {
-      Button {
-        openLegacySettings()
-      } label: {
-        Image(systemName: "gearshape")
-      }
-      .buttonStyle(.plain)
-      .help("Preferences")
-      .accessibilityLabel("Preferences")
     }
   }
 
@@ -219,16 +214,15 @@ struct OverviewView: View {
     BatteryDisplayText.summary(coordinator.snapshot.battery)
   }
 
-  private func formattedBytes(_ bytes: UInt64) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+  private var temperatureText: String {
+    guard let value = coordinator.snapshot.temperature.value?.processorCelsius
+      ?? coordinator.snapshot.temperature.value?.maximumCelsius
+    else { return "—" }
+    return L10n.format("%.1f °C", value)
   }
 
-  private func openLegacySettings() {
-    let selectors = ["showPreferencesWindow:", "showSettingsWindow:"]
-    for selectorName in selectors {
-      if NSApp.sendAction(Selector(selectorName), to: nil, from: nil) { break }
-    }
-    NSApp.activate(ignoringOtherApps: true)
+  private func formattedBytes(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
   }
 
   private func exportDiagnostics() {
