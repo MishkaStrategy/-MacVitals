@@ -74,7 +74,7 @@ final class MenuBarRendererTests: XCTestCase {
   func testAdapterMetricFallsBackToRatedCapability() {
     XCTAssertEqual(
       MenuBarRenderer.render(
-        snapshot: snapshot(adapterRatedPower: 67, adapterInputPower: nil),
+        snapshot: snapshot(adapterInputPower: nil, adapterRatedPower: 67),
         metrics: [.adapterPower]),
       "🔌 ≤67 W")
   }
