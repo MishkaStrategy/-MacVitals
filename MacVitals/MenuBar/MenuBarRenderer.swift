@@ -26,7 +26,11 @@ nonisolated enum MenuBarRenderer {
     case .memory:
       return percentage(snapshot.memory.value?.usedPercent).map { "RAM \($0)%" } ?? "RAM —"
     case .battery:
-      return percentage(snapshot.battery.value?.percentage).map { "🔋 \($0)%" } ?? "🔋 —"
+      let percentageText = percentage(snapshot.battery.value?.percentage).map { "\($0)%" }
+      let temperatureText = MetricNumberFormatter.temperatureCelsius(
+        snapshot.battery.value?.temperatureCelsius)
+      let values = [percentageText, temperatureText].compactMap { $0 }
+      return values.isEmpty ? "🔋 —" : "🔋 " + values.joined(separator: " · ")
     case .adapterPower:
       return watts(snapshot.adapter.value?.ratedPowerWatts).map { "⚡ \($0) W" } ?? "⚡ —"
     case .powerStatus:
