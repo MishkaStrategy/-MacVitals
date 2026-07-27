@@ -48,11 +48,18 @@ def _literal_replacements() -> list[tuple[str, str]]:
 
 
 def sanitize_text(text: str) -> str:
-    for source, replacement in _literal_replacements():
-        text = text.replace(source, replacement)
+    workspace = os.environ.get("GITHUB_WORKSPACE", "")
+    home = str(Path.home())
+    if workspace:
+        text = text.replace(workspace, "<WORKSPACE>")
+    if home:
+        text = text.replace(home, "<HOME>")
     text = _HOME_PATH_RE.sub("<HOME>", text)
     text = _TEMP_PATH_RE.sub("<TEMP>", text)
     text = _REDACTED_RUNNER_TAIL_RE.sub("<WORKSPACE>", text)
+    for source, replacement in _literal_replacements():
+        if source not in {workspace, home}:
+            text = text.replace(source, replacement)
     return text
 
 
