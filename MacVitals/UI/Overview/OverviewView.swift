@@ -3,7 +3,7 @@ import SwiftUI
 
 nonisolated enum OverviewLayout {
   static let width: CGFloat = 390
-  static let height: CGFloat = 630
+  static let height: CGFloat = 660
 }
 
 struct OverviewView: View {
@@ -40,6 +40,7 @@ struct OverviewView: View {
       }
       memorySummary
       gpuSummary
+      fanSummary
       PowerFlowView(snapshot: coordinator.snapshot)
       history
       HStack {
@@ -85,6 +86,21 @@ struct OverviewView: View {
     }
     .accessibilityLabel("GPU details")
     .accessibilityValue(gpuSummaryText)
+  }
+
+  private var fanSummary: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "fan")
+        .foregroundStyle(.secondary)
+      Text(fanSummaryText)
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+    }
+    .accessibilityLabel("Fan details")
+    .accessibilityValue(fanSummaryText)
+    .accessibilityIdentifier("overviewFanSummary")
   }
 
   private var history: some View {
@@ -151,6 +167,19 @@ struct OverviewView: View {
     let name = gpu.name ?? L10n.string("Unknown GPU")
     let memory = GPUMemoryDisplayText.summary(hasUnifiedMemory: gpu.hasUnifiedMemory)
     return L10n.format("%@ · %@ · utilization unavailable", name, memory)
+  }
+
+  private var fanSummaryText: String {
+    guard let fans = coordinator.snapshot.fans.value?.fans, !fans.isEmpty else {
+      return coordinator.snapshot.fans.availability.displayName
+    }
+    return fans.map { fan in
+      L10n.format(
+        "Fan %d: %@ · %@",
+        fan.index + 1,
+        MetricNumberFormatter.rpm(fan.currentRPM) ?? "—",
+        fan.mode.displayName)
+    }.joined(separator: " · ")
   }
 
   private var batteryText: String {
