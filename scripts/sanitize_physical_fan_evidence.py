@@ -12,9 +12,7 @@ from typing import NoReturn
 
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
 HOME_RE = re.compile(r"/(?:Users|home)/[^/\s<]+")
-TEMP_RE = re.compile(
-    r"(?:/private/(?:tmp|var)|/var/folders|/tmp)(?:/[^\s<]+)+"
-)
+TEMP_RE = re.compile(r"/(?:private/(?:tmp|var)|var/folders|tmp)/[^\s<]+")
 
 
 class SanitizationError(RuntimeError):
@@ -106,7 +104,7 @@ def self_test() -> int:
         log = root / "build.log"
         log.write_text(
             "/Users/alice/work/project/build\n"
-            "/private/tmp/probe.123/output\n"
+            "/private/tmp/probe.123\n"
             "/private/var/folders/aa/cache/file\n"
             "/var/folders/ld/session/cache.noindex\n"
             "/tmp/macvitals-probe/result\n"
