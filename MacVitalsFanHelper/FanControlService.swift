@@ -226,6 +226,7 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     let source = try smc()
     let count = try fanCount()
     guard index >= 0, index < count else { throw FanControlSafetyError.invalidFan }
+    recovery.beginRecovery(index: index, now: Date())
 
     var firstError: Error?
     do {
@@ -254,8 +255,12 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
   private func restoreAllAutomaticThrowing() throws {
     let count = try fanCount()
     let source = try smc()
-    var firstError: Error?
+    let recoveryStartedAt = Date()
+    for index in 0..<count {
+      recovery.beginRecovery(index: index, now: recoveryStartedAt)
+    }
 
+    var firstError: Error?
     for index in 0..<count {
       do {
         let key = try modeKey(index: index)
