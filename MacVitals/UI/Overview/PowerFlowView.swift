@@ -14,7 +14,7 @@ struct PowerFlowView: View {
 
       HStack(alignment: .firstTextBaseline) {
         VStack(alignment: .leading, spacing: 2) {
-          Text("System draw")
+          Text("System")
             .font(.caption)
             .foregroundStyle(.secondary)
           Text(systemPower)
@@ -43,7 +43,7 @@ struct PowerFlowView: View {
     .padding(12)
     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("System power")
+    .accessibilityLabel("Power")
     .accessibilityValue(systemPower)
   }
 
@@ -65,28 +65,18 @@ struct PowerFlowView: View {
   }
 
   private var resolvedSystemPowerWatts: Double? {
-    if let value = snapshot.power.value?.estimatedSystemPowerWatts,
+    guard let value = snapshot.power.value?.estimatedSystemPowerWatts,
       value.isFinite,
       value >= 0
-    {
-      return value
-    }
-    guard let battery = snapshot.battery.value,
-      battery.present,
-      !battery.externalPowerConnected,
-      battery.state == .discharging,
-      let batteryPower = battery.batteryPowerWatts,
-      batteryPower.isFinite,
-      abs(batteryPower) > 0.01
     else { return nil }
-    return abs(batteryPower)
+    return value
   }
 
   private var systemPower: String {
     MetricNumberFormatter.decimalWatts(
       resolvedSystemPowerWatts,
-      estimated: resolvedSystemPowerWatts != nil)
-      ?? "— W"
+      estimated: snapshot.power.isEstimated)
+      ?? L10n.string("Not measured")
   }
 
   private var ratedPower: String {
@@ -102,22 +92,21 @@ struct PowerFlowView: View {
 
   private var powerSourceTitle: String {
     guard let battery = snapshot.battery.value else {
-      return L10n.string("Sensor unavailable")
+      return L10n.string("Unknown")
     }
     if battery.externalPowerConnected {
-      return L10n.string("On adapter")
+      return L10n.string("Adapter")
     }
     return L10n.string("On battery")
   }
 
   private var powerSourceDetail: String {
     if resolvedSystemPowerWatts != nil {
-      return L10n.string("Live estimate from battery voltage and current")
+      return snapshot.power.isEstimated
+        ? L10n.string("Estimated")
+        : L10n.string("IOKit registry")
     }
-    if snapshot.battery.value?.externalPowerConnected == true {
-      return L10n.string("Exact total draw is not exposed by the public adapter sensor")
-    }
-    return L10n.string("Waiting for battery voltage and current")
+    return L10n.string("Collecting data")
   }
 
   private var statusLabel: some View {

@@ -7,6 +7,7 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
   let memory: TimedPoint
   let gpu: TimedPoint
   let battery: TimedPoint
+  let temperature: TimedPoint
   let systemPower: TimedPoint
 
   static func make(from snapshot: SystemSnapshot) -> Self {
@@ -17,6 +18,10 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
         timestamp: snapshot.timestamp,
         value: snapshot.gpu.value?.systemUtilizationPercent),
       battery: TimedPoint(timestamp: snapshot.timestamp, value: snapshot.battery.value?.percentage),
+      temperature: TimedPoint(
+        timestamp: snapshot.timestamp,
+        value: snapshot.temperature.value?.processorCelsius
+          ?? snapshot.temperature.value?.maximumCelsius),
       systemPower: TimedPoint(
         timestamp: snapshot.timestamp,
         value: snapshot.power.value?.estimatedSystemPowerWatts))
@@ -30,6 +35,7 @@ final class MetricsCoordinator: ObservableObject {
   @Published private(set) var memoryHistory: [TimedPoint] = []
   @Published private(set) var gpuHistory: [TimedPoint] = []
   @Published private(set) var batteryHistory: [TimedPoint] = []
+  @Published private(set) var temperatureHistory: [TimedPoint] = []
   @Published private(set) var systemPowerHistory: [TimedPoint] = []
   @Published private(set) var fanHistory: [Int: [TimedPoint]] = [:]
   @Published private(set) var samplingHealth: SamplingHealth?
@@ -42,6 +48,7 @@ final class MetricsCoordinator: ObservableObject {
   private var memoryBuffer = RingBuffer<TimedPoint>(capacity: 720)
   private var gpuBuffer = RingBuffer<TimedPoint>(capacity: 720)
   private var batteryBuffer = RingBuffer<TimedPoint>(capacity: 720)
+  private var temperatureBuffer = RingBuffer<TimedPoint>(capacity: 720)
   private var systemPowerBuffer = RingBuffer<TimedPoint>(capacity: 720)
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
@@ -112,6 +119,7 @@ final class MetricsCoordinator: ObservableObject {
     memoryBuffer.append(historyPoints.memory)
     gpuBuffer.append(historyPoints.gpu)
     batteryBuffer.append(historyPoints.battery)
+    temperatureBuffer.append(historyPoints.temperature)
     systemPowerBuffer.append(historyPoints.systemPower)
     appendFanHistory(from: newSnapshot)
     publishHistory()
@@ -140,6 +148,7 @@ final class MetricsCoordinator: ObservableObject {
     memoryBuffer.append(point)
     gpuBuffer.append(point)
     batteryBuffer.append(point)
+    temperatureBuffer.append(point)
     systemPowerBuffer.append(point)
 
     for index in Array(fanBuffers.keys) {
@@ -154,6 +163,7 @@ final class MetricsCoordinator: ObservableObject {
     memoryHistory = memoryBuffer.values
     gpuHistory = gpuBuffer.values
     batteryHistory = batteryBuffer.values
+    temperatureHistory = temperatureBuffer.values
     systemPowerHistory = systemPowerBuffer.values
     fanHistory = fanBuffers.mapValues(\.values)
   }

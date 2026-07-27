@@ -21,11 +21,16 @@ struct OverviewView: View {
         }
         Spacer()
         Button {
-          openSettings()
+          selectedDetail = nil
+          PreferencesWindowPresenter.shared.show(
+            coordinator: coordinator,
+            settings: settings,
+            fanControl: fanControl)
         } label: {
           Image(systemName: "gearshape")
         }
         .buttonStyle(.plain)
+        .help("Preferences")
         .accessibilityLabel("Preferences")
       }
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
@@ -49,12 +54,17 @@ struct OverviewView: View {
           value: batteryText,
           symbol: "battery.75percent",
           action: { selectedDetail = .battery })
+        MetricCard(
+          title: LocalizedStringKey(TemperatureL10n.string("Temperature")),
+          value: temperatureText,
+          symbol: "thermometer.medium",
+          action: { selectedDetail = .temperature })
+        MetricCard(
+          title: "Fans",
+          value: FanDisplayText.summary(coordinator.snapshot.fans),
+          symbol: "fan",
+          action: { selectedDetail = .fans })
       }
-      MetricCard(
-        title: "Fans",
-        value: FanDisplayText.summary(coordinator.snapshot.fans),
-        symbol: "fan",
-        action: { selectedDetail = .fans })
       memorySummary
       gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot)
@@ -69,10 +79,20 @@ struct OverviewView: View {
     .padding(16)
     .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
-    .sheet(item: $selectedDetail) { detail in
-      MetricDetailView(kind: detail)
-        .environmentObject(coordinator)
-        .environmentObject(fanControl)
+    .popover(
+      isPresented: Binding(
+        get: { selectedDetail != nil },
+        set: { isPresented in
+          if !isPresented { selectedDetail = nil }
+        }),
+      attachmentAnchor: .rect(.bounds),
+      arrowEdge: .trailing
+    ) {
+      if let selectedDetail {
+        MetricDetailView(kind: selectedDetail)
+          .environmentObject(coordinator)
+          .environmentObject(fanControl)
+      }
     }
   }
 
@@ -194,13 +214,15 @@ struct OverviewView: View {
     BatteryDisplayText.summary(coordinator.snapshot.battery)
   }
 
-  private func formattedBytes(_ bytes: UInt64) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+  private var temperatureText: String {
+    guard let value = coordinator.snapshot.temperature.value?.processorCelsius
+      ?? coordinator.snapshot.temperature.value?.maximumCelsius
+    else { return "—" }
+    return L10n.format("%.1f °C", value)
   }
 
-  private func openSettings() {
-    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    NSApp.activate(ignoringOtherApps: true)
+  private func formattedBytes(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
   }
 
   private func exportDiagnostics() {

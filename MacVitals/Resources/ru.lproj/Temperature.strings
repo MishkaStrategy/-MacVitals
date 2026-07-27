@@ -1,0 +1,5 @@
+"Temperature" = "Температура";
+"Processor" = "Процессор";
+"Processor temperature from Apple SMC" = "Температура процессора по данным Apple SMC";
+"Battery temperature" = "Температура батареи";
+"Temperature sensors are unavailable" = "Датчики температуры недоступны";

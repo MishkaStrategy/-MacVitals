@@ -103,9 +103,29 @@ final class FanControlClient: ObservableObject {
     }
   }
 
+  func prepareControl() {
+    switch state {
+    case .monitoringOnly:
+      lastMessage = L10n.string(
+        "Fan RPM monitoring is available. Control requires an approved signed helper.")
+    case .notRegistered:
+      requestApproval()
+    case .approvalRequired:
+      openApprovalSettings()
+    case .connecting:
+      lastMessage = L10n.string("Checking the fan control helper…")
+    case .ready:
+      lastMessage = nil
+    case .unavailable:
+      refreshStatus()
+    }
+  }
+
   func requestApproval() {
     guard FanControlSigningIdentity.hasTeamIdentifier() else {
       state = .monitoringOnly
+      lastMessage = L10n.string(
+        "Fan RPM monitoring is available. Control requires an approved signed helper.")
       return
     }
     do {
@@ -126,7 +146,7 @@ final class FanControlClient: ObservableObject {
 
   func setBoost(fan: FanReading, requestedRPM: Double, leaseSeconds: TimeInterval = 15 * 60) {
     guard state.canControl else {
-      lastMessage = L10n.string("Fan control is not ready yet.")
+      prepareControl()
       return
     }
     do {
@@ -161,7 +181,7 @@ final class FanControlClient: ObservableObject {
 
   func setAutomatic(fanIndex: Int) {
     guard state.canControl else {
-      lastMessage = L10n.string("Fan control is not ready yet.")
+      prepareControl()
       return
     }
     guard let helper = proxy() else {
@@ -182,7 +202,7 @@ final class FanControlClient: ObservableObject {
 
   func setAllAutomatic() {
     guard state.canControl else {
-      lastMessage = L10n.string("Fan control is not ready yet.")
+      prepareControl()
       return
     }
     guard let helper = proxy() else {
