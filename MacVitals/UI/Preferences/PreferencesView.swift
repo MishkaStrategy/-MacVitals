@@ -15,6 +15,9 @@ struct PreferencesView: View {
       menuBarTab
         .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
 
+      FanControlView()
+        .tabItem { Label("Fans", systemImage: "fan") }
+
       DiagnosticsView(
         snapshot: coordinator.snapshot,
         samplingHealth: coordinator.samplingHealth
