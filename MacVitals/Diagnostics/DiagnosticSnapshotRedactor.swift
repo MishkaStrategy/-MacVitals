@@ -9,6 +9,7 @@ nonisolated enum DiagnosticSnapshotRedactor {
       battery: sanitizedBattery(snapshot.battery),
       adapter: sanitizedAdapter(snapshot.adapter),
       gpu: sanitizedGPU(snapshot.gpu),
+      temperature: sanitizedTemperature(snapshot.temperature),
       fans: sanitizedFans(snapshot.fans),
       power: sanitizedPower(snapshot.power))
   }
@@ -73,7 +74,7 @@ nonisolated enum DiagnosticSnapshotRedactor {
       maxCapacityMah: nonnegativeFinite(value.maxCapacityMah),
       designCapacityMah: nonnegativeFinite(value.designCapacityMah),
       healthPercent: validPercentage(value.healthPercent),
-      temperatureCelsius: validTemperatureCelsius(value.temperatureCelsius),
+      temperatureCelsius: validBatteryTemperatureCelsius(value.temperatureCelsius),
       voltageVolts: nonnegativeFinite(value.voltageVolts),
       currentAmperes: finite(value.currentAmperes),
       batteryPowerWatts: finite(value.batteryPowerWatts))
@@ -111,6 +112,25 @@ nonisolated enum DiagnosticSnapshotRedactor {
       systemUtilizationPercent: validPercentage(value.systemUtilizationPercent),
       utilizationAvailability: value.utilizationAvailability)
     return replacingValue(metric, sanitized)
+  }
+
+  private static func sanitizedTemperature(
+    _ metric: MetricValue<TemperatureStats>
+  ) -> MetricValue<TemperatureStats> {
+    guard let value = metric.value else { return sanitizedMetadata(metric) }
+    let processor = validProcessorTemperatureCelsius(value.processorCelsius)
+    let battery = validBatteryTemperatureCelsius(value.batteryCelsius)
+    let maximum = validProcessorTemperatureCelsius(value.maximumCelsius)
+    guard processor != nil || battery != nil || maximum != nil else {
+      return invalidMetric(metric, message: "Invalid temperature telemetry was omitted")
+    }
+    return replacingValue(
+      metric,
+      TemperatureStats(
+        processorCelsius: processor,
+        batteryCelsius: battery,
+        maximumCelsius: maximum,
+        processorSensorKey: value.processorSensorKey))
   }
 
   private static func sanitizedFans(
@@ -212,7 +232,12 @@ nonisolated enum DiagnosticSnapshotRedactor {
     return value
   }
 
-  private static func validTemperatureCelsius(_ value: Double?) -> Double? {
+  private static func validProcessorTemperatureCelsius(_ value: Double?) -> Double? {
+    guard let value = finite(value), (5...130).contains(value) else { return nil }
+    return value
+  }
+
+  private static func validBatteryTemperatureCelsius(_ value: Double?) -> Double? {
     guard let value = finite(value), (-20...100).contains(value) else { return nil }
     return value
   }
