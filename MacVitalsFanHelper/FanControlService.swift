@@ -6,18 +6,22 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 {
   private let listener = NSXPCListener(machServiceName: FanControlServiceConstants.machServiceName)
   private let queue = DispatchQueue(label: "com.mishkacher.MacVitals.FanControl.service")
+  private let recoveryStore = FanControlRecoveryStore()
   private var connection: AppleSMCConnection?
   private var recovery = FanControlRecoveryState()
+  private var startupRecoveryRequired = false
+  private var startupError: String?
   private var modeKeyFormats: [Int: String] = [:]
   private var timer: DispatchSourceTimer?
 
   override init() {
     super.init()
     listener.delegate = self
-    startWatchdog()
   }
 
   func run() {
+    queue.sync { performStartupRecovery() }
+    startWatchdog()
     listener.resume()
     RunLoop.current.run()
   }
@@ -43,7 +47,10 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
       do {
         let count = try fanCount()
         guard count > 0 else { return (false, "AppleSMC exposes no fans") }
-        guard recovery.isEmpty else {
+        guard !startupRecoveryRequired else {
+          return (false, startupError ?? "Automatic fan recovery is pending")
+        }
+        guard !recovery.hasPendingRecovery(at: Date()) else {
           return (false, "Automatic fan recovery is pending")
         }
         return (true, nil)
@@ -62,6 +69,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
   ) {
     let result: (Bool, Double, String?) = queue.sync {
       do {
+        guard !startupRecoveryRequired, !recovery.hasPendingRecovery(at: Date()) else {
+          throw FanControlSafetyError.recoveryPending
+        }
         let fan = try reading(index: index)
         let plan = try FanControlSafetyPolicy.plan(
           fan: fan,
@@ -69,13 +79,17 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
           leaseSeconds: leaseSeconds,
           thermalSeverity: FanThermalSeverity(ProcessInfo.processInfo.thermalState))
 
-        recovery.beginRecovery(index: index, now: Date())
+        try persistRecoveryTransition { state in
+          state.beginRecovery(index: index, now: Date())
+        }
         do {
           try enableManualMode(index: index)
           try writeTargetRPM(index: index, rpm: plan.targetRPM)
-          recovery.activate(
-            index: index,
-            deadline: Date().addingTimeInterval(plan.leaseSeconds))
+          try persistRecoveryTransition { state in
+            state.activate(
+              index: index,
+              deadline: Date().addingTimeInterval(plan.leaseSeconds))
+          }
           return (true, plan.targetRPM, nil)
         } catch {
           let operationError = error
@@ -123,6 +137,84 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
   private func scheduleRestoreAllAutomatic() {
     queue.async { [service = self] in service.restoreAllAutomatic() }
+  }
+
+  private func performStartupRecovery() {
+    do {
+      recovery = try recoveryStore.load()
+      guard !recovery.isEmpty else {
+        startupRecoveryRequired = false
+        startupError = nil
+        return
+      }
+      startupRecoveryRequired = true
+      startupError = "Recovering fan control after helper restart"
+      try restoreAllAutomaticThrowing()
+      startupRecoveryRequired = false
+      startupError = nil
+    } catch {
+      startupRecoveryRequired = true
+      startupError = "Could not load or restore the fan recovery ledger: \(error.localizedDescription)"
+      attemptEmergencyRestoreAll()
+    }
+  }
+
+  private func attemptEmergencyRestoreAll() {
+    do {
+      let count = try fanCount()
+      let source = try smc()
+      var firstError: Error?
+      for index in 0..<count {
+        do {
+          let key = try modeKey(index: index)
+          try source.writeKey(key, bytes: [0])
+        } catch {
+          firstError = firstError ?? error
+        }
+      }
+      if (try? source.readKey("Ftst")) != nil {
+        do {
+          try source.writeKey("Ftst", bytes: [0])
+        } catch {
+          firstError = firstError ?? error
+        }
+      }
+      if let firstError { throw firstError }
+      try recoveryStore.save(FanControlRecoveryState())
+      recovery.markAllRestored()
+      startupRecoveryRequired = false
+      startupError = nil
+    } catch {
+      startupRecoveryRequired = true
+      startupError = "Emergency automatic fan recovery is pending: \(error.localizedDescription)"
+    }
+  }
+
+  private func persistRecoveryTransition(
+    _ update: (inout FanControlRecoveryState) -> Void
+  ) throws {
+    var next = recovery
+    update(&next)
+    try recoveryStore.save(next)
+    recovery = next
+    if !next.hasPendingRecovery(at: Date()) {
+      startupRecoveryRequired = false
+      startupError = nil
+    }
+  }
+
+  private func trackSafeRestore(
+    _ update: (inout FanControlRecoveryState) -> Void
+  ) {
+    var next = recovery
+    update(&next)
+    recovery = next
+    do {
+      try recoveryStore.save(next)
+    } catch {
+      startupRecoveryRequired = true
+      startupError = "Could not persist automatic fan recovery: \(error.localizedDescription)"
+    }
   }
 
   private func smc() throws -> AppleSMCConnection {
@@ -226,7 +318,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     let source = try smc()
     let count = try fanCount()
     guard index >= 0, index < count else { throw FanControlSafetyError.invalidFan }
-    recovery.beginRecovery(index: index, now: Date())
+    trackSafeRestore { state in
+      state.beginRecovery(index: index, now: Date())
+    }
 
     var firstError: Error?
     do {
@@ -245,7 +339,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     }
 
     if let firstError { throw firstError }
-    recovery.markRestored(index: index)
+    try persistRecoveryTransition { state in
+      state.markRestored(index: index)
+    }
   }
 
   private func restoreAllAutomatic() {
@@ -256,8 +352,10 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     let count = try fanCount()
     let source = try smc()
     let recoveryStartedAt = Date()
-    for index in 0..<count {
-      recovery.beginRecovery(index: index, now: recoveryStartedAt)
+    trackSafeRestore { state in
+      for index in 0..<count {
+        state.beginRecovery(index: index, now: recoveryStartedAt)
+      }
     }
 
     var firstError: Error?
@@ -279,7 +377,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
     }
 
     if let firstError { throw firstError }
-    recovery.markAllRestored()
+    try persistRecoveryTransition { state in
+      state.markAllRestored()
+    }
   }
 
   private func startWatchdog() {
@@ -291,6 +391,11 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
   }
 
   private func watchdogTick(now: Date = Date()) {
+    if startupRecoveryRequired {
+      attemptEmergencyRestoreAll()
+      if startupRecoveryRequired { return }
+    }
+
     for index in recovery.expired(at: now) { restoreAutomatic(index: index) }
 
     let severity = FanThermalSeverity(ProcessInfo.processInfo.thermalState)
