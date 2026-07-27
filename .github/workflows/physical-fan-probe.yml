@@ -170,8 +170,15 @@ jobs:
           echo "structural_status=${structural_status}" >> "${GITHUB_OUTPUT}"
           echo "strict_status=${strict_status}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload fan probe evidence before enforcement
-        if: always()
+          REDACT_WORKSPACE="${GITHUB_WORKSPACE}" \
+          REDACT_HOME="${HOME:-}" \
+          REDACT_USER="$(id -un 2>/dev/null || true)" \
+          REDACT_HOST="$(hostname 2>/dev/null || true)" \
+            python3 scripts/sanitize_physical_fan_evidence.py "${evidence_root}"
+          echo "privacy_ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload sanitized fan probe evidence before enforcement
+        if: always() && steps.probe.outputs.privacy_ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: physical-fan-probe-${{ steps.identity.outputs.short_sha }}
@@ -187,8 +194,10 @@ jobs:
           PROBE_STATUS: ${{ steps.probe.outputs.probe_status }}
           STRUCTURAL_STATUS: ${{ steps.probe.outputs.structural_status }}
           STRICT_STATUS: ${{ steps.probe.outputs.strict_status }}
+          PRIVACY_READY: ${{ steps.probe.outputs.privacy_ready }}
         run: |
           set -Eeuo pipefail
+          [[ "${PRIVACY_READY:-}" == "true" ]] || { echo "Fan probe privacy gate failed" >&2; exit 1; }
           for value in "${BUILD_STATUS:-}" "${PROBE_STATUS:-}" "${STRUCTURAL_STATUS:-}" "${STRICT_STATUS:-}"; do
             [[ "${value}" =~ ^[0-9]+$ ]] || { echo "Fan probe status output is invalid" >&2; exit 1; }
           done
