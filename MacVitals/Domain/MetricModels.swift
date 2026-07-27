@@ -152,8 +152,22 @@ nonisolated struct GPUStats: Codable, Sendable, Equatable {
 
 nonisolated enum FanMode: String, Codable, Sendable {
   case automatic
+  case system
   case manual
   case unknown
+
+  static func decodeSMCByte(_ value: UInt8?) -> Self {
+    switch value {
+    case 0: return .automatic
+    case 1: return .manual
+    case 3: return .system
+    default: return .unknown
+    }
+  }
+
+  var isSystemControlled: Bool {
+    self == .automatic || self == .system
+  }
 }
 
 nonisolated struct FanReading: Codable, Sendable, Equatable, Identifiable {
