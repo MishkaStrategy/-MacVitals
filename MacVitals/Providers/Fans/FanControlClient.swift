@@ -7,6 +7,7 @@ nonisolated enum FanControlClientState: Sendable, Equatable {
   case monitoringOnly
   case notRegistered
   case approvalRequired
+  case connecting
   case ready
   case unavailable(String)
 
@@ -22,6 +23,8 @@ nonisolated enum FanControlClientState: Sendable, Equatable {
       return L10n.string("Fan control helper is not installed.")
     case .approvalRequired:
       return L10n.string("Administrator approval is required in Login Items.")
+    case .connecting:
+      return L10n.string("Checking the fan control helper…")
     case .ready:
       return L10n.string("Fan control helper is ready.")
     case .unavailable(let message):
@@ -71,26 +74,31 @@ final class FanControlClient: ObservableObject {
   func refreshStatus() {
     guard FanControlSigningIdentity.hasTeamIdentifier() else {
       invalidateConnection()
+      operationInProgress = false
       state = .monitoringOnly
       return
     }
 
     switch service.status {
     case .enabled:
-      state = .ready
+      state = .connecting
       ensureConnection()
       verifyHelper()
     case .requiresApproval:
       invalidateConnection()
+      operationInProgress = false
       state = .approvalRequired
     case .notRegistered:
       invalidateConnection()
+      operationInProgress = false
       state = .notRegistered
     case .notFound:
       invalidateConnection()
+      operationInProgress = false
       state = .unavailable(L10n.string("Fan control helper is missing from this app build."))
     @unknown default:
       invalidateConnection()
+      operationInProgress = false
       state = .unavailable(L10n.string("Fan control helper status is unknown."))
     }
   }
@@ -117,15 +125,22 @@ final class FanControlClient: ObservableObject {
   }
 
   func setBoost(fan: FanReading, requestedRPM: Double, leaseSeconds: TimeInterval = 15 * 60) {
-    guard state.canControl else { return }
+    guard state.canControl else {
+      lastMessage = L10n.string("Fan control is not ready yet.")
+      return
+    }
     do {
       let plan = try FanControlSafetyPolicy.plan(
         fan: fan,
         requestedRPM: requestedRPM,
         leaseSeconds: leaseSeconds,
         thermalSeverity: FanThermalSeverity(ProcessInfo.processInfo.thermalState))
+      guard let helper = proxy() else {
+        handleMissingProxy()
+        return
+      }
       operationInProgress = true
-      proxy()?.setFanBoost(
+      helper.setFanBoost(
         index: plan.fanIndex,
         requestedRPM: plan.targetRPM,
         leaseSeconds: plan.leaseSeconds
@@ -135,31 +150,53 @@ final class FanControlClient: ObservableObject {
           self?.lastMessage = success
             ? L10n.format("Cooling boost set to %d RPM.", Int(appliedRPM.rounded()))
             : message ?? L10n.string("Fan control request failed.")
+          if success { self?.state = .ready }
         }
       }
     } catch {
+      operationInProgress = false
       lastMessage = error.localizedDescription
     }
   }
 
   func setAutomatic(fanIndex: Int) {
-    guard state.canControl else { return }
+    guard state.canControl else {
+      lastMessage = L10n.string("Fan control is not ready yet.")
+      return
+    }
+    guard let helper = proxy() else {
+      handleMissingProxy()
+      return
+    }
     operationInProgress = true
-    proxy()?.setFanAutomatic(index: fanIndex) { [weak self] success, message in
+    helper.setFanAutomatic(index: fanIndex) { [weak self] success, message in
       Task { @MainActor in
         self?.operationInProgress = false
         self?.lastMessage = success
           ? L10n.string("System automatic fan control restored.")
           : message ?? L10n.string("Could not restore automatic fan control.")
+        if success { self?.state = .ready }
       }
     }
   }
 
   func setAllAutomatic() {
-    guard state.canControl else { return }
-    proxy()?.setAllFansAutomatic { [weak self] success, message in
+    guard state.canControl else {
+      lastMessage = L10n.string("Fan control is not ready yet.")
+      return
+    }
+    guard let helper = proxy() else {
+      handleMissingProxy()
+      return
+    }
+    operationInProgress = true
+    helper.setAllFansAutomatic { [weak self] success, message in
       Task { @MainActor in
-        if !success { self?.lastMessage = message }
+        self?.operationInProgress = false
+        self?.lastMessage = success
+          ? L10n.string("System automatic fan control restored for all fans.")
+          : message ?? L10n.string("Could not restore automatic fan control.")
+        if success { self?.state = .ready }
       }
     }
   }
@@ -179,11 +216,15 @@ final class FanControlClient: ObservableObject {
     connection.remoteObjectInterface = NSXPCInterface(with: FanControlXPCProtocol.self)
     connection.interruptionHandler = { [weak self] in
       Task { @MainActor in
+        self?.operationInProgress = false
+        self?.state = .unavailable(
+          L10n.string("Fan control helper connection was interrupted."))
         self?.lastMessage = L10n.string("Fan control helper connection was interrupted.")
       }
     }
     connection.invalidationHandler = { [weak self] in
       Task { @MainActor in
+        self?.operationInProgress = false
         self?.connection = nil
         self?.refreshStatus()
       }
@@ -197,19 +238,35 @@ final class FanControlClient: ObservableObject {
     return connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
       Task { @MainActor in
         self?.operationInProgress = false
+        self?.state = .unavailable(error.localizedDescription)
         self?.lastMessage = error.localizedDescription
       }
     } as? FanControlXPCProtocol
   }
 
   private func verifyHelper() {
-    proxy()?.status { [weak self] available, message in
+    guard let helper = proxy() else {
+      handleMissingProxy()
+      return
+    }
+    helper.status { [weak self] available, message in
       Task { @MainActor in
-        if !available {
+        self?.operationInProgress = false
+        if available {
+          self?.state = .ready
+          self?.lastMessage = nil
+        } else {
           self?.state = .unavailable(
             message ?? L10n.string("Fan control helper did not pass its self-check."))
         }
       }
     }
+  }
+
+  private func handleMissingProxy() {
+    operationInProgress = false
+    let message = L10n.string("Could not connect to the fan control helper.")
+    state = .unavailable(message)
+    lastMessage = message
   }
 }
