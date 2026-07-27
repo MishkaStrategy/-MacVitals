@@ -109,13 +109,13 @@ struct FanControlView: View {
     case .connecting:
       ProgressView()
         .controlSize(.small)
-        .accessibilityLabel("Connecting to fan control helper")
+        .accessibilityLabel("Fan control helper")
     case .ready:
-      Button("All Automatic") { fanControl.setAllAutomatic() }
+      Button("Use System Automatic") { fanControl.setAllAutomatic() }
         .disabled(fanControl.operationInProgress)
         .accessibilityIdentifier("restoreAllFansAuto")
     case .unavailable:
-      Button("Retry") { fanControl.refreshStatus() }
+      Button("Enable Control") { fanControl.refreshStatus() }
         .disabled(fanControl.operationInProgress)
     }
   }
@@ -131,7 +131,7 @@ struct FanControlView: View {
       }
 
       HStack(spacing: 16) {
-        LabeledContent("Target", value: MetricNumberFormatter.rpm(fan.targetRPM) ?? "—")
+        LabeledContent("Target speed", value: MetricNumberFormatter.rpm(fan.targetRPM) ?? "—")
         LabeledContent("Mode", value: fan.mode.displayName)
       }
       .font(.caption)
@@ -148,7 +148,7 @@ struct FanControlView: View {
         }
 
         HStack(spacing: 8) {
-          Button("Boost 15 min") {
+          Button("Apply 15-minute Boost") {
             if fanControl.state.canControl {
               fanControl.setBoost(fan: fan, requestedRPM: binding.wrappedValue)
             } else {
@@ -186,18 +186,17 @@ struct FanControlView: View {
   private var controlAvailabilityNote: String? {
     switch fanControl.state {
     case .monitoringOnly:
-      return L10n.string(
-        "This test build can monitor fan speed. Click Enable Control to see the installation requirement for the privileged helper.")
+      return L10n.string("Fan RPM monitoring is available. Control requires an approved signed helper.")
     case .notRegistered:
-      return L10n.string("Enable the helper, then approve it in System Settings when macOS asks.")
+      return L10n.string("Fan control helper is not installed.")
     case .approvalRequired:
-      return L10n.string("Approve MacVitals in System Settings › General › Login Items.")
+      return L10n.string("Approval is required in System Settings › General › Login Items.")
     case .connecting:
-      return L10n.string("Checking the privileged helper before enabling controls.")
+      return nil
     case .ready:
-      return L10n.string("Temporary boosts are active only for the selected lease and then return to Automatic.")
+      return L10n.string("Fan control helper is ready.")
     case .unavailable:
-      return L10n.string("The helper did not respond. Retry or restore all fans to Automatic from a signed build.")
+      return nil
     }
   }
 
