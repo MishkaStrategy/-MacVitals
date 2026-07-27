@@ -42,7 +42,7 @@ final class TemperatureProvider: @unchecked Sendable {
         source: .unavailable,
         timestamp: now,
         isEstimated: false,
-        message: L10n.string("Temperature sensors are unavailable"))
+        message: TemperatureL10n.string("Temperature sensors are unavailable"))
     }
 
     return MetricValue(
@@ -58,8 +58,8 @@ final class TemperatureProvider: @unchecked Sendable {
       timestamp: now,
       isEstimated: false,
       message: processorReading == nil
-        ? L10n.string("Battery temperature")
-        : L10n.string("Processor temperature from Apple SMC"))
+        ? TemperatureL10n.string("Battery temperature")
+        : TemperatureL10n.string("Processor temperature from Apple SMC"))
   }
 
   private func readProcessorTemperature() -> (key: String, value: Double)? {
