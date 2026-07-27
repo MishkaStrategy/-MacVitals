@@ -47,6 +47,18 @@ nonisolated enum FanControlSafetyPolicy {
   static let minimumMaximumFraction = 0.55
   static let fairThermalMinimumFraction = 0.80
 
+  static func safeBoostRange(for fan: FanReading) -> ClosedRange<Double>? {
+    guard fan.index >= 0, fan.index < FanValueNormalizer.maximumFanCount,
+      let minimum = FanValueNormalizer.rpm(fan.minimumRPM),
+      let maximum = FanValueNormalizer.rpm(fan.maximumRPM),
+      minimum > 0,
+      maximum > minimum
+    else { return nil }
+    let current = FanValueNormalizer.rpm(fan.currentRPM) ?? minimum
+    let floor = min(maximum, max(minimum, current, maximum * minimumMaximumFraction))
+    return floor...maximum
+  }
+
   static func plan(
     fan: FanReading,
     requestedRPM: Double,
@@ -56,11 +68,7 @@ nonisolated enum FanControlSafetyPolicy {
     guard fan.index >= 0, fan.index < FanValueNormalizer.maximumFanCount else {
       throw FanControlSafetyError.invalidFan
     }
-    guard let minimum = FanValueNormalizer.rpm(fan.minimumRPM),
-      let maximum = FanValueNormalizer.rpm(fan.maximumRPM),
-      minimum > 0,
-      maximum > minimum
-    else {
+    guard let safeRange = safeBoostRange(for: fan) else {
       throw FanControlSafetyError.invalidRange
     }
     guard let requested = FanValueNormalizer.rpm(requestedRPM), requested > 0,
@@ -68,11 +76,8 @@ nonisolated enum FanControlSafetyPolicy {
     else {
       throw FanControlSafetyError.invalidRequest
     }
-
-    let current = FanValueNormalizer.rpm(fan.currentRPM) ?? minimum
-    let safetyFloor = min(maximum, max(minimum, current, maximum * minimumMaximumFraction))
-    guard requested >= safetyFloor else {
-      throw FanControlSafetyError.requestBelowSafetyFloor(safetyFloor)
+    guard requested >= safeRange.lowerBound else {
+      throw FanControlSafetyError.requestBelowSafetyFloor(safeRange.lowerBound)
     }
 
     let thermallyAdjusted: Double
@@ -80,14 +85,14 @@ nonisolated enum FanControlSafetyPolicy {
     case .nominal:
       thermallyAdjusted = requested
     case .fair:
-      thermallyAdjusted = max(requested, maximum * fairThermalMinimumFraction)
+      thermallyAdjusted = max(requested, safeRange.upperBound * fairThermalMinimumFraction)
     case .serious, .critical:
-      thermallyAdjusted = maximum
+      thermallyAdjusted = safeRange.upperBound
     }
 
     return FanControlPlan(
       fanIndex: fan.index,
-      targetRPM: min(maximum, thermallyAdjusted),
+      targetRPM: min(safeRange.upperBound, thermallyAdjusted),
       leaseSeconds: min(maximumLeaseSeconds, max(minimumLeaseSeconds, leaseSeconds)),
       thermalSeverity: thermalSeverity)
   }
