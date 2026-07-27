@@ -22,14 +22,17 @@ final class PreferencesWindowPresenter {
       .environmentObject(coordinator)
       .environmentObject(settings)
       .environmentObject(fanControl)
-      .frame(minWidth: 620, minHeight: 520)
+      .frame(minWidth: 860, minHeight: 620)
 
     let hostingController = NSHostingController(rootView: rootView)
     let window = NSWindow(contentViewController: hostingController)
     window.title = L10n.string("Preferences")
-    window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-    window.setContentSize(NSSize(width: 680, height: 580))
-    window.minSize = NSSize(width: 620, height: 520)
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.toolbarStyle = .unifiedCompact
+    window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+    window.setContentSize(NSSize(width: 920, height: 680))
+    window.minSize = NSSize(width: 860, height: 620)
     window.isReleasedWhenClosed = false
     window.center()
 
