@@ -40,7 +40,7 @@ final class MenuBarRendererTests: XCTestCase {
   func testInvalidNumericMetricsUseUnavailablePlaceholders() {
     XCTAssertEqual(
       MenuBarRenderer.render(snapshot: snapshot(), metrics: MenuMetric.allCases),
-      "CPU — · GPU — · RAM — · 🔋 — · ⚡ — · ?")
+      "CPU — · GPU — · RAM — · 🔋 — · 🌀 — · ⚡ — · ?")
   }
 
   func testBatteryMetricIncludesTemperatureWhenAvailable() {
@@ -64,9 +64,32 @@ final class MenuBarRendererTests: XCTestCase {
       "🔋 32.4 °C")
   }
 
+  func testFanMetricRendersOneAndTwoCurrentSpeeds() {
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(fans: [fan(index: 0, current: 2_101)]),
+        metrics: [.fans]),
+      "🌀 2101 RPM")
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(
+          fans: [fan(index: 0, current: 1_900), fan(index: 1, current: 2_100)]),
+        metrics: [.fans]),
+      "🌀 1900/2100 RPM")
+  }
+
+  func testFanMetricNeverPrintsInvalidNumbers() {
+    XCTAssertEqual(
+      MenuBarRenderer.render(
+        snapshot: snapshot(fans: [fan(index: 0, current: .nan)]),
+        metrics: [.fans]),
+      "🌀 —")
+  }
+
   private func snapshot(
     batteryPercentage: Double? = -1,
-    batteryTemperature: Double? = nil
+    batteryTemperature: Double? = nil,
+    fans: [FanReading]? = nil
   ) -> SystemSnapshot {
     let now = Date(timeIntervalSince1970: 100)
     return SystemSnapshot(
@@ -170,6 +193,27 @@ final class MenuBarRendererTests: XCTestCase {
         timestamp: now,
         isEstimated: false,
         message: nil),
+      fans: fans.map {
+        MetricValue(
+          value: FanStats(fans: $0),
+          unit: .rpm,
+          availability: .available,
+          quality: .experimental,
+          source: .appleSMC,
+          timestamp: now,
+          isEstimated: false,
+          message: nil)
+      } ?? .unavailable(unit: .rpm, availability: .temporarilyUnavailable),
       power: .unavailable(unit: .watts, availability: .temporarilyUnavailable))
+  }
+
+  private func fan(index: Int, current: Double?) -> FanReading {
+    FanReading(
+      index: index,
+      currentRPM: current,
+      targetRPM: nil,
+      minimumRPM: 1_200,
+      maximumRPM: 6_000,
+      mode: .automatic)
   }
 }
