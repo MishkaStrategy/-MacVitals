@@ -6,6 +6,7 @@ import OSLog
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let settings = SettingsStore()
   let coordinator = MetricsCoordinator()
+  let fanControl = FanControlClient()
   private let notificationCoordinator = NotificationCoordinator()
   private var statusController: StatusItemController?
   private var cancellables = Set<AnyCancellable>()
@@ -32,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self?.notificationCoordinator.process(snapshot: snapshot)
     }
 
+    fanControl.refreshStatus()
     coordinator.start()
     LifecycleMonitor.shared.start(coordinator: coordinator)
     Logger.lifecycle.info("MacVitals started")
@@ -39,12 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidBecomeActive(_ notification: Notification) {
     settings.refreshLaunchAtLoginState()
+    fanControl.refreshStatus()
     Task { [weak self] in
       await self?.notificationCoordinator.refreshAuthorizationState()
     }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    fanControl.setAllAutomatic()
+    fanControl.invalidateConnection()
     coordinator.stop()
     coordinator.onSnapshot = nil
     notificationCoordinator.onAuthorizationStateChange = nil
