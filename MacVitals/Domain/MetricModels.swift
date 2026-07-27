@@ -150,6 +150,13 @@ nonisolated struct GPUStats: Codable, Sendable, Equatable {
   let utilizationAvailability: MetricAvailability
 }
 
+nonisolated struct TemperatureStats: Codable, Sendable, Equatable {
+  let processorCelsius: Double?
+  let batteryCelsius: Double?
+  let maximumCelsius: Double?
+  let processorSensorKey: String?
+}
+
 nonisolated enum FanMode: String, Codable, Sendable {
   case automatic
   case system
@@ -214,6 +221,7 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
   let battery: MetricValue<BatteryStats>
   let adapter: MetricValue<AdapterStats>
   let gpu: MetricValue<GPUStats>
+  let temperature: MetricValue<TemperatureStats>
   let fans: MetricValue<FanStats>
   let power: MetricValue<PowerAssessment>
 
@@ -224,6 +232,9 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
     battery: MetricValue<BatteryStats>,
     adapter: MetricValue<AdapterStats>,
     gpu: MetricValue<GPUStats>,
+    temperature: MetricValue<TemperatureStats> = .unavailable(
+      unit: .celsius,
+      availability: .temporarilyUnavailable),
     fans: MetricValue<FanStats> = .unavailable(
       unit: .rpm,
       availability: .temporarilyUnavailable),
@@ -235,6 +246,7 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
     self.battery = battery
     self.adapter = adapter
     self.gpu = gpu
+    self.temperature = temperature
     self.fans = fans
     self.power = power
   }
@@ -246,6 +258,7 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
     battery: .unavailable(unit: .percent, availability: .temporarilyUnavailable),
     adapter: .unavailable(unit: .watts, availability: .temporarilyUnavailable),
     gpu: .unavailable(unit: .percent, availability: .temporarilyUnavailable),
+    temperature: .unavailable(unit: .celsius, availability: .temporarilyUnavailable),
     fans: .unavailable(unit: .rpm, availability: .temporarilyUnavailable),
     power: .unavailable(unit: .watts, availability: .temporarilyUnavailable)
   )
