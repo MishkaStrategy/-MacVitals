@@ -55,7 +55,7 @@ struct OverviewView: View {
           symbol: "battery.75percent",
           action: { selectedDetail = .battery })
         MetricCard(
-          title: "Temperature",
+          title: LocalizedStringKey(TemperatureL10n.string("Temperature")),
           value: temperatureText,
           symbol: "thermometer.medium",
           action: { selectedDetail = .temperature })
