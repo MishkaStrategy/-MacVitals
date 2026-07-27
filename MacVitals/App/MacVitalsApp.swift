@@ -10,7 +10,7 @@ struct MacVitalsApp: App {
         .environmentObject(appDelegate.coordinator)
         .environmentObject(appDelegate.settings)
         .environmentObject(appDelegate.fanControl)
-        .frame(minWidth: 620, minHeight: 520)
+        .frame(minWidth: 860, minHeight: 620)
     }
   }
 }

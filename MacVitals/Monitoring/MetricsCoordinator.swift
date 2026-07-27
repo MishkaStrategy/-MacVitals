@@ -9,6 +9,8 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
   let battery: TimedPoint
   let temperature: TimedPoint
   let systemPower: TimedPoint
+  let batteryPower: TimedPoint
+  let adapterInputPower: TimedPoint
 
   static func make(from snapshot: SystemSnapshot) -> Self {
     Self(
@@ -24,7 +26,13 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
           ?? snapshot.temperature.value?.maximumCelsius),
       systemPower: TimedPoint(
         timestamp: snapshot.timestamp,
-        value: snapshot.power.value?.estimatedSystemPowerWatts))
+        value: snapshot.power.value?.estimatedSystemPowerWatts),
+      batteryPower: TimedPoint(
+        timestamp: snapshot.timestamp,
+        value: snapshot.power.value?.batteryPowerWatts ?? snapshot.battery.value?.batteryPowerWatts),
+      adapterInputPower: TimedPoint(
+        timestamp: snapshot.timestamp,
+        value: snapshot.power.value?.adapterInputPowerWatts))
   }
 }
 
@@ -36,20 +44,27 @@ final class MetricsCoordinator: ObservableObject {
   @Published private(set) var gpuHistory: [TimedPoint] = []
   @Published private(set) var batteryHistory: [TimedPoint] = []
   @Published private(set) var temperatureHistory: [TimedPoint] = []
+  @Published private(set) var temperatureSensorHistory: [String: [TimedPoint]] = [:]
   @Published private(set) var systemPowerHistory: [TimedPoint] = []
+  @Published private(set) var batteryPowerHistory: [TimedPoint] = []
+  @Published private(set) var adapterInputPowerHistory: [TimedPoint] = []
   @Published private(set) var fanHistory: [Int: [TimedPoint]] = [:]
   @Published private(set) var samplingHealth: SamplingHealth?
   @Published private(set) var isRunning = false
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
 
+  private static let maximumHistoryCapacity = 3_600
   private let sampler = SystemSampler()
-  private var cpuBuffer = RingBuffer<TimedPoint>(capacity: 720)
-  private var memoryBuffer = RingBuffer<TimedPoint>(capacity: 720)
-  private var gpuBuffer = RingBuffer<TimedPoint>(capacity: 720)
-  private var batteryBuffer = RingBuffer<TimedPoint>(capacity: 720)
-  private var temperatureBuffer = RingBuffer<TimedPoint>(capacity: 720)
-  private var systemPowerBuffer = RingBuffer<TimedPoint>(capacity: 720)
+  private var cpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var memoryBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var gpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var batteryBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var temperatureBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var temperatureSensorBuffers: [String: RingBuffer<TimedPoint>] = [:]
+  private var systemPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var batteryPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var adapterInputPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
 
@@ -121,8 +136,29 @@ final class MetricsCoordinator: ObservableObject {
     batteryBuffer.append(historyPoints.battery)
     temperatureBuffer.append(historyPoints.temperature)
     systemPowerBuffer.append(historyPoints.systemPower)
+    batteryPowerBuffer.append(historyPoints.batteryPower)
+    adapterInputPowerBuffer.append(historyPoints.adapterInputPower)
+    appendTemperatureSensorHistory(from: newSnapshot)
     appendFanHistory(from: newSnapshot)
     publishHistory()
+  }
+
+  private func appendTemperatureSensorHistory(from snapshot: SystemSnapshot) {
+    let sensors = snapshot.temperature.value?.sensors ?? []
+    let observedIDs = Set(sensors.map(\.id))
+
+    for sensor in sensors {
+      var buffer = temperatureSensorBuffers[sensor.id]
+        ?? RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: sensor.celsius))
+      temperatureSensorBuffers[sensor.id] = buffer
+    }
+
+    for id in Array(temperatureSensorBuffers.keys) where !observedIDs.contains(id) {
+      guard var buffer = temperatureSensorBuffers[id] else { continue }
+      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
+      temperatureSensorBuffers[id] = buffer
+    }
   }
 
   private func appendFanHistory(from snapshot: SystemSnapshot) {
@@ -130,7 +166,8 @@ final class MetricsCoordinator: ObservableObject {
     let observedIndexes = Set(fans.map(\.index))
 
     for fan in fans {
-      var buffer = fanBuffers[fan.index] ?? RingBuffer<TimedPoint>(capacity: 720)
+      var buffer = fanBuffers[fan.index]
+        ?? RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
       buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: fan.currentRPM))
       fanBuffers[fan.index] = buffer
     }
@@ -150,6 +187,14 @@ final class MetricsCoordinator: ObservableObject {
     batteryBuffer.append(point)
     temperatureBuffer.append(point)
     systemPowerBuffer.append(point)
+    batteryPowerBuffer.append(point)
+    adapterInputPowerBuffer.append(point)
+
+    for id in Array(temperatureSensorBuffers.keys) {
+      guard var buffer = temperatureSensorBuffers[id] else { continue }
+      buffer.append(TimedPoint(value: nil, discontinuity: true))
+      temperatureSensorBuffers[id] = buffer
+    }
 
     for index in Array(fanBuffers.keys) {
       guard var buffer = fanBuffers[index] else { continue }
@@ -164,7 +209,10 @@ final class MetricsCoordinator: ObservableObject {
     gpuHistory = gpuBuffer.values
     batteryHistory = batteryBuffer.values
     temperatureHistory = temperatureBuffer.values
+    temperatureSensorHistory = temperatureSensorBuffers.mapValues(\.values)
     systemPowerHistory = systemPowerBuffer.values
+    batteryPowerHistory = batteryPowerBuffer.values
+    adapterInputPowerHistory = adapterInputPowerBuffer.values
     fanHistory = fanBuffers.mapValues(\.values)
   }
 }

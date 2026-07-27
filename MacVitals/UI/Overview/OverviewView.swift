@@ -2,8 +2,8 @@ import Charts
 import SwiftUI
 
 nonisolated enum OverviewLayout {
-  static let width: CGFloat = 390
-  static let height: CGFloat = 720
+  static let width: CGFloat = 410
+  static let height: CGFloat = 740
 }
 
 struct OverviewView: View {
@@ -15,9 +15,20 @@ struct OverviewView: View {
   var body: some View {
     VStack(spacing: 10) {
       HStack {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 2) {
           Text("MacVitals").font(.title2.bold())
-          Text("Privacy-first Mac diagnostics").foregroundStyle(.secondary)
+          HStack(spacing: 6) {
+            Circle()
+              .fill(coordinator.isRunning ? Color.green : Color.orange)
+              .frame(width: 7, height: 7)
+            Text(coordinator.isRunning ? L10n.string("Live monitoring") : L10n.string("Monitoring paused"))
+              .foregroundStyle(.secondary)
+            Text("·")
+              .foregroundStyle(.tertiary)
+            Text(L10n.format("Every %g s", settings.samplingInterval))
+              .foregroundStyle(.secondary)
+          }
+          .font(.caption)
         }
         Spacer()
         Button {
@@ -27,47 +38,52 @@ struct OverviewView: View {
             settings: settings,
             fanControl: fanControl)
         } label: {
-          Image(systemName: "gearshape")
+          Image(systemName: "gearshape.fill")
+            .font(.title3)
+            .padding(7)
+            .background(.quaternary.opacity(0.45), in: Circle())
         }
         .buttonStyle(.plain)
         .help("Preferences")
         .accessibilityLabel("Preferences")
       }
+
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
         MetricCard(
           title: "CPU",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.cpu.value?.total),
-          symbol: "cpu",
+          symbol: "cpu.fill",
           action: { selectedDetail = .cpu })
         MetricCard(
           title: "Memory",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.memory.value?.usedPercent),
-          symbol: "memorychip",
+          symbol: "memorychip.fill",
           action: { selectedDetail = .memory })
         MetricCard(
           title: "GPU",
           value: gpuText,
-          symbol: "rectangle.3.group",
+          symbol: "rectangle.3.group.fill",
           action: { selectedDetail = .gpu })
         MetricCard(
           title: "Battery",
           value: batteryText,
-          symbol: "battery.75percent",
+          symbol: batterySymbol,
           action: { selectedDetail = .battery })
         MetricCard(
           title: LocalizedStringKey(TemperatureL10n.string("Temperature")),
           value: temperatureText,
-          symbol: "thermometer.medium",
+          symbol: "thermometer.high",
           action: { selectedDetail = .temperature })
         MetricCard(
           title: "Fans",
           value: FanDisplayText.summary(coordinator.snapshot.fans),
-          symbol: "fan",
+          symbol: "fan.fill",
           action: { selectedDetail = .fans })
       }
+
       memorySummary
       gpuSummary
-      PowerFlowView(snapshot: coordinator.snapshot)
+      PowerFlowView(snapshot: coordinator.snapshot) { selectedDetail = .power }
       history
       Divider()
       HStack {
@@ -91,6 +107,7 @@ struct OverviewView: View {
       if let selectedDetail {
         MetricDetailView(kind: selectedDetail)
           .environmentObject(coordinator)
+          .environmentObject(settings)
           .environmentObject(fanControl)
       }
     }
@@ -112,7 +129,7 @@ struct OverviewView: View {
 
   private var gpuSummary: some View {
     HStack(spacing: 8) {
-      Image(systemName: "display")
+      Image(systemName: "display.2")
         .foregroundStyle(.secondary)
       Text(gpuSummaryText)
         .font(.caption)
@@ -125,24 +142,33 @@ struct OverviewView: View {
   }
 
   private var history: some View {
-    let points = HistoryChartSegmentation.points(
-      from: Array(coordinator.cpuHistory.suffix(360)))
+    let cutoff = Date().addingTimeInterval(-30 * 60)
+    let recent = coordinator.cpuHistory.filter { $0.timestamp >= cutoff }
+    let points = HistoryChartSegmentation.points(from: recent)
     return VStack(alignment: .leading, spacing: 4) {
       HStack {
-        Text("CPU history")
+        Label("CPU history", systemImage: "chart.xyaxis.line")
           .font(.caption.bold())
         Spacer()
-        Text("30 min · 5 s")
+        Text(L10n.format("30 min · %g s", settings.samplingInterval))
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
       Chart(points) { point in
+        AreaMark(
+          x: .value("Time", point.timestamp),
+          y: .value("CPU", point.value),
+          series: .value("Sampling epoch", point.segment))
+          .foregroundStyle(
+            LinearGradient(
+              colors: [Color.accentColor.opacity(0.18), Color.accentColor.opacity(0.01)],
+              startPoint: .top,
+              endPoint: .bottom))
         LineMark(
           x: .value("Time", point.timestamp),
           y: .value("CPU", point.value),
-          series: .value("Sampling epoch", point.segment)
-        )
-        .foregroundStyle(Color.accentColor)
+          series: .value("Sampling epoch", point.segment))
+          .foregroundStyle(Color.accentColor)
       }
       .chartYScale(domain: 0...100)
       .chartXAxis {
@@ -157,7 +183,7 @@ struct OverviewView: View {
           .background(.quaternary.opacity(0.15))
           .clipShape(RoundedRectangle(cornerRadius: 8))
       }
-      .frame(height: 106)
+      .frame(height: 100)
       .accessibilityLabel("CPU history")
     }
   }
@@ -181,7 +207,7 @@ struct OverviewView: View {
     switch coordinator.snapshot.memory.value?.pressureLevel {
     case .critical: return "exclamationmark.triangle.fill"
     case .warning: return "exclamationmark.triangle"
-    case .normal: return "checkmark.circle"
+    case .normal: return "checkmark.circle.fill"
     default: return "questionmark.circle"
     }
   }
@@ -214,11 +240,27 @@ struct OverviewView: View {
     BatteryDisplayText.summary(coordinator.snapshot.battery)
   }
 
+  private var batterySymbol: String {
+    guard let battery = coordinator.snapshot.battery.value else { return "battery.0percent" }
+    if battery.state == .charging { return "battery.100percent.bolt" }
+    let percentage = battery.percentage ?? 0
+    if percentage >= 75 { return "battery.100percent" }
+    if percentage >= 40 { return "battery.50percent" }
+    if percentage >= 15 { return "battery.25percent" }
+    return "battery.0percent"
+  }
+
   private var temperatureText: String {
-    guard let value = coordinator.snapshot.temperature.value?.processorCelsius
-      ?? coordinator.snapshot.temperature.value?.maximumCelsius
-    else { return "—" }
-    return L10n.format("%.1f °C", value)
+    let stats = coordinator.snapshot.temperature.value
+    let processor = MetricNumberFormatter.temperatureCelsius(stats?.processorCelsius)
+    let battery = MetricNumberFormatter.temperatureCelsius(stats?.batteryCelsius)
+    switch (processor, battery) {
+    case (.some(let processor), .some(let battery)):
+      return "\(processor) / \(battery)"
+    case (.some(let processor), .none): return processor
+    case (.none, .some(let battery)): return "🔋 \(battery)"
+    case (.none, .none): return L10n.string("Collecting data")
+    }
   }
 
   private func formattedBytes(_ bytes: UInt64) -> String {
@@ -240,20 +282,29 @@ private struct MetricCard: View {
 
   var body: some View {
     Button(action: action) {
-      HStack {
-        Image(systemName: symbol).frame(width: 24)
-        VStack(alignment: .leading) {
+      HStack(spacing: 9) {
+        Image(systemName: symbol)
+          .font(.title3)
+          .frame(width: 25)
+          .foregroundStyle(Color.accentColor)
+        VStack(alignment: .leading, spacing: 2) {
           Text(title).font(.caption).foregroundStyle(.secondary)
-          Text(value).font(.headline.monospacedDigit()).lineLimit(1)
+          Text(value)
+            .font(.headline.monospacedDigit())
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
         }
-        Spacer()
+        Spacer(minLength: 4)
         Image(systemName: "chevron.right")
           .font(.caption.bold())
           .foregroundStyle(.tertiary)
       }
       .padding(10)
-      .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-      .contentShape(RoundedRectangle(cornerRadius: 10))
+      .background(.quaternary.opacity(0.42), in: RoundedRectangle(cornerRadius: 11))
+      .overlay(
+        RoundedRectangle(cornerRadius: 11)
+          .stroke(.quaternary.opacity(0.4), lineWidth: 1))
+      .contentShape(RoundedRectangle(cornerRadius: 11))
     }
     .buttonStyle(.plain)
   }

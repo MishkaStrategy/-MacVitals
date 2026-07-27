@@ -1,9 +1,149 @@
 import SwiftUI
 
+struct FanControlSetupStatusView: View {
+  @EnvironmentObject private var fanControl: FanControlClient
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      setupStep(
+        number: 1,
+        title: L10n.string("Signed application build"),
+        detail: FanControlSigningIdentity.hasTeamIdentifier()
+          ? L10n.string("The application has a valid Team ID.")
+          : L10n.string("This test build is unsigned, so macOS blocks privileged fan control."),
+        complete: FanControlSigningIdentity.hasTeamIdentifier(),
+        symbol: "signature")
+
+      setupStep(
+        number: 2,
+        title: L10n.string("Fan control helper"),
+        detail: helperStepDetail,
+        complete: helperInstalled,
+        symbol: "wrench.and.screwdriver.fill")
+
+      setupStep(
+        number: 3,
+        title: L10n.string("Administrator approval"),
+        detail: approvalStepDetail,
+        complete: fanControl.state.canControl,
+        symbol: "checkmark.shield.fill")
+
+      HStack(spacing: 9) {
+        Button {
+          fanControl.refreshStatus()
+        } label: {
+          Label(L10n.string("Check again"), systemImage: "arrow.clockwise")
+        }
+        .disabled(fanControl.operationInProgress)
+
+        if FanControlSigningIdentity.hasTeamIdentifier() {
+          Button {
+            fanControl.prepareControl()
+          } label: {
+            Label(primaryActionTitle, systemImage: primaryActionSymbol)
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(fanControl.operationInProgress || fanControl.state.canControl)
+        }
+
+        Spacer()
+
+        stateBadge
+      }
+    }
+    .onAppear { fanControl.refreshStatus() }
+  }
+
+  private func setupStep(
+    number: Int,
+    title: String,
+    detail: String,
+    complete: Bool,
+    symbol: String
+  ) -> some View {
+    HStack(alignment: .top, spacing: 11) {
+      ZStack {
+        Circle()
+          .fill(complete ? Color.green.opacity(0.17) : Color.secondary.opacity(0.12))
+          .frame(width: 32, height: 32)
+        Image(systemName: complete ? "checkmark" : symbol)
+          .font(.caption.bold())
+          .foregroundStyle(complete ? Color.green : Color.secondary)
+      }
+      VStack(alignment: .leading, spacing: 2) {
+        Text(L10n.format("Step %d · %@", number, title))
+          .font(.subheadline.weight(.semibold))
+        Text(detail)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 0)
+    }
+  }
+
+  private var helperInstalled: Bool {
+    switch fanControl.state {
+    case .connecting, .ready, .approvalRequired: return true
+    default: return false
+    }
+  }
+
+  private var helperStepDetail: String {
+    switch fanControl.state {
+    case .monitoringOnly:
+      return L10n.string("A signed build is required before the helper can be registered.")
+    case .notRegistered:
+      return L10n.string("The helper is included but has not been registered with macOS yet.")
+    case .approvalRequired:
+      return L10n.string("The helper is registered and waiting for approval in Login Items.")
+    case .connecting:
+      return L10n.string("Connecting to the installed helper and running its self-check.")
+    case .ready:
+      return L10n.string("The helper is installed, connected, and ready.")
+    case .unavailable(let message):
+      return message
+    }
+  }
+
+  private var approvalStepDetail: String {
+    switch fanControl.state {
+    case .ready: return L10n.string("Fan control is available for this signed build.")
+    case .approvalRequired: return L10n.string("Open Login Items and allow the MacVitals helper.")
+    case .monitoringOnly: return L10n.string("Approval cannot be requested from an unsigned build.")
+    default: return L10n.string("Complete the previous step, then check the helper again.")
+    }
+  }
+
+  private var primaryActionTitle: String {
+    switch fanControl.state {
+    case .approvalRequired: return L10n.string("Open Login Items")
+    case .notRegistered: return L10n.string("Register helper")
+    default: return L10n.string("Continue setup")
+    }
+  }
+
+  private var primaryActionSymbol: String {
+    fanControl.state == .approvalRequired ? "gearshape.fill" : "arrow.right.circle.fill"
+  }
+
+  private var stateBadge: some View {
+    Label(
+      fanControl.state.canControl ? L10n.string("Control ready") : L10n.string("Monitoring only"),
+      systemImage: fanControl.state.canControl ? "checkmark.circle.fill" : "eye.fill")
+      .font(.caption.bold())
+      .foregroundStyle(fanControl.state.canControl ? Color.green : Color.secondary)
+      .padding(.horizontal, 9)
+      .padding(.vertical, 5)
+      .background(.quaternary.opacity(0.45), in: Capsule())
+  }
+}
+
 struct FanControlView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var fanControl: FanControlClient
   @State private var requestedRPM: [Int: Double] = [:]
+  @State private var boostDurationMinutes = 15
 
   let compact: Bool
 
@@ -28,12 +168,13 @@ struct FanControlView: View {
       .accessibilityIdentifier("fanControlList")
 
       if !compact {
-        Text(
-          "Fan control is experimental. MacVitals only allows temporary cooling boosts and never permits a target below the current safety floor. macOS automatic control is restored when the lease expires or the helper disconnects."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .accessibilityIdentifier("fanControlSafetyNotice")
+        Label(
+          L10n.string(
+            "Fan control is experimental. MacVitals only allows temporary cooling boosts and never permits a target below the current safety floor. macOS automatic control is restored when the lease expires or the helper disconnects."),
+          systemImage: "shield.lefthalf.filled")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("fanControlSafetyNotice")
       }
 
       if let note = controlAvailabilityNote {
@@ -44,14 +185,14 @@ struct FanControlView: View {
       }
 
       if let message = fanControl.lastMessage {
-        Text(message)
+        Label(message, systemImage: "info.circle")
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("fanControlLastMessage")
       }
     }
-    .padding(compact ? 0 : 16)
+    .padding(compact ? 0 : 2)
     .onAppear { fanControl.refreshStatus() }
   }
 
@@ -59,15 +200,30 @@ struct FanControlView: View {
     HStack(spacing: 10) {
       VStack(alignment: .leading, spacing: 3) {
         if !compact {
-          Text("Fans").font(.title2.bold())
+          Text("Fans").font(.title3.bold())
         }
-        Text(fanControl.state.message)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-          .accessibilityIdentifier("fanControlStatus")
+        HStack(spacing: 6) {
+          Circle()
+            .fill(fanControl.state.canControl ? Color.green : Color.orange)
+            .frame(width: 7, height: 7)
+          Text(fanControl.state.message)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("fanControlStatus")
+        }
       }
       Spacer(minLength: 8)
+
+      Picker(L10n.string("Boost duration"), selection: $boostDurationMinutes) {
+        Text("5 min").tag(5)
+        Text("10 min").tag(10)
+        Text("15 min").tag(15)
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .frame(width: compact ? 160 : 190)
+
       controlActivationButton
     }
   }
@@ -98,13 +254,19 @@ struct FanControlView: View {
   private var controlActivationButton: some View {
     switch fanControl.state {
     case .monitoringOnly:
-      Button("Enable Control") { fanControl.prepareControl() }
-        .accessibilityIdentifier("enableFanControlButton")
+      Button {
+        fanControl.prepareControl()
+      } label: {
+        Label(L10n.string("Monitoring only"), systemImage: "lock.fill")
+      }
+      .accessibilityIdentifier("enableFanControlButton")
     case .notRegistered:
       Button("Enable Control") { fanControl.requestApproval() }
+        .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("enableFanControlButton")
     case .approvalRequired:
       Button("Review Approval") { fanControl.openApprovalSettings() }
+        .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("reviewFanControlApprovalButton")
     case .connecting:
       ProgressView()
@@ -115,24 +277,33 @@ struct FanControlView: View {
         .disabled(fanControl.operationInProgress)
         .accessibilityIdentifier("restoreAllFansAuto")
     case .unavailable:
-      Button("Enable Control") { fanControl.refreshStatus() }
-        .disabled(fanControl.operationInProgress)
+      Button {
+        fanControl.refreshStatus()
+      } label: {
+        Label(L10n.string("Retry"), systemImage: "arrow.clockwise")
+      }
+      .disabled(fanControl.operationInProgress)
     }
   }
 
   private func fanCard(_ fan: FanReading) -> some View {
     VStack(alignment: .leading, spacing: 7) {
       HStack {
-        Text(L10n.format("Fan %d", fan.index + 1))
+        Label(L10n.format("Fan %d", fan.index + 1), systemImage: "fan.fill")
           .font(.headline)
         Spacer()
-        Text(MetricNumberFormatter.rpm(fan.currentRPM) ?? "—")
+        Text(MetricNumberFormatter.rpm(fan.currentRPM) ?? L10n.string("Collecting data"))
           .font(.headline.monospacedDigit())
       }
 
       HStack(spacing: 16) {
         LabeledContent("Target speed", value: MetricNumberFormatter.rpm(fan.targetRPM) ?? "—")
         LabeledContent("Mode", value: fan.mode.displayName)
+        if let minimum = MetricNumberFormatter.rpm(fan.minimumRPM),
+          let maximum = MetricNumberFormatter.rpm(fan.maximumRPM)
+        {
+          LabeledContent(L10n.string("Safe range"), value: "\(minimum) – \(maximum)")
+        }
       }
       .font(.caption)
 
@@ -140,30 +311,40 @@ struct FanControlView: View {
         let binding = rpmBinding(for: fan, range: range)
         HStack(spacing: 8) {
           Slider(value: binding, in: range, step: 100)
-            .frame(maxWidth: compact ? 300 : 360)
+            .frame(maxWidth: compact ? 270 : 360)
             .accessibilityIdentifier("fanBoostSlider.\(fan.index)")
           Text(MetricNumberFormatter.rpm(binding.wrappedValue) ?? "—")
             .font(.caption.monospacedDigit())
-            .frame(width: 76, alignment: .trailing)
+            .frame(width: 78, alignment: .trailing)
         }
 
         HStack(spacing: 8) {
-          Button("Apply 15-minute Boost") {
+          Button {
             if fanControl.state.canControl {
-              fanControl.setBoost(fan: fan, requestedRPM: binding.wrappedValue)
+              fanControl.setBoost(
+                fan: fan,
+                requestedRPM: binding.wrappedValue,
+                leaseSeconds: TimeInterval(boostDurationMinutes * 60))
             } else {
               fanControl.prepareControl()
             }
+          } label: {
+            Label(
+              L10n.format("Boost for %d min", boostDurationMinutes),
+              systemImage: "snowflake")
           }
+          .buttonStyle(.borderedProminent)
           .disabled(fanControl.operationInProgress)
           .accessibilityIdentifier("applyFanBoost.\(fan.index)")
 
-          Button("Automatic") {
+          Button {
             if fanControl.state.canControl {
               fanControl.setAutomatic(fanIndex: fan.index)
             } else {
               fanControl.prepareControl()
             }
+          } label: {
+            Label(L10n.string("Automatic"), systemImage: "arrow.triangle.2.circlepath")
           }
           .disabled(fanControl.operationInProgress)
           .accessibilityIdentifier("restoreFanAuto.\(fan.index)")
@@ -178,34 +359,43 @@ struct FanControlView: View {
           .foregroundStyle(.secondary)
       }
     }
-    .padding(9)
-    .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
+    .padding(10)
+    .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 11))
+    .overlay(
+      RoundedRectangle(cornerRadius: 11)
+        .stroke(.quaternary.opacity(0.35), lineWidth: 1))
     .accessibilityIdentifier("fanSection.\(fan.index)")
   }
 
   private var controlAvailabilityNote: String? {
     switch fanControl.state {
     case .monitoringOnly:
-      return L10n.string("Fan RPM monitoring is available. Control requires an approved signed helper.")
+      return L10n.string("RPM monitoring works in this build. Actual control requires a separately signed MacVitals build and administrator approval.")
     case .notRegistered:
-      return L10n.string("Fan control helper is not installed.")
+      return L10n.string("Register the included helper to enable temporary cooling control.")
     case .approvalRequired:
-      return L10n.string("Approval is required in System Settings › General › Login Items.")
+      return L10n.string("Approve MacVitals in System Settings › General › Login Items, then press Check again.")
     case .connecting:
-      return nil
+      return L10n.string("The signed helper is being verified.")
     case .ready:
-      return L10n.string("Fan control helper is ready.")
-    case .unavailable:
-      return nil
+      return L10n.string("Temporary boosts and automatic restoration are available.")
+    case .unavailable(let message):
+      return message
     }
   }
 
-  private func rpmBinding(for fan: FanReading, range: ClosedRange<Double>) -> Binding<Double> {
+  private func rpmBinding(
+    for fan: FanReading,
+    range: ClosedRange<Double>
+  ) -> Binding<Double> {
     Binding(
       get: {
-        let initial = fan.targetRPM ?? max(range.lowerBound, range.upperBound * 0.75)
-        return requestedRPM[fan.index] ?? min(range.upperBound, max(range.lowerBound, initial))
+        if let existing = requestedRPM[fan.index] {
+          return min(range.upperBound, max(range.lowerBound, existing))
+        }
+        return FanControlSafetyPolicy.defaultBoostRPM(for: fan, range: range)
       },
-      set: { requestedRPM[fan.index] = min(range.upperBound, max(range.lowerBound, $0)) })
+      set: { requestedRPM[fan.index] = min(range.upperBound, max(range.lowerBound, $0)) }
+    )
   }
 }

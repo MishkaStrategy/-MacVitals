@@ -3,6 +3,7 @@ import Foundation
 nonisolated enum TemperatureValueNormalizer {
   static let plausibleProcessorRange = 5.0...130.0
   static let plausibleBatteryRange = 0.0...100.0
+  static let plausibleSensorRange = -10.0...130.0
 
   static func processor(_ value: Double?) -> Double? {
     guard let value, value.isFinite, plausibleProcessorRange.contains(value) else { return nil }
@@ -13,27 +14,65 @@ nonisolated enum TemperatureValueNormalizer {
     guard let value, value.isFinite, plausibleBatteryRange.contains(value) else { return nil }
     return value
   }
+
+  static func sensor(_ value: Double?) -> Double? {
+    guard let value, value.isFinite, plausibleSensorRange.contains(value) else { return nil }
+    return value
+  }
 }
 
 final class TemperatureProvider: @unchecked Sendable {
-  private static let processorKeys = [
+  private static let preferredProcessorKeys = [
     "TCMz", // CPU die hotspot on supported Apple Silicon models.
     "Tp09", "Tp01", "Tp05", "Tp0D", "Tp0P", "Tp0E", "Tp0F", "Tp0H", "Tp0b",
   ]
 
+  private static let fallbackTemperatureKeys = [
+    "TCMz", "Tp09", "Tp01", "Tp05", "Tp0D", "Tp0P", "Tp0E", "Tp0F", "Tp0H", "Tp0b",
+    "Tg0f", "Tg0j", "Tg0a", "Tg0b", "Tg0c", "Tg0d", "Tg0e", "Tg0k",
+    "Tm0P", "Tm1P", "Tm0p", "Tm1p", "TH0x", "TH1x", "Ts0P", "Ts1P",
+    "TB0T", "TB1T", "Ta0P", "Ta1P", "TP0P", "Ts0S", "Ts1S", "Ts2S",
+  ]
+
+  private static let supportedTemperatureTypes: Set<String> = ["sp78", "flt ", "fpe2"]
+  private static let maximumDiscoveredSensors = 48
+
   private var connection: AppleSMCConnection?
+  private var discoveredKeys: [String]?
+  private var cachedSMCReadings: [TemperatureReading] = []
+  private var lastSMCSampleAt: Date?
 
   func resetConnection() {
     connection = nil
+    discoveredKeys = nil
+    cachedSMCReadings = []
+    lastSMCSampleAt = nil
   }
 
-  func sample(batteryTemperatureCelsius: Double?) -> MetricValue<TemperatureStats> {
-    let now = Date()
-    let processorReading = readProcessorTemperature()
+  func sample(
+    batteryTemperatureCelsius: Double?,
+    now: Date = Date()
+  ) -> MetricValue<TemperatureStats> {
     let battery = TemperatureValueNormalizer.battery(batteryTemperatureCelsius)
-    let maximum = [processorReading?.value, battery].compactMap { $0 }.max()
+    let smcReadings = currentSMCReadings(now: now)
+    let processorReading = primaryProcessorReading(in: smcReadings)
 
-    guard processorReading != nil || battery != nil else {
+    var readings = smcReadings
+    if let battery {
+      readings.removeAll { $0.id == "battery.iokit" }
+      readings.append(
+        TemperatureReading(
+          id: "battery.iokit",
+          name: TemperatureL10n.string("Battery temperature"),
+          category: .battery,
+          celsius: battery,
+          source: .iokitRegistry,
+          isPrimary: true))
+    }
+    readings.sort(by: Self.readingSort)
+
+    let maximum = readings.map(\.celsius).max()
+    guard processorReading != nil || battery != nil || !readings.isEmpty else {
       return MetricValue(
         value: nil,
         unit: .celsius,
@@ -47,36 +86,75 @@ final class TemperatureProvider: @unchecked Sendable {
 
     return MetricValue(
       value: TemperatureStats(
-        processorCelsius: processorReading?.value,
+        processorCelsius: processorReading?.celsius,
         batteryCelsius: battery,
         maximumCelsius: maximum,
-        processorSensorKey: processorReading?.key),
+        processorSensorKey: processorReading?.key,
+        sensors: readings),
       unit: .celsius,
       availability: .available,
-      quality: processorReading == nil ? .direct : .experimental,
-      source: processorReading == nil ? .iokitRegistry : .appleSMC,
+      quality: smcReadings.isEmpty ? .direct : .experimental,
+      source: smcReadings.isEmpty ? .iokitRegistry : .appleSMC,
       timestamp: now,
       isEstimated: false,
-      message: processorReading == nil
+      message: smcReadings.isEmpty
         ? TemperatureL10n.string("Battery temperature")
-        : TemperatureL10n.string("Processor temperature from Apple SMC"))
+        : TemperatureL10n.string("Detailed temperatures from Apple SMC and IOKit"))
   }
 
-  private func readProcessorTemperature() -> (key: String, value: Double)? {
-    guard let source = smcConnection() else { return nil }
-
-    var readings: [(key: String, value: Double)] = []
-    for key in Self.processorKeys {
-      guard let raw = try? source.readKey(key),
-        let value = TemperatureValueNormalizer.processor(AppleSMCDataDecoder.number(raw))
-      else { continue }
-      readings.append((key, value))
+  private func currentSMCReadings(now: Date) -> [TemperatureReading] {
+    if let lastSMCSampleAt,
+      now.timeIntervalSince(lastSMCSampleAt) < SamplingIntervalPolicy.temperatureMinimumInterval
+    {
+      return cachedSMCReadings
     }
 
-    if let hotspot = readings.first(where: { $0.key == "TCMz" }) {
-      return hotspot
+    guard let source = smcConnection() else { return cachedSMCReadings }
+    let keys = temperatureKeys(source: source)
+    let readings = keys.compactMap { reading(key: $0, source: source) }
+    cachedSMCReadings = readings
+    lastSMCSampleAt = now
+    return readings
+  }
+
+  private func temperatureKeys(source: AppleSMCConnection) -> [String] {
+    if let discoveredKeys { return discoveredKeys }
+
+    let enumerated = (try? source.keyNames()) ?? []
+    let temperatureKeys = enumerated.filter { key in
+      key.count == 4 && key.first == "T"
     }
-    return readings.max { $0.value < $1.value }
+    let preferred = Self.fallbackTemperatureKeys + temperatureKeys.sorted()
+    var seen = Set<String>()
+    let normalized = preferred.filter { seen.insert($0).inserted }
+    let limited = Array(normalized.prefix(Self.maximumDiscoveredSensors))
+    discoveredKeys = limited
+    return limited
+  }
+
+  private func reading(key: String, source: AppleSMCConnection) -> TemperatureReading? {
+    guard let raw = try? source.readKey(key),
+      Self.supportedTemperatureTypes.contains(raw.dataType),
+      let value = TemperatureValueNormalizer.sensor(AppleSMCDataDecoder.number(raw))
+    else { return nil }
+
+    let category = Self.category(for: key)
+    return TemperatureReading(
+      id: "smc.\(key)",
+      key: key,
+      name: Self.name(for: key, category: category),
+      category: category,
+      celsius: value,
+      source: .appleSMC,
+      isPrimary: key == "TCMz")
+  }
+
+  private func primaryProcessorReading(in readings: [TemperatureReading]) -> TemperatureReading? {
+    if let hotspot = readings.first(where: { $0.key == "TCMz" }) { return hotspot }
+    for key in Self.preferredProcessorKeys {
+      if let reading = readings.first(where: { $0.key == key }) { return reading }
+    }
+    return readings.filter { $0.category == .processor }.max { $0.celsius < $1.celsius }
   }
 
   private func smcConnection() -> AppleSMCConnection? {
@@ -84,5 +162,37 @@ final class TemperatureProvider: @unchecked Sendable {
     guard let created = try? AppleSMCConnection() else { return nil }
     connection = created
     return created
+  }
+
+  private static func category(for key: String) -> TemperatureSensorCategory {
+    if key.hasPrefix("TC") || key.hasPrefix("Tp") { return .processor }
+    if key.hasPrefix("Tg") || key.hasPrefix("TG") { return .graphics }
+    if key.hasPrefix("Tm") { return .memory }
+    if key.hasPrefix("TH") || key.hasPrefix("Ts") { return .storage }
+    if key.hasPrefix("TB") { return .battery }
+    if key.hasPrefix("Ta") || key.hasPrefix("TP") { return .power }
+    if key.hasPrefix("TW") || key.hasPrefix("TL") || key.hasPrefix("TR") { return .enclosure }
+    return .other
+  }
+
+  private static func name(for key: String, category: TemperatureSensorCategory) -> String {
+    switch key {
+    case "TCMz": return TemperatureL10n.string("CPU hotspot")
+    case "Tg0f", "Tg0j": return TemperatureL10n.string("GPU sensor")
+    case "Tm0P", "Tm1P", "Tm0p", "Tm1p": return TemperatureL10n.string("Memory sensor")
+    case "TH0x", "TH1x", "Ts0P", "Ts1P": return TemperatureL10n.string("Storage sensor")
+    case "TB0T", "TB1T": return TemperatureL10n.string("Battery SMC sensor")
+    default: return category.displayName
+    }
+  }
+
+  private static func readingSort(_ lhs: TemperatureReading, _ rhs: TemperatureReading) -> Bool {
+    let categories = TemperatureSensorCategory.allCases
+    let lhsIndex = categories.firstIndex(of: lhs.category) ?? categories.count
+    let rhsIndex = categories.firstIndex(of: rhs.category) ?? categories.count
+    if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
+    if lhs.isPrimary != rhs.isPrimary { return lhs.isPrimary }
+    if lhs.name != rhs.name { return lhs.name < rhs.name }
+    return (lhs.key ?? lhs.id) < (rhs.key ?? rhs.id)
   }
 }
