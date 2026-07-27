@@ -24,6 +24,37 @@ nonisolated struct FanControlPlan: Codable, Sendable, Equatable {
   let thermalSeverity: FanThermalSeverity
 }
 
+nonisolated struct FanControlRecoveryState: Sendable, Equatable {
+  private(set) var deadlines: [Int: Date] = [:]
+
+  var indexes: [Int] { deadlines.keys.sorted() }
+  var isEmpty: Bool { deadlines.isEmpty }
+
+  mutating func beginRecovery(index: Int, now: Date) {
+    deadlines[index] = now
+  }
+
+  mutating func activate(index: Int, deadline: Date) {
+    deadlines[index] = deadline
+  }
+
+  mutating func markRestored(index: Int) {
+    deadlines.removeValue(forKey: index)
+  }
+
+  mutating func markAllRestored() {
+    deadlines.removeAll()
+  }
+
+  func hasTrackedFan(excluding index: Int) -> Bool {
+    deadlines.keys.contains { $0 != index }
+  }
+
+  func expired(at now: Date) -> [Int] {
+    deadlines.compactMap { $0.value <= now ? $0.key : nil }.sorted()
+  }
+}
+
 nonisolated enum FanControlSafetyError: LocalizedError, Sendable, Equatable {
   case invalidFan
   case invalidRange
