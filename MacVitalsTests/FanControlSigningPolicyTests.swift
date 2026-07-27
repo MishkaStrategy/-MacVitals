@@ -1,3 +1,4 @@
+import Security
 import XCTest
 
 @testable import MacVitals
@@ -19,6 +20,41 @@ final class FanControlSigningPolicyTests: XCTestCase {
         facts(identifier: FanControlSigningPolicy.helperIdentifier),
         expectedIdentifier: FanControlSigningPolicy.helperIdentifier,
         expectedTeamIdentifier: team))
+  }
+
+  func testDeveloperIDRequirementsCompileForBothXPCPeers() throws {
+    for identifier in [
+      FanControlSigningPolicy.mainApplicationIdentifier,
+      FanControlSigningPolicy.helperIdentifier,
+    ] {
+      let source = try XCTUnwrap(
+        FanControlCodeSigning.developerIDRequirementSource(
+          identifier: identifier,
+          teamIdentifier: team))
+      XCTAssertTrue(source.contains("anchor apple generic"))
+      XCTAssertTrue(source.contains("anchor trusted"))
+      XCTAssertTrue(source.contains("1.2.840.113635.100.6.2.6"))
+      XCTAssertTrue(source.contains("1.2.840.113635.100.6.1.13"))
+      XCTAssertTrue(source.contains(identifier))
+      XCTAssertTrue(source.contains(team))
+
+      var requirement: SecRequirement?
+      XCTAssertEqual(
+        SecRequirementCreateWithString(source as CFString, [], &requirement),
+        errSecSuccess)
+      XCTAssertNotNil(requirement)
+    }
+  }
+
+  func testRequirementSourceRejectsUnapprovedIdentifierAndInvalidTeam() {
+    XCTAssertNil(
+      FanControlCodeSigning.developerIDRequirementSource(
+        identifier: "com.example.Impostor",
+        teamIdentifier: team))
+    XCTAssertNil(
+      FanControlCodeSigning.developerIDRequirementSource(
+        identifier: FanControlSigningPolicy.mainApplicationIdentifier,
+        teamIdentifier: "invalid"))
   }
 
   func testRejectsAppleDevelopmentOrDistributionRequirementMismatch() {
