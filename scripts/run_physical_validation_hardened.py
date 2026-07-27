@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ _ALLOWED_UNSUPPORTED_SCENARIOS = {"batteryless-desktop"}
 _DESKTOP_MACHINE_NAMES = ("Mac mini", "Mac Studio", "Mac Pro", "iMac")
 _original_parse_power = base.parse_power
 _original_power_snapshot = base.power_snapshot
+_original_run_scenario = base.run_scenario
 _original_review = base.review
 _original_manual = base.manual
 _original_self_test = base.self_test
@@ -92,6 +94,100 @@ def power_snapshot(started: float | None = None) -> dict[str, Any]:
     if started is not None:
         value["elapsedMonotonicSeconds"] = base.time.monotonic() - started
     return value
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _completion_failures(
+    scenario_record: dict[str, Any], summary: dict[str, Any] | None
+) -> list[str]:
+    """Reject interrupted runs that produced a graceful collector summary."""
+    failures: list[str] = []
+    requested = _finite_number(scenario_record.get("requestedDurationSeconds"))
+    interval = _finite_number(scenario_record.get("intervalSeconds"))
+    elapsed = _finite_number(scenario_record.get("elapsedSeconds"))
+    if requested is None or requested <= 0 or interval is None or interval <= 0:
+        return ["scenario duration metadata is invalid"]
+
+    tolerance = max(10.0, interval * 3.0)
+    if elapsed is None or elapsed + tolerance < requested:
+        failures.append("scenario ended before the requested duration completed")
+
+    if not isinstance(summary, dict):
+        failures.append("runtime summary is unavailable for completion validation")
+        return failures
+
+    observed = summary.get("observed")
+    process = summary.get("process")
+    if not isinstance(observed, dict):
+        failures.append("runtime observed metadata is invalid")
+    else:
+        observed_duration = _finite_number(observed.get("durationSeconds"))
+        sample_count = observed.get("sampleCount")
+        if observed_duration is None or observed_duration + tolerance < requested:
+            failures.append("runtime sampling ended before the requested duration completed")
+        if isinstance(sample_count, bool) or not isinstance(sample_count, int) or sample_count <= 0:
+            failures.append("runtime sample count is invalid")
+
+    if not isinstance(process, dict) or process.get("aliveAtEnd") is not True:
+        failures.append("MacVitals was not alive when runtime sampling completed")
+    return failures
+
+
+def run_scenario(args: argparse.Namespace) -> int:
+    result = _original_run_scenario(args)
+    session = args.session.resolve()
+    acceptance_path = session / "acceptance.json"
+    acceptance = base.read_json(acceptance_path)
+    scenarios = acceptance.get("scenarios")
+    record = scenarios.get(args.scenario) if isinstance(scenarios, dict) else None
+    if not isinstance(record, dict):
+        raise base.ValidationError("Acceptance scenario record is invalid")
+    evidence = record.get("evidence")
+    if not isinstance(evidence, list) or not evidence or not isinstance(evidence[-1], str):
+        return result
+
+    run_dir = session / evidence[-1]
+    scenario_path = run_dir / "scenario.json"
+    if not scenario_path.is_file() or scenario_path.is_symlink():
+        return result
+    scenario_record = base.read_json(scenario_path)
+    summary: dict[str, Any] | None = None
+    summary_relative = scenario_record.get("runtimeSummary")
+    if isinstance(summary_relative, str):
+        summary_path = session / summary_relative
+        if summary_path.is_file() and not summary_path.is_symlink():
+            summary = base.read_json(summary_path)
+
+    completion = _completion_failures(scenario_record, summary)
+    if not completion:
+        return result
+
+    existing = scenario_record.get("failures")
+    failures = [item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
+    for failure in completion:
+        if failure not in failures:
+            failures.append(failure)
+    scenario_record["failures"] = failures
+    scenario_record["automatedStatus"] = "fail"
+    base.write_json(scenario_path, scenario_record)
+
+    record["automatedStatus"] = "fail"
+    notes = record.setdefault("notes", [])
+    note = "Interrupted or incomplete collection cannot be accepted as an automated pass"
+    if isinstance(notes, list) and note not in notes:
+        notes.append(note)
+    acceptance["lastUpdatedAt"] = base.utc_now()
+    base.write_json(acceptance_path, acceptance)
+    base.privacy_scan(run_dir)
+    for failure in completion:
+        print(f"- {failure}", file=base.sys.stderr)
+    return 1
 
 
 def review(args: argparse.Namespace) -> int:
@@ -234,6 +330,29 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
         registry_status=1,
     )
 
+    completed = {
+        "requestedDurationSeconds": 60,
+        "intervalSeconds": 2,
+        "elapsedSeconds": 60.1,
+    }
+    completed_summary = {
+        "observed": {"durationSeconds": 60.0, "sampleCount": 31},
+        "process": {"aliveAtEnd": True},
+    }
+    assert not _completion_failures(completed, completed_summary)
+    interrupted = {
+        "requestedDurationSeconds": 21_600,
+        "intervalSeconds": 2,
+        "elapsedSeconds": 16_348,
+    }
+    interrupted_summary = {
+        "observed": {"durationSeconds": 16_342, "sampleCount": 8_171},
+        "process": {"aliveAtEnd": False},
+    }
+    interrupted_failures = _completion_failures(interrupted, interrupted_summary)
+    assert "scenario ended before the requested duration completed" in interrupted_failures
+    assert "MacVitals was not alive when runtime sampling completed" in interrupted_failures
+
     with tempfile.TemporaryDirectory() as directory:
         session = Path(directory)
         base.write_json(session / "session.json", {"status": "prepared"})
@@ -307,6 +426,7 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
 
 base.parse_power = parse_power
 base.power_snapshot = power_snapshot
+base.run_scenario = run_scenario
 base.review = review
 base.manual = manual
 base.finalize = finalize
