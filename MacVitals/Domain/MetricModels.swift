@@ -22,6 +22,7 @@ nonisolated enum MetricSource: String, Codable, Sendable {
   case machHostStatistics
   case iokitPowerSources
   case iokitRegistry
+  case appleSMC
   case metal
   case derivedPowerModel
   case unavailable
@@ -34,6 +35,7 @@ nonisolated enum MetricUnit: String, Codable, Sendable {
   case volts = "V"
   case amperes = "A"
   case celsius = "°C"
+  case rpm = "RPM"
   case seconds = "s"
   case count = "count"
   case text = ""
@@ -148,6 +150,29 @@ nonisolated struct GPUStats: Codable, Sendable, Equatable {
   let utilizationAvailability: MetricAvailability
 }
 
+nonisolated enum FanMode: String, Codable, Sendable {
+  case automatic
+  case manual
+  case unknown
+}
+
+nonisolated struct FanReading: Codable, Sendable, Equatable, Identifiable {
+  let index: Int
+  let currentRPM: Double?
+  let targetRPM: Double?
+  let minimumRPM: Double?
+  let maximumRPM: Double?
+  let mode: FanMode
+
+  var id: Int { index }
+}
+
+nonisolated struct FanStats: Codable, Sendable, Equatable {
+  let fans: [FanReading]
+
+  var count: Int { fans.count }
+}
+
 nonisolated enum PowerSufficiencyStatus: String, Codable, Sendable {
   case notConnected
   case sufficient
@@ -175,7 +200,30 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
   let battery: MetricValue<BatteryStats>
   let adapter: MetricValue<AdapterStats>
   let gpu: MetricValue<GPUStats>
+  let fans: MetricValue<FanStats>
   let power: MetricValue<PowerAssessment>
+
+  init(
+    timestamp: Date,
+    cpu: MetricValue<CPUStats>,
+    memory: MetricValue<MemoryStats>,
+    battery: MetricValue<BatteryStats>,
+    adapter: MetricValue<AdapterStats>,
+    gpu: MetricValue<GPUStats>,
+    fans: MetricValue<FanStats> = .unavailable(
+      unit: .rpm,
+      availability: .temporarilyUnavailable),
+    power: MetricValue<PowerAssessment>
+  ) {
+    self.timestamp = timestamp
+    self.cpu = cpu
+    self.memory = memory
+    self.battery = battery
+    self.adapter = adapter
+    self.gpu = gpu
+    self.fans = fans
+    self.power = power
+  }
 
   static let empty = SystemSnapshot(
     timestamp: Date(),
@@ -184,6 +232,7 @@ nonisolated struct SystemSnapshot: Codable, Sendable, Equatable {
     battery: .unavailable(unit: .percent, availability: .temporarilyUnavailable),
     adapter: .unavailable(unit: .watts, availability: .temporarilyUnavailable),
     gpu: .unavailable(unit: .percent, availability: .temporarilyUnavailable),
+    fans: .unavailable(unit: .rpm, availability: .temporarilyUnavailable),
     power: .unavailable(unit: .watts, availability: .temporarilyUnavailable)
   )
 }
