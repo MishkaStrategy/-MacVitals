@@ -6,6 +6,7 @@ nonisolated struct SamplingTimings: Codable, Sendable, Equatable {
   let batteryMilliseconds: Double
   let adapterMilliseconds: Double
   let gpuMilliseconds: Double
+  let fanMilliseconds: Double
   let powerModelMilliseconds: Double
   let totalMilliseconds: Double
 
@@ -15,6 +16,7 @@ nonisolated struct SamplingTimings: Codable, Sendable, Equatable {
     batteryMilliseconds: Double,
     adapterMilliseconds: Double,
     gpuMilliseconds: Double,
+    fanMilliseconds: Double = 0,
     powerModelMilliseconds: Double,
     totalMilliseconds: Double
   ) {
@@ -23,6 +25,7 @@ nonisolated struct SamplingTimings: Codable, Sendable, Equatable {
     self.batteryMilliseconds = Self.sanitize(batteryMilliseconds)
     self.adapterMilliseconds = Self.sanitize(adapterMilliseconds)
     self.gpuMilliseconds = Self.sanitize(gpuMilliseconds)
+    self.fanMilliseconds = Self.sanitize(fanMilliseconds)
     self.powerModelMilliseconds = Self.sanitize(powerModelMilliseconds)
     self.totalMilliseconds = Self.sanitize(totalMilliseconds)
   }
