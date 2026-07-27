@@ -91,6 +91,17 @@ nonisolated enum FanControlSafetyPolicy {
     return floor...maximum
   }
 
+  static func defaultBoostRPM(
+    for fan: FanReading,
+    range: ClosedRange<Double>? = nil
+  ) -> Double {
+    guard let safeRange = range ?? safeBoostRange(for: fan) else {
+      return FanValueNormalizer.rpm(fan.currentRPM) ?? 0
+    }
+    let preferred = safeRange.lowerBound + (safeRange.upperBound - safeRange.lowerBound) * 0.55
+    return min(safeRange.upperBound, max(safeRange.lowerBound, preferred))
+  }
+
   static func plan(
     fan: FanReading,
     requestedRPM: Double,
