@@ -20,13 +20,7 @@ struct OverviewView: View {
           Text("Privacy-first Mac diagnostics").foregroundStyle(.secondary)
         }
         Spacer()
-        Button {
-          openSettings()
-        } label: {
-          Image(systemName: "gearshape")
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Preferences")
+        settingsButton
       }
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
         MetricCard(
@@ -69,10 +63,41 @@ struct OverviewView: View {
     .padding(16)
     .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
-    .sheet(item: $selectedDetail) { detail in
-      MetricDetailView(kind: detail)
-        .environmentObject(coordinator)
-        .environmentObject(fanControl)
+    .popover(
+      isPresented: Binding(
+        get: { selectedDetail != nil },
+        set: { isPresented in
+          if !isPresented { selectedDetail = nil }
+        }),
+      attachmentAnchor: .rect(.bounds),
+      arrowEdge: .trailing
+    ) {
+      if let selectedDetail {
+        MetricDetailView(kind: selectedDetail)
+          .environmentObject(coordinator)
+          .environmentObject(fanControl)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var settingsButton: some View {
+    if #available(macOS 14.0, *) {
+      SettingsLink {
+        Image(systemName: "gearshape")
+      }
+      .buttonStyle(.plain)
+      .help("Preferences")
+      .accessibilityLabel("Preferences")
+    } else {
+      Button {
+        openLegacySettings()
+      } label: {
+        Image(systemName: "gearshape")
+      }
+      .buttonStyle(.plain)
+      .help("Preferences")
+      .accessibilityLabel("Preferences")
     }
   }
 
@@ -198,8 +223,11 @@ struct OverviewView: View {
     ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
   }
 
-  private func openSettings() {
-    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+  private func openLegacySettings() {
+    let selectors = ["showPreferencesWindow:", "showSettingsWindow:"]
+    for selectorName in selectors {
+      if NSApp.sendAction(Selector(selectorName), to: nil, from: nil) { break }
+    }
     NSApp.activate(ignoringOtherApps: true)
   }
 
