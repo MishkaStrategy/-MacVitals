@@ -65,28 +65,18 @@ struct PowerFlowView: View {
   }
 
   private var resolvedSystemPowerWatts: Double? {
-    if let value = snapshot.power.value?.estimatedSystemPowerWatts,
+    guard let value = snapshot.power.value?.estimatedSystemPowerWatts,
       value.isFinite,
       value >= 0
-    {
-      return value
-    }
-    guard let battery = snapshot.battery.value,
-      battery.present,
-      !battery.externalPowerConnected,
-      battery.state == .discharging,
-      let batteryPower = battery.batteryPowerWatts,
-      batteryPower.isFinite,
-      abs(batteryPower) > 0.01
     else { return nil }
-    return abs(batteryPower)
+    return value
   }
 
   private var systemPower: String {
     MetricNumberFormatter.decimalWatts(
       resolvedSystemPowerWatts,
-      estimated: resolvedSystemPowerWatts != nil)
-      ?? "— W"
+      estimated: snapshot.power.isEstimated)
+      ?? L10n.string("Power sensor unavailable")
   }
 
   private var ratedPower: String {
@@ -112,12 +102,12 @@ struct PowerFlowView: View {
 
   private var powerSourceDetail: String {
     if resolvedSystemPowerWatts != nil {
-      return L10n.string("Live estimate from battery voltage and current")
+      if snapshot.power.isEstimated {
+        return L10n.string("Estimate from battery voltage and current")
+      }
+      return L10n.string("Measured by Apple system power telemetry")
     }
-    if snapshot.battery.value?.externalPowerConnected == true {
-      return L10n.string("Exact total draw is not exposed by the public adapter sensor")
-    }
-    return L10n.string("Waiting for battery voltage and current")
+    return L10n.string("Waiting for system power telemetry")
   }
 
   private var statusLabel: some View {
