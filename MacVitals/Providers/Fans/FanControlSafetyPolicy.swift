@@ -55,7 +55,8 @@ nonisolated enum FanControlSafetyPolicy {
       maximum > minimum
     else { return nil }
     let current = FanValueNormalizer.rpm(fan.currentRPM) ?? minimum
-    let floor = min(maximum, max(minimum, current, maximum * minimumMaximumFraction))
+    guard current <= maximum else { return nil }
+    let floor = max(minimum, current, maximum * minimumMaximumFraction)
     return floor...maximum
   }
 
