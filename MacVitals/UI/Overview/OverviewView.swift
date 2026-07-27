@@ -3,12 +3,14 @@ import SwiftUI
 
 nonisolated enum OverviewLayout {
   static let width: CGFloat = 390
-  static let height: CGFloat = 660
+  static let height: CGFloat = 720
 }
 
 struct OverviewView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
+  @EnvironmentObject private var fanControl: FanControlClient
+  @State private var selectedDetail: MetricDetailKind?
 
   var body: some View {
     VStack(spacing: 12) {
@@ -30,17 +32,31 @@ struct OverviewView: View {
         MetricCard(
           title: "CPU",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.cpu.value?.total),
-          symbol: "cpu")
+          symbol: "cpu",
+          action: { selectedDetail = .cpu })
         MetricCard(
           title: "Memory",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.memory.value?.usedPercent),
-          symbol: "memorychip")
-        MetricCard(title: "GPU", value: gpuText, symbol: "rectangle.3.group")
-        MetricCard(title: "Battery", value: batteryText, symbol: "battery.75percent")
+          symbol: "memorychip",
+          action: { selectedDetail = .memory })
+        MetricCard(
+          title: "GPU",
+          value: gpuText,
+          symbol: "rectangle.3.group",
+          action: { selectedDetail = .gpu })
+        MetricCard(
+          title: "Battery",
+          value: batteryText,
+          symbol: "battery.75percent",
+          action: { selectedDetail = .battery })
       }
+      MetricCard(
+        title: "Fans",
+        value: FanDisplayText.summary(coordinator.snapshot.fans),
+        symbol: "fan",
+        action: { selectedDetail = .fans })
       memorySummary
       gpuSummary
-      fanSummary
       PowerFlowView(snapshot: coordinator.snapshot)
       history
       HStack {
@@ -58,6 +74,11 @@ struct OverviewView: View {
     .padding(16)
     .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
+    .sheet(item: $selectedDetail) { detail in
+      MetricDetailView(kind: detail)
+        .environmentObject(coordinator)
+        .environmentObject(fanControl)
+    }
   }
 
   private var memorySummary: some View {
@@ -88,35 +109,39 @@ struct OverviewView: View {
     .accessibilityValue(gpuSummaryText)
   }
 
-  private var fanSummary: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "fan")
-        .foregroundStyle(.secondary)
-      Text(fanSummaryText)
-        .font(.caption.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      Spacer(minLength: 0)
-    }
-    .accessibilityLabel("Fan details")
-    .accessibilityValue(fanSummaryText)
-    .accessibilityIdentifier("overviewFanSummary")
-  }
-
   private var history: some View {
     let points = HistoryChartSegmentation.points(
-      from: Array(coordinator.cpuHistory.suffix(60)))
-    return Chart(points) { point in
-      LineMark(
-        x: .value("Time", point.timestamp),
-        y: .value("CPU", point.value),
-        series: .value("Sampling epoch", point.segment)
-      )
-      .foregroundStyle(Color.accentColor)
+      from: Array(coordinator.cpuHistory.suffix(360)))
+    return VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        Text("CPU history")
+          .font(.caption.bold())
+        Spacer()
+        Text("30 min · 5 s")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+      Chart(points) { point in
+        LineMark(
+          x: .value("Time", point.timestamp),
+          y: .value("CPU", point.value),
+          series: .value("Sampling epoch", point.segment)
+        )
+        .foregroundStyle(Color.accentColor)
+      }
+      .chartYScale(domain: 0...100)
+      .chartXAxis {
+        AxisMarks(values: .stride(by: .second, count: 5)) {
+          AxisTick()
+        }
+        AxisMarks(values: .stride(by: .minute, count: 5)) { value in
+          AxisGridLine()
+          AxisValueLabel(format: .dateTime.hour().minute())
+        }
+      }
+      .frame(height: 116)
+      .accessibilityLabel("CPU history")
     }
-    .chartYScale(domain: 0...100)
-    .frame(height: 76)
-    .accessibilityLabel("CPU history")
   }
 
   private var memorySummaryText: String {
@@ -153,11 +178,7 @@ struct OverviewView: View {
   }
 
   private var gpuText: String {
-    guard let gpu = coordinator.snapshot.gpu.value else { return L10n.string("Unavailable") }
-    if let utilization = gpu.systemUtilizationPercent {
-      return MetricNumberFormatter.percentage(utilization)
-    }
-    return L10n.string(gpu.metalAvailable ? "Metal" : "Unavailable")
+    MetricNumberFormatter.percentage(coordinator.snapshot.gpu.value?.systemUtilizationPercent)
   }
 
   private var gpuSummaryText: String {
@@ -166,20 +187,9 @@ struct OverviewView: View {
     }
     let name = gpu.name ?? L10n.string("Unknown GPU")
     let memory = GPUMemoryDisplayText.summary(hasUnifiedMemory: gpu.hasUnifiedMemory)
-    return L10n.format("%@ · %@ · utilization unavailable", name, memory)
-  }
-
-  private var fanSummaryText: String {
-    guard let fans = coordinator.snapshot.fans.value?.fans, !fans.isEmpty else {
-      return coordinator.snapshot.fans.availability.displayName
-    }
-    return fans.map { fan in
-      L10n.format(
-        "Fan %d: %@ · %@",
-        fan.index + 1,
-        MetricNumberFormatter.rpm(fan.currentRPM) ?? "—",
-        fan.mode.displayName)
-    }.joined(separator: " · ")
+    let utilization = MetricNumberFormatter.percentage(gpu.systemUtilizationPercent)
+    let utilizationText = utilization == "—" ? gpu.utilizationAvailability.displayName : utilization
+    return "\(name) · \(memory) · \(utilizationText)"
   }
 
   private var batteryText: String {
@@ -206,17 +216,25 @@ private struct MetricCard: View {
   let title: LocalizedStringKey
   let value: String
   let symbol: String
+  let action: () -> Void
 
   var body: some View {
-    HStack {
-      Image(systemName: symbol).frame(width: 24)
-      VStack(alignment: .leading) {
-        Text(title).font(.caption).foregroundStyle(.secondary)
-        Text(value).font(.headline.monospacedDigit())
+    Button(action: action) {
+      HStack {
+        Image(systemName: symbol).frame(width: 24)
+        VStack(alignment: .leading) {
+          Text(title).font(.caption).foregroundStyle(.secondary)
+          Text(value).font(.headline.monospacedDigit()).lineLimit(1)
+        }
+        Spacer()
+        Image(systemName: "chevron.right")
+          .font(.caption.bold())
+          .foregroundStyle(.tertiary)
       }
-      Spacer()
+      .padding(10)
+      .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+      .contentShape(RoundedRectangle(cornerRadius: 10))
     }
-    .padding(10)
-    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+    .buttonStyle(.plain)
   }
 }
