@@ -43,7 +43,7 @@ final class FanControlRecoveryStore: @unchecked Sendable {
     isDirectory: false)
 
   private static let schemaVersion = 1
-  private static let maximumLedgerBytes: Int64 = 64 * 1024
+  private static let maximumLedgerBytes = 64 * 1024
 
   let url: URL
 
@@ -52,14 +52,13 @@ final class FanControlRecoveryStore: @unchecked Sendable {
   }
 
   func load() throws -> FanControlRecoveryState {
-    guard FileManager.default.fileExists(atPath: url.path) else {
+    guard let metadata = try metadataIfPresent(at: url) else {
       return FanControlRecoveryState()
     }
-
-    let metadata = try secureMetadata(at: url, expectedType: S_IFREG)
+    try validateType(metadata, expectedType: mode_t(S_IFREG), itemIsDirectory: false)
     guard metadata.st_nlink == 1 else { throw FanControlRecoveryStoreError.invalidLedger }
     guard metadata.st_size > 0 else { throw FanControlRecoveryStoreError.invalidLedger }
-    guard metadata.st_size <= Self.maximumLedgerBytes else {
+    guard metadata.st_size <= Int64(Self.maximumLedgerBytes) else {
       throw FanControlRecoveryStoreError.oversizedLedger
     }
     try validateOwnerAndPermissions(metadata, requiredOwnerBits: 0o600)
@@ -124,7 +123,7 @@ final class FanControlRecoveryStore: @unchecked Sendable {
     } catch {
       throw FanControlRecoveryStoreError.ioFailure(error.localizedDescription)
     }
-    guard data.count > 0, data.count <= Self.maximumLedgerBytes else {
+    guard !data.isEmpty, data.count <= Self.maximumLedgerBytes else {
       throw FanControlRecoveryStoreError.oversizedLedger
     }
 
@@ -137,16 +136,26 @@ final class FanControlRecoveryStore: @unchecked Sendable {
     } catch {
       throw FanControlRecoveryStoreError.ioFailure(error.localizedDescription)
     }
-    guard chmod(temporary.path, 0o600) == 0 else {
+    let chmodResult = temporary.path.withCString { Darwin.chmod($0, 0o600) }
+    guard chmodResult == 0 else {
       throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
     }
-    let temporaryMetadata = try secureMetadata(at: temporary, expectedType: S_IFREG)
+    let temporaryMetadata = try secureMetadata(
+      at: temporary,
+      expectedType: mode_t(S_IFREG),
+      itemIsDirectory: false)
     guard temporaryMetadata.st_nlink == 1 else {
       throw FanControlRecoveryStoreError.invalidLedger
     }
     try validateOwnerAndPermissions(temporaryMetadata, requiredOwnerBits: 0o600)
+    try syncFile(temporary)
 
-    guard Darwin.rename(temporary.path, url.path) == 0 else {
+    let renameResult = temporary.path.withCString { source in
+      url.path.withCString { destination in
+        Darwin.rename(source, destination)
+      }
+    }
+    guard renameResult == 0 else {
       throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
     }
     try syncDirectory(directory)
@@ -154,7 +163,7 @@ final class FanControlRecoveryStore: @unchecked Sendable {
 
   private func ensureSecureDirectory() throws {
     let directory = url.deletingLastPathComponent()
-    if !FileManager.default.fileExists(atPath: directory.path) {
+    if try metadataIfPresent(at: directory) == nil {
       do {
         try FileManager.default.createDirectory(
           at: directory,
@@ -163,18 +172,22 @@ final class FanControlRecoveryStore: @unchecked Sendable {
       } catch {
         throw FanControlRecoveryStoreError.ioFailure(error.localizedDescription)
       }
-      guard chmod(directory.path, 0o700) == 0 else {
+      let chmodResult = directory.path.withCString { Darwin.chmod($0, 0o700) }
+      guard chmodResult == 0 else {
         throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
       }
     }
 
-    let metadata = try secureMetadata(at: directory, expectedType: S_IFDIR)
+    let metadata = try secureMetadata(
+      at: directory,
+      expectedType: mode_t(S_IFDIR),
+      itemIsDirectory: true)
     try validateOwnerAndPermissions(metadata, requiredOwnerBits: 0o700)
   }
 
   private func removeLedgerIfPresent() throws {
-    guard FileManager.default.fileExists(atPath: url.path) else { return }
-    let metadata = try secureMetadata(at: url, expectedType: S_IFREG)
+    guard let metadata = try metadataIfPresent(at: url) else { return }
+    try validateType(metadata, expectedType: mode_t(S_IFREG), itemIsDirectory: false)
     guard metadata.st_nlink == 1 else { throw FanControlRecoveryStoreError.invalidLedger }
     try validateOwnerAndPermissions(metadata, requiredOwnerBits: 0o600)
     do {
@@ -187,18 +200,39 @@ final class FanControlRecoveryStore: @unchecked Sendable {
     }
   }
 
-  private func secureMetadata(at itemURL: URL, expectedType: mode_t) throws -> stat {
+  private func metadataIfPresent(at itemURL: URL) throws -> stat? {
     var metadata = stat()
     let result = itemURL.path.withCString { lstat($0, &metadata) }
-    guard result == 0 else {
-      throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
+    if result == 0 { return metadata }
+    if errno == ENOENT { return nil }
+    throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
+  }
+
+  private func secureMetadata(
+    at itemURL: URL,
+    expectedType: mode_t,
+    itemIsDirectory: Bool
+  ) throws -> stat {
+    guard let metadata = try metadataIfPresent(at: itemURL) else {
+      throw FanControlRecoveryStoreError.ioFailure("Required path does not exist")
     }
-    guard (metadata.st_mode & S_IFMT) == expectedType else {
-      throw expectedType == S_IFDIR
+    try validateType(
+      metadata,
+      expectedType: expectedType,
+      itemIsDirectory: itemIsDirectory)
+    return metadata
+  }
+
+  private func validateType(
+    _ metadata: stat,
+    expectedType: mode_t,
+    itemIsDirectory: Bool
+  ) throws {
+    guard (metadata.st_mode & mode_t(S_IFMT)) == expectedType else {
+      throw itemIsDirectory
         ? FanControlRecoveryStoreError.invalidDirectory
         : FanControlRecoveryStoreError.invalidLedger
     }
-    return metadata
   }
 
   private func validateOwnerAndPermissions(_ metadata: stat, requiredOwnerBits: mode_t) throws {
@@ -211,12 +245,23 @@ final class FanControlRecoveryStore: @unchecked Sendable {
     else { throw FanControlRecoveryStoreError.unsafePermissions }
   }
 
+  private func syncFile(_ file: URL) throws {
+    let descriptor = file.path.withCString { Darwin.open($0, O_RDONLY) }
+    guard descriptor >= 0 else {
+      throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
+    }
+    defer { _ = Darwin.close(descriptor) }
+    guard fsync(descriptor) == 0 else {
+      throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
+    }
+  }
+
   private func syncDirectory(_ directory: URL) throws {
     let descriptor = directory.path.withCString { Darwin.open($0, O_RDONLY) }
     guard descriptor >= 0 else {
       throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
     }
-    defer { Darwin.close(descriptor) }
+    defer { _ = Darwin.close(descriptor) }
     guard fsync(descriptor) == 0 else {
       throw FanControlRecoveryStoreError.ioFailure(String(cString: strerror(errno)))
     }
