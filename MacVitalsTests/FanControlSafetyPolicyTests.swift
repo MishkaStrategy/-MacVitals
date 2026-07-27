@@ -67,6 +67,40 @@ final class FanControlSafetyPolicyTests: XCTestCase {
       900)
   }
 
+  func testRecoveryBeginsExpiredAndRemainsTrackedUntilExplicitRestore() {
+    let now = Date(timeIntervalSince1970: 100)
+    var recovery = FanControlRecoveryState()
+
+    recovery.beginRecovery(index: 1, now: now)
+    XCTAssertEqual(recovery.indexes, [1])
+    XCTAssertEqual(recovery.expired(at: now), [1])
+
+    recovery.activate(index: 1, deadline: now.addingTimeInterval(60))
+    XCTAssertEqual(recovery.expired(at: now.addingTimeInterval(59)), [])
+    XCTAssertEqual(recovery.expired(at: now.addingTimeInterval(60)), [1])
+
+    recovery.markRestored(index: 1)
+    XCTAssertTrue(recovery.isEmpty)
+  }
+
+  func testFailedPartialRestoreCanRetainAllTrackedFansForWatchdogRetry() {
+    let now = Date(timeIntervalSince1970: 200)
+    var recovery = FanControlRecoveryState()
+    recovery.beginRecovery(index: 0, now: now)
+    recovery.beginRecovery(index: 1, now: now)
+
+    XCTAssertTrue(recovery.hasTrackedFan(excluding: 0))
+    XCTAssertTrue(recovery.hasTrackedFan(excluding: 1))
+    XCTAssertEqual(recovery.expired(at: now), [0, 1])
+
+    recovery.markRestored(index: 0)
+    XCTAssertEqual(recovery.indexes, [1])
+    XCTAssertFalse(recovery.hasTrackedFan(excluding: 1))
+
+    recovery.markAllRestored()
+    XCTAssertTrue(recovery.isEmpty)
+  }
+
   func testInvalidRangeIndexAndNumbersFailClosed() {
     let invalidFans = [
       makeFan(index: -1, current: 2_000, minimum: 1_200, maximum: 6_000),
