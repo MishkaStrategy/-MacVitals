@@ -4,16 +4,18 @@ import XCTest
 
 final class FanDisplayTextTests: XCTestCase {
   func testSingleAndDualFanSummaries() {
+    let first = MetricNumberFormatter.rpm(1_900) ?? "—"
+    let second = MetricNumberFormatter.rpm(2_100) ?? "—"
     XCTAssertEqual(
       FanDisplayText.summary(metric([fan(index: 0, current: 2_100)])),
-      "2100 RPM")
+      second)
     XCTAssertEqual(
       FanDisplayText.summary(
         metric([
           fan(index: 0, current: 1_900),
           fan(index: 1, current: 2_100),
         ])),
-      "1900 RPM / 2100 RPM")
+      "\(first) / \(second)")
   }
 
   func testUnavailableAndEmptyFanSummariesRemainExplicit() {
