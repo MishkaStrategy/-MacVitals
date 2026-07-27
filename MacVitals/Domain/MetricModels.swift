@@ -161,16 +161,19 @@ nonisolated enum TemperatureSensorCategory: String, Codable, CaseIterable, Senda
   case other
 
   var displayName: String {
+    let key: String
+    let table: String?
     switch self {
-    case .processor: return TemperatureL10n.string("Processor")
-    case .graphics: return TemperatureL10n.string("Graphics")
-    case .memory: return L10n.string("Memory")
-    case .storage: return TemperatureL10n.string("Storage")
-    case .battery: return L10n.string("Battery")
-    case .power: return L10n.string("Power")
-    case .enclosure: return TemperatureL10n.string("Enclosure")
-    case .other: return TemperatureL10n.string("Other sensors")
+    case .processor: (key, table) = ("Processor", "Temperature")
+    case .graphics: (key, table) = ("Graphics", "Temperature")
+    case .memory: (key, table) = ("Memory", nil)
+    case .storage: (key, table) = ("Storage", "Temperature")
+    case .battery: (key, table) = ("Battery", nil)
+    case .power: (key, table) = ("Power", nil)
+    case .enclosure: (key, table) = ("Enclosure", "Temperature")
+    case .other: (key, table) = ("Other sensors", "Temperature")
     }
+    return Bundle.main.localizedString(forKey: key, value: key, table: table)
   }
 
   var symbolName: String {
