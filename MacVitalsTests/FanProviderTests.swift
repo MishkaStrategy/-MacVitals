@@ -18,10 +18,10 @@ final class FanProviderTests: XCTestCase {
     XCTAssertEqual(result.availability, .available)
     XCTAssertEqual(result.source, .appleSMC)
     XCTAssertEqual(fan.index, 0)
-    XCTAssertEqual(fan.currentRPM, 2_100, accuracy: 0.01)
-    XCTAssertEqual(fan.targetRPM, 2_300, accuracy: 0.01)
-    XCTAssertEqual(fan.minimumRPM, 1_200, accuracy: 0.01)
-    XCTAssertEqual(fan.maximumRPM, 6_000, accuracy: 0.01)
+    XCTAssertEqual(try XCTUnwrap(fan.currentRPM), 2_100, accuracy: 0.01)
+    XCTAssertEqual(try XCTUnwrap(fan.targetRPM), 2_300, accuracy: 0.01)
+    XCTAssertEqual(try XCTUnwrap(fan.minimumRPM), 1_200, accuracy: 0.01)
+    XCTAssertEqual(try XCTUnwrap(fan.maximumRPM), 6_000, accuracy: 0.01)
     XCTAssertEqual(fan.mode, .automatic)
   }
 
@@ -95,7 +95,9 @@ final class FanProviderTests: XCTestCase {
   }
 
   func testConnectionFailureReturnsProviderError() {
-    let result = FanProvider(factory: { throw AppleSMCError.connectionFailed(KERN_FAILURE) }).sample()
+    let result = FanProvider(factory: {
+      throw AppleSMCError.connectionFailed(kern_return_t(-1))
+    }).sample()
     XCTAssertEqual(result.availability, .providerError)
     XCTAssertNil(result.value)
   }
