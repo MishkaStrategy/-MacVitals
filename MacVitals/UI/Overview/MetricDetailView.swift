@@ -6,6 +6,7 @@ nonisolated enum MetricDetailKind: String, Identifiable, Sendable {
   case memory
   case gpu
   case battery
+  case temperature
   case fans
 
   var id: String { rawValue }
@@ -16,6 +17,7 @@ nonisolated enum MetricDetailKind: String, Identifiable, Sendable {
     case .memory: return L10n.string("Memory")
     case .gpu: return L10n.string("GPU")
     case .battery: return L10n.string("Battery")
+    case .temperature: return L10n.string("Temperature")
     case .fans: return L10n.string("Fans")
     }
   }
@@ -26,6 +28,7 @@ nonisolated enum MetricDetailKind: String, Identifiable, Sendable {
     case .memory: return "memorychip"
     case .gpu: return "rectangle.3.group"
     case .battery: return "battery.75percent"
+    case .temperature: return "thermometer.medium"
     case .fans: return "fan"
     }
   }
@@ -91,10 +94,15 @@ struct MetricDetailView: View {
         FanControlView(compact: true)
       } else {
         metricChart
+        if kind == .temperature {
+          temperatureBreakdown
+        }
       }
     }
     .padding(16)
-    .frame(width: kind == .fans ? 600 : 560, height: kind == .fans ? 650 : 360)
+    .frame(
+      width: kind == .fans ? 600 : 560,
+      height: kind == .fans ? 650 : (kind == .temperature ? 400 : 360))
     .onAppear {
       if kind == .fans { fanControl.refreshStatus() }
     }
@@ -163,7 +171,7 @@ struct MetricDetailView: View {
         .foregroundStyle(Color.accentColor)
         .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
-      .chartYScale(domain: 0...100)
+      .chartYScale(domain: metricYDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 5))
@@ -208,6 +216,38 @@ struct MetricDetailView: View {
     }
   }
 
+  private var temperatureBreakdown: some View {
+    HStack(spacing: 12) {
+      temperatureValue(
+        title: "Processor",
+        value: coordinator.snapshot.temperature.value?.processorCelsius,
+        symbol: "cpu")
+      temperatureValue(
+        title: "Battery",
+        value: coordinator.snapshot.temperature.value?.batteryCelsius,
+        symbol: "battery.75percent")
+    }
+  }
+
+  private func temperatureValue(
+    title: LocalizedStringKey,
+    value: Double?,
+    symbol: String
+  ) -> some View {
+    Label {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).font(.caption2).foregroundStyle(.secondary)
+        Text(value.map { L10n.format("%.1f °C", $0) } ?? "—")
+          .font(.caption.monospacedDigit().bold())
+      }
+    } icon: {
+      Image(systemName: symbol).foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(8)
+    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+  }
+
   private var unavailableChart: some View {
     VStack(spacing: 8) {
       Image(systemName: "chart.xyaxis.line")
@@ -235,9 +275,14 @@ struct MetricDetailView: View {
     case .memory: history = coordinator.memoryHistory
     case .gpu: history = coordinator.gpuHistory
     case .battery: history = coordinator.batteryHistory
+    case .temperature: history = coordinator.temperatureHistory
     case .fans: history = []
     }
     return Array(history.suffix(selectedRange.sampleCount))
+  }
+
+  private var metricYDomain: ClosedRange<Double> {
+    kind == .temperature ? 0...120 : 0...100
   }
 
   private var fanPoints: [FanHistoryChartPoint] {
@@ -276,6 +321,11 @@ struct MetricDetailView: View {
         coordinator.snapshot.gpu.value?.systemUtilizationPercent)
     case .battery:
       return BatteryDisplayText.summary(coordinator.snapshot.battery)
+    case .temperature:
+      guard let value = coordinator.snapshot.temperature.value?.processorCelsius
+        ?? coordinator.snapshot.temperature.value?.maximumCelsius
+      else { return "—" }
+      return L10n.format("%.1f °C", value)
     case .fans:
       return FanDisplayText.summary(coordinator.snapshot.fans)
     }
