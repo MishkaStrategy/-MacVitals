@@ -46,6 +46,10 @@ nonisolated enum FanControlSigningIdentity {
   static func isDeveloperIDControlBuild() -> Bool {
     controlTeamIdentifier() != nil
   }
+
+  static func hasTeamIdentifier() -> Bool {
+    isDeveloperIDControlBuild()
+  }
 }
 
 @MainActor
