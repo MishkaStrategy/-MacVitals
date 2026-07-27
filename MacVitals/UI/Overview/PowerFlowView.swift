@@ -19,7 +19,6 @@ struct PowerFlowView: View {
             .foregroundStyle(.secondary)
           Text(systemPower)
             .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
-            .contentTransition(.numericText())
         }
         Spacer()
         VStack(alignment: .trailing, spacing: 2) {
