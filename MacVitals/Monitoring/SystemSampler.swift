@@ -31,7 +31,7 @@ nonisolated enum SystemPowerAssessmentResolver {
         batteryPowerWatts: assessment.batteryPowerWatts ?? battery?.batteryPowerWatts,
         estimatedSystemPowerWatts: directSystemPowerWatts,
         powerBalanceWatts: assessment.powerBalanceWatts,
-        explanation: L10n.string("Direct system power telemetry"))
+        explanation: L10n.string("IOKit registry"))
     }
 
     guard assessment.estimatedSystemPowerWatts == nil,
