@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCProtocol,
   @unchecked Sendable
@@ -409,50 +408,17 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
 nonisolated enum FanControlPeerValidator {
   static func isAuthorizedMainApplication(pid: pid_t) -> Bool {
-    guard pid > 0,
-      let expectedTeam = ownSigningInformation()?.teamIdentifier,
-      let information = signingInformation(pid: pid),
-      information.identifier == "com.mishkacher.MacVitals",
-      information.teamIdentifier == expectedTeam
+    guard let helperFacts = FanControlCodeSigning.currentFacts(),
+      FanControlSigningPolicy.accepts(
+        helperFacts,
+        expectedIdentifier: FanControlSigningPolicy.helperIdentifier,
+        expectedTeamIdentifier: helperFacts.teamIdentifier),
+      let applicationFacts = FanControlCodeSigning.facts(pid: pid),
+      FanControlSigningPolicy.accepts(
+        applicationFacts,
+        expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
+        expectedTeamIdentifier: helperFacts.teamIdentifier)
     else { return false }
     return true
-  }
-
-  private static func ownSigningInformation() -> (identifier: String, teamIdentifier: String)? {
-    var dynamicCode: SecCode?
-    guard SecCodeCopySelf([], &dynamicCode) == errSecSuccess,
-      let dynamicCode,
-      SecCodeCheckValidity(dynamicCode, [], nil) == errSecSuccess
-    else { return nil }
-    return signingInformation(dynamicCode: dynamicCode)
-  }
-
-  private static func signingInformation(pid: pid_t) -> (identifier: String, teamIdentifier: String)? {
-    let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
-    var dynamicCode: SecCode?
-    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &dynamicCode) == errSecSuccess,
-      let dynamicCode,
-      SecCodeCheckValidity(dynamicCode, [], nil) == errSecSuccess
-    else { return nil }
-    return signingInformation(dynamicCode: dynamicCode)
-  }
-
-  private static func signingInformation(
-    dynamicCode: SecCode
-  ) -> (identifier: String, teamIdentifier: String)? {
-    var staticCode: SecStaticCode?
-    guard SecCodeCopyStaticCode(dynamicCode, [], &staticCode) == errSecSuccess,
-      let staticCode
-    else { return nil }
-
-    var information: CFDictionary?
-    guard SecCodeCopySigningInformation(staticCode, [], &information) == errSecSuccess,
-      let values = information as? [String: Any],
-      let identifier = values[kSecCodeInfoIdentifier as String] as? String,
-      let team = values[kSecCodeInfoTeamIdentifier as String] as? String,
-      !identifier.isEmpty,
-      !team.isEmpty
-    else { return nil }
-    return (identifier, team)
   }
 }
