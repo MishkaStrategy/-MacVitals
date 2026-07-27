@@ -31,6 +31,8 @@ nonisolated enum MenuBarRenderer {
         snapshot.battery.value?.temperatureCelsius)
       let values = [percentageText, temperatureText].compactMap { $0 }
       return values.isEmpty ? "🔋 —" : "🔋 " + values.joined(separator: " · ")
+    case .fans:
+      return FanDisplayText.menuBar(snapshot.fans)
     case .adapterPower:
       return watts(snapshot.adapter.value?.ratedPowerWatts).map { "⚡ \($0) W" } ?? "⚡ —"
     case .powerStatus:
