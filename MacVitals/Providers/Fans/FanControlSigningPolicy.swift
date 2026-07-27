@@ -92,7 +92,7 @@ nonisolated enum FanControlCodeSigning {
 
   private static func evaluateTrust(_ certificates: [SecCertificate]) -> Bool {
     guard !certificates.isEmpty else { return false }
-    let policy = SecPolicyCreateCodeSigning()
+    let policy = SecPolicyCreateBasicX509()
     var trust: SecTrust?
     guard SecTrustCreateWithCertificates(certificates as CFArray, policy, &trust) == errSecSuccess,
       let trust
