@@ -107,7 +107,7 @@ final class FanControlClient: ObservableObject {
     switch state {
     case .monitoringOnly:
       lastMessage = L10n.string(
-        "This test build is not signed with a Developer Team identity, so macOS blocks privileged fan control. Monitoring remains available.")
+        "Fan RPM monitoring is available. Control requires an approved signed helper.")
     case .notRegistered:
       requestApproval()
     case .approvalRequired:
@@ -125,7 +125,7 @@ final class FanControlClient: ObservableObject {
     guard FanControlSigningIdentity.hasTeamIdentifier() else {
       state = .monitoringOnly
       lastMessage = L10n.string(
-        "This test build is not signed with a Developer Team identity, so macOS blocks privileged fan control. Monitoring remains available.")
+        "Fan RPM monitoring is available. Control requires an approved signed helper.")
       return
     }
     do {
