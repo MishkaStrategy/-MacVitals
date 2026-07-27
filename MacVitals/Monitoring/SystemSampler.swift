@@ -18,8 +18,22 @@ nonisolated enum SystemPowerAssessmentResolver {
   static func resolve(
     assessment: PowerAssessment,
     battery: BatteryStats?,
-    externalPowerState: ExternalPowerState
+    externalPowerState: ExternalPowerState,
+    directSystemPowerWatts: Double? = nil
   ) -> PowerAssessment {
+    if let directSystemPowerWatts,
+      directSystemPowerWatts.isFinite,
+      (0.01...500).contains(directSystemPowerWatts)
+    {
+      return PowerAssessment(
+        status: assessment.status,
+        confidence: 1,
+        batteryPowerWatts: assessment.batteryPowerWatts ?? battery?.batteryPowerWatts,
+        estimatedSystemPowerWatts: directSystemPowerWatts,
+        powerBalanceWatts: assessment.powerBalanceWatts,
+        explanation: L10n.string("Direct system power telemetry"))
+    }
+
     guard assessment.estimatedSystemPowerWatts == nil,
       externalPowerState == .disconnected,
       battery?.state == .discharging,
@@ -43,6 +57,7 @@ actor SystemSampler {
   private let memoryProvider = MemoryProvider()
   private let batteryProvider = BatteryProvider()
   private let adapterProvider = AdapterProvider()
+  private let powerTelemetryProvider = SystemPowerTelemetryProvider()
   private let gpuProvider: any GPUProviding = CapabilityGPUProvider()
   private let fanProvider = FanProvider()
   private var evaluator = ChargerSufficiencyEvaluator()
@@ -59,6 +74,7 @@ actor SystemSampler {
     let (memory, memoryMilliseconds) = measure { memoryProvider.sample() }
     let (battery, batteryMilliseconds) = measure { batteryProvider.sample() }
     let (adapter, adapterMilliseconds) = measure { adapterProvider.sample() }
+    let telemetry = powerTelemetryProvider.sample()
     let (gpu, gpuMilliseconds) = measure { gpuProvider.sample() }
     let (fans, fanMilliseconds) = measure { fanProvider.sample() }
     let batteryValue = battery.value
@@ -75,7 +91,7 @@ actor SystemSampler {
       externalPower: externalPowerState == .connected,
       batteryPowerWatts: batteryValue?.batteryPowerWatts,
       adapterRatedPowerWatts: adapterValue?.ratedPowerWatts,
-      adapterMeasuredPowerWatts: adapterValue?.measuredPowerWatts,
+      adapterMeasuredPowerWatts: telemetry?.systemInputWatts ?? adapterValue?.measuredPowerWatts,
       batteryPercent: batteryValue?.percentage,
       batteryTimestamp: battery.timestamp,
       adapterTimestamp: adapter.timestamp)
@@ -93,15 +109,18 @@ actor SystemSampler {
     let assessment = SystemPowerAssessmentResolver.resolve(
       assessment: rawAssessment,
       battery: batteryValue,
-      externalPowerState: externalPowerState)
+      externalPowerState: externalPowerState,
+      directSystemPowerWatts: telemetry?.systemLoadWatts)
+    let hasDirectSystemPower = telemetry?.systemLoadWatts != nil
     let power = MetricValue(
       value: assessment,
       unit: .watts,
-      availability: assessment.status == .unknown ? .temporarilyUnavailable : .available,
-      quality: .derived,
-      source: .derivedPowerModel,
+      availability: assessment.estimatedSystemPowerWatts == nil
+        ? .temporarilyUnavailable : .available,
+      quality: hasDirectSystemPower ? .direct : .derived,
+      source: hasDirectSystemPower ? .iokitRegistry : .derivedPowerModel,
       timestamp: now,
-      isEstimated: assessment.estimatedSystemPowerWatts != nil,
+      isEstimated: !hasDirectSystemPower && assessment.estimatedSystemPowerWatts != nil,
       message: assessment.explanation)
 
     let snapshot = SystemSnapshot(
