@@ -15,17 +15,20 @@ struct FanControlView: View {
     VStack(alignment: .leading, spacing: compact ? 8 : 12) {
       statusHeader
 
-      if compact {
-        ScrollView {
-          fanCards
+      Group {
+        if compact {
+          ScrollView {
+            fanCards
+          }
+          .frame(maxHeight: 245)
+        } else {
+          ScrollView {
+            fanCards
+          }
+          .frame(minHeight: 280)
         }
-        .frame(maxHeight: 245)
-      } else {
-        ScrollView {
-          fanCards
-        }
-        .frame(minHeight: 280)
       }
+      .accessibilityIdentifier("fanControlList")
 
       if !compact {
         Text(
