@@ -11,6 +11,7 @@ final class MacVitalsUITests: XCTestCase {
         general: "General",
         alerts: "Alerts",
         menuBar: "Menu Bar",
+        fans: "Fans",
         diagnostics: "Diagnostics",
         privacy: "Privacy"))
     assertPreferencesLaunch(
@@ -20,6 +21,7 @@ final class MacVitalsUITests: XCTestCase {
         general: "Основные",
         alerts: "Уведомления",
         menuBar: "Строка меню",
+        fans: "Вентиляторы",
         diagnostics: "Диагностика",
         privacy: "Приватность"))
   }
@@ -58,6 +60,11 @@ final class MacVitalsUITests: XCTestCase {
     assertElementExists("menuPresetPicker", in: app, file: file, line: line)
     assertElementExists("menuMetricLayoutList", in: app, file: file, line: line)
     assertElementExists("restoreDefaultsButton", in: app, file: file, line: line)
+
+    selectTab(labels.fans, language: language, in: app, file: file, line: line)
+    assertElementExists("fanControlStatus", in: app, file: file, line: line)
+    assertElementExists("fanControlList", in: app, file: file, line: line)
+    assertElementExists("fanControlSafetyNotice", in: app, file: file, line: line)
 
     selectTab(labels.diagnostics, language: language, in: app, file: file, line: line)
     assertElementExists("exportDiagnosticsButton", in: app, file: file, line: line)
@@ -110,6 +117,7 @@ final class MacVitalsUITests: XCTestCase {
     let general: String
     let alerts: String
     let menuBar: String
+    let fans: String
     let diagnostics: String
     let privacy: String
   }
