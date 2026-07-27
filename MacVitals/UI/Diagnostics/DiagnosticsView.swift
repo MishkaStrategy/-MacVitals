@@ -21,7 +21,8 @@ struct DiagnosticsView: View {
           snapshot.memory.timestamp)
         row(
           "Battery", snapshot.battery.availability, snapshot.battery.source,
-          snapshot.battery.timestamp, detail: batteryDetail)
+          snapshot.battery.timestamp,
+          detail: BatteryDisplayText.summary(snapshot.battery))
         row(
           "Adapter", snapshot.adapter.availability, snapshot.adapter.source,
           snapshot.adapter.timestamp)
@@ -29,8 +30,38 @@ struct DiagnosticsView: View {
           "GPU", snapshot.gpu.value?.utilizationAvailability ?? .unsupported,
           snapshot.gpu.source, snapshot.gpu.timestamp)
         row(
+          "Fans", snapshot.fans.availability, snapshot.fans.source,
+          snapshot.fans.timestamp,
+          detail: FanDisplayText.summary(snapshot.fans))
+        row(
           "Power model", snapshot.power.availability, snapshot.power.source,
           snapshot.power.timestamp)
+      }
+
+      if let fans = snapshot.fans.value?.fans, !fans.isEmpty {
+        Section("Fan details") {
+          ForEach(fans) { fan in
+            VStack(alignment: .leading, spacing: 3) {
+              HStack {
+                Text(L10n.format("Fan %d", fan.index + 1))
+                Spacer()
+                Text(MetricNumberFormatter.rpm(fan.currentRPM) ?? "—")
+                  .monospacedDigit()
+              }
+              Text(FanDisplayText.detail(fan))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Text(
+                L10n.format(
+                  "Range %@ – %@",
+                  MetricNumberFormatter.rpm(fan.minimumRPM) ?? "—",
+                  MetricNumberFormatter.rpm(fan.maximumRPM) ?? "—"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            }
+            .accessibilityIdentifier("diagnosticsFan.\(fan.index)")
+          }
+        }
       }
 
       Section("Sampling") {
@@ -49,6 +80,7 @@ struct DiagnosticsView: View {
           timingRow("Battery", health.timings.batteryMilliseconds)
           timingRow("Adapter", health.timings.adapterMilliseconds)
           timingRow("GPU", health.timings.gpuMilliseconds)
+          timingRow("Fans", health.timings.fanMilliseconds)
           timingRow("Power model", health.timings.powerModelMilliseconds)
         } else {
           Text("Waiting for the first sampling cycle")
@@ -66,12 +98,6 @@ struct DiagnosticsView: View {
     .padding()
   }
 
-  private var batteryDetail: String? {
-    guard let battery = snapshot.battery.value, battery.present else { return nil }
-    let summary = BatteryDisplayText.summary(snapshot.battery)
-    return summary == "—" ? nil : summary
-  }
-
   private func row(
     _ nameKey: String,
     _ availability: MetricAvailability,
@@ -87,8 +113,8 @@ struct DiagnosticsView: View {
       }
       if let detail {
         Text(detail)
-          .font(.callout.monospacedDigit())
-          .accessibilityIdentifier("\(nameKey.lowercased())MetricValue")
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(.secondary)
       }
       Text(
         L10n.format(
