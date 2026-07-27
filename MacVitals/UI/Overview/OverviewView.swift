@@ -13,7 +13,7 @@ struct OverviewView: View {
   @State private var selectedDetail: MetricDetailKind?
 
   var body: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: 10) {
       HStack {
         VStack(alignment: .leading) {
           Text("MacVitals").font(.title2.bold())
@@ -59,11 +59,6 @@ struct OverviewView: View {
       gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot)
       history
-      HStack {
-        Text(coordinator.snapshot.power.value?.explanation ?? L10n.string("Collecting data"))
-          .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-        Spacer()
-      }
       Divider()
       HStack {
         Button("Diagnostics") { exportDiagnostics() }
@@ -131,15 +126,18 @@ struct OverviewView: View {
       }
       .chartYScale(domain: 0...100)
       .chartXAxis {
-        AxisMarks(values: .stride(by: .second, count: 5)) {
-          AxisTick()
-        }
         AxisMarks(values: .stride(by: .minute, count: 5)) { value in
-          AxisGridLine()
+          AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+          AxisTick()
           AxisValueLabel(format: .dateTime.hour().minute())
         }
       }
-      .frame(height: 116)
+      .chartPlotStyle { plotArea in
+        plotArea
+          .background(.quaternary.opacity(0.15))
+          .clipShape(RoundedRectangle(cornerRadius: 8))
+      }
+      .frame(height: 106)
       .accessibilityLabel("CPU history")
     }
   }

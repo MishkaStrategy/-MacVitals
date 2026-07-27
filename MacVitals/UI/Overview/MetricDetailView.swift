@@ -31,6 +31,38 @@ nonisolated enum MetricDetailKind: String, Identifiable, Sendable {
   }
 }
 
+private enum MetricHistoryRange: String, CaseIterable, Identifiable {
+  case fiveMinutes
+  case fifteenMinutes
+  case oneHour
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .fiveMinutes: return "5 min"
+    case .fifteenMinutes: return "15 min"
+    case .oneHour: return "1 h"
+    }
+  }
+
+  var sampleCount: Int {
+    switch self {
+    case .fiveMinutes: return 60
+    case .fifteenMinutes: return 180
+    case .oneHour: return 720
+    }
+  }
+
+  var axisMinuteStride: Int {
+    switch self {
+    case .fiveMinutes: return 1
+    case .fifteenMinutes: return 3
+    case .oneHour: return 10
+    }
+  }
+}
+
 private struct FanHistoryChartPoint: Identifiable {
   let id: UUID
   let timestamp: Date
@@ -43,24 +75,26 @@ private struct FanHistoryChartPoint: Identifiable {
 }
 
 struct MetricDetailView: View {
+  @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var fanControl: FanControlClient
+  @State private var selectedRange: MetricHistoryRange = .fifteenMinutes
 
   let kind: MetricDetailKind
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
+    VStack(alignment: .leading, spacing: 12) {
       header
+      Divider()
       if kind == .fans {
         fanChart
-        Divider()
-        FanControlView()
+        FanControlView(compact: true)
       } else {
         metricChart
       }
     }
-    .padding(18)
-    .frame(width: 720, height: kind == .fans ? 700 : 460)
+    .padding(16)
+    .frame(width: kind == .fans ? 600 : 560, height: kind == .fans ? 540 : 360)
     .onAppear {
       if kind == .fans { fanControl.refreshStatus() }
     }
@@ -70,16 +104,37 @@ struct MetricDetailView: View {
     HStack(spacing: 12) {
       Image(systemName: kind.symbol)
         .font(.title2)
-        .frame(width: 30)
+        .frame(width: 28)
       VStack(alignment: .leading, spacing: 2) {
-        Text(kind.title).font(.title2.bold())
-        Text(currentValue)
-          .font(.title3.monospacedDigit())
-        Text("1 h · 5 s")
-          .font(.caption)
+        Text(kind.title).font(.headline)
+        HStack(spacing: 6) {
+          Text(currentValue)
+            .font(.title3.monospacedDigit().bold())
+          Text("· 5 s samples")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      Spacer(minLength: 12)
+      Picker("Range", selection: $selectedRange) {
+        ForEach(MetricHistoryRange.allCases) { range in
+          Text(range.title).tag(range)
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .frame(width: 190)
+      Button {
+        dismiss()
+      } label: {
+        Image(systemName: "xmark.circle.fill")
+          .font(.title3)
           .foregroundStyle(.secondary)
       }
-      Spacer()
+      .buttonStyle(.plain)
+      .keyboardShortcut(.cancelAction)
+      .help("Close")
+      .accessibilityLabel("Close")
     }
   }
 
@@ -90,17 +145,33 @@ struct MetricDetailView: View {
       unavailableChart
     } else {
       Chart(points) { point in
+        AreaMark(
+          x: .value("Time", point.timestamp),
+          y: .value(kind.title, point.value),
+          series: .value("Sampling epoch", point.segment)
+        )
+        .foregroundStyle(
+          LinearGradient(
+            colors: [Color.accentColor.opacity(0.22), Color.accentColor.opacity(0.02)],
+            startPoint: .top,
+            endPoint: .bottom))
         LineMark(
           x: .value("Time", point.timestamp),
           y: .value(kind.title, point.value),
           series: .value("Sampling epoch", point.segment)
         )
         .foregroundStyle(Color.accentColor)
+        .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
       .chartYScale(domain: 0...100)
       .chartXAxis { chartXAxis }
       .chartYAxis {
-        AxisMarks(position: .leading)
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 5))
+      }
+      .chartPlotStyle { plotArea in
+        plotArea
+          .background(.quaternary.opacity(0.18))
+          .clipShape(RoundedRectangle(cornerRadius: 8))
       }
       .accessibilityLabel(kind.title)
     }
@@ -110,7 +181,7 @@ struct MetricDetailView: View {
   private var fanChart: some View {
     if fanPoints.isEmpty {
       unavailableChart
-        .frame(height: 180)
+        .frame(height: 150)
     } else {
       Chart(fanPoints) { point in
         LineMark(
@@ -119,14 +190,20 @@ struct MetricDetailView: View {
           series: .value("Sampling epoch", point.seriesKey)
         )
         .foregroundStyle(by: .value("Fans", point.fanLabel))
+        .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
       .chartYScale(domain: fanYDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
-        AxisMarks(position: .leading)
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 4))
       }
-      .chartLegend(position: .bottom, alignment: .leading)
-      .frame(height: 210)
+      .chartLegend(position: .bottom, alignment: .leading, spacing: 8)
+      .chartPlotStyle { plotArea in
+        plotArea
+          .background(.quaternary.opacity(0.18))
+          .clipShape(RoundedRectangle(cornerRadius: 8))
+      }
+      .frame(height: 165)
       .accessibilityLabel(L10n.string("Fans"))
     }
   }
@@ -144,37 +221,39 @@ struct MetricDetailView: View {
 
   @AxisContentBuilder
   private var chartXAxis: some AxisContent {
-    AxisMarks(values: .stride(by: .second, count: 5)) {
+    AxisMarks(values: .stride(by: .minute, count: selectedRange.axisMinuteStride)) { value in
+      AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
       AxisTick()
-    }
-    AxisMarks(values: .stride(by: .minute, count: 5)) { value in
-      AxisGridLine()
       AxisValueLabel(format: .dateTime.hour().minute())
     }
   }
 
   private var metricHistory: [TimedPoint] {
+    let history: [TimedPoint]
     switch kind {
-    case .cpu: return coordinator.cpuHistory
-    case .memory: return coordinator.memoryHistory
-    case .gpu: return coordinator.gpuHistory
-    case .battery: return coordinator.batteryHistory
-    case .fans: return []
+    case .cpu: history = coordinator.cpuHistory
+    case .memory: history = coordinator.memoryHistory
+    case .gpu: history = coordinator.gpuHistory
+    case .battery: history = coordinator.batteryHistory
+    case .fans: history = []
     }
+    return Array(history.suffix(selectedRange.sampleCount))
   }
 
   private var fanPoints: [FanHistoryChartPoint] {
     coordinator.fanHistory
       .sorted { $0.key < $1.key }
       .flatMap { index, history in
-        HistoryChartSegmentation.points(from: history).map { point in
-          FanHistoryChartPoint(
-            id: point.id,
-            timestamp: point.timestamp,
-            value: point.value,
-            fanIndex: index,
-            segment: point.segment)
-        }
+        HistoryChartSegmentation.points(
+          from: Array(history.suffix(selectedRange.sampleCount)))
+          .map { point in
+            FanHistoryChartPoint(
+              id: point.id,
+              timestamp: point.timestamp,
+              value: point.value,
+              fanIndex: index,
+              segment: point.segment)
+          }
       }
   }
 

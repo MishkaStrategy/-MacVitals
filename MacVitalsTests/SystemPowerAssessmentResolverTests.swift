@@ -19,6 +19,23 @@ final class SystemPowerAssessmentResolverTests: XCTestCase {
     XCTAssertEqual(resolved.estimatedSystemPowerWatts, 18.75)
   }
 
+  func testNormalizesPositiveBatteryCurrentConventionWhileDischarging() {
+    let assessment = PowerAssessment(
+      status: .notConnected,
+      confidence: 1,
+      batteryPowerWatts: 14.5,
+      estimatedSystemPowerWatts: nil,
+      powerBalanceWatts: nil,
+      explanation: "On battery")
+
+    let resolved = SystemPowerAssessmentResolver.resolve(
+      assessment: assessment,
+      battery: battery(powerWatts: 14.5),
+      externalPowerState: .disconnected)
+
+    XCTAssertEqual(resolved.estimatedSystemPowerWatts, 14.5)
+  }
+
   func testDoesNotClaimTotalSystemPowerWhileConnectedWithoutAdapterMeasurement() {
     let assessment = PowerAssessment(
       status: .chargingBattery,
