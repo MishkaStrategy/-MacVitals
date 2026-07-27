@@ -81,16 +81,24 @@ ZIP_APP="${WORK_DIR}/zip/MacVitals.app"
   echo "ZIP does not contain MacVitals.app at its root" >&2
   exit 1
 }
+python3 "${ROOT_DIR}/scripts/validate_fan_helper_bundle.py" "${ZIP_APP}"
 
 INFO_PLIST="${ZIP_APP}/Contents/Info.plist"
 EXECUTABLE="${ZIP_APP}/Contents/MacOS/MacVitals"
 RESOURCES="${ZIP_APP}/Contents/Resources"
 ICON_PATH="${RESOURCES}/AppIcon.icns"
+FAN_HELPER="${RESOURCES}/MacVitalsFanHelper"
+FAN_DAEMON_PLIST="${ZIP_APP}/Contents/Library/LaunchDaemons/com.mishkacher.MacVitals.FanControl.plist"
 plutil -lint "${INFO_PLIST}" >/dev/null
 [[ -x "${EXECUTABLE}" ]] || {
   echo "Packaged executable is missing or not executable" >&2
   exit 1
 }
+[[ -x "${FAN_HELPER}" ]] || {
+  echo "Packaged fan helper is missing or not executable" >&2
+  exit 1
+}
+plutil -lint "${FAN_DAEMON_PLIST}" >/dev/null
 
 plist_value() {
   /usr/libexec/PlistBuddy -c "Print :$1" "${INFO_PLIST}"
@@ -162,12 +170,18 @@ for locale in en ru; do
 done
 
 architectures="$(lipo -archs "${EXECUTABLE}")"
+helper_architectures="$(lipo -archs "${FAN_HELPER}")"
 if [[ "${architectures}" != "${TARGET_ARCHITECTURE}" ]]; then
   echo "Packaged executable must contain only ${TARGET_ARCHITECTURE}; found: ${architectures}" >&2
   exit 1
 fi
+if [[ "${helper_architectures}" != "${TARGET_ARCHITECTURE}" ]]; then
+  echo "Packaged fan helper must contain only ${TARGET_ARCHITECTURE}; found: ${helper_architectures}" >&2
+  exit 1
+fi
 
 signature_info="$(codesign -dv --verbose=4 "${ZIP_APP}" 2>&1 || true)"
+helper_signature_info="$(codesign -dv --verbose=4 "${FAN_HELPER}" 2>&1 || true)"
 if codesign --verify --deep --strict "${ZIP_APP}" >/dev/null 2>&1; then
   if grep -q '^Signature=adhoc$' <<<"${signature_info}"; then
     actual_signing_status="ad-hoc-signed"
@@ -179,6 +193,26 @@ if codesign --verify --deep --strict "${ZIP_APP}" >/dev/null 2>&1; then
   fi
 else
   actual_signing_status="unsigned"
+fi
+
+if [[ "${actual_signing_status}" == "developer-id-signed" ]]; then
+  codesign --verify --strict "${FAN_HELPER}" >/dev/null 2>&1 || {
+    echo "Developer ID app contains an invalid fan helper signature" >&2
+    exit 1
+  }
+  grep -q '^Authority=Developer ID Application:' <<<"${helper_signature_info}" || {
+    echo "Fan helper is not Developer ID signed with the application" >&2
+    exit 1
+  }
+  app_team="$(sed -n 's/^TeamIdentifier=//p' <<<"${signature_info}" | head -n 1)"
+  helper_team="$(sed -n 's/^TeamIdentifier=//p' <<<"${helper_signature_info}" | head -n 1)"
+  [[ -n "${app_team}" && "${helper_team}" == "${app_team}" ]] || {
+    echo "Fan helper TeamIdentifier does not match the application" >&2
+    exit 1
+  }
+elif grep -q '^Authority=Developer ID Application:' <<<"${helper_signature_info}"; then
+  echo "Unsigned candidate unexpectedly contains a Developer ID signed fan helper" >&2
+  exit 1
 fi
 
 if xcrun stapler validate "${ZIP_APP}" >/dev/null 2>&1; then
@@ -214,6 +248,7 @@ DMG_APP="${MOUNT_DIR}/MacVitals.app"
   echo "DMG does not contain MacVitals.app" >&2
   exit 1
 }
+python3 "${ROOT_DIR}/scripts/validate_fan_helper_bundle.py" "${DMG_APP}"
 [[ -L "${MOUNT_DIR}/Applications" ]] || {
   echo "DMG does not contain the Applications shortcut" >&2
   exit 1
@@ -221,6 +256,14 @@ DMG_APP="${MOUNT_DIR}/MacVitals.app"
 
 cmp -s "${EXECUTABLE}" "${DMG_APP}/Contents/MacOS/MacVitals" || {
   echo "ZIP and DMG executables differ" >&2
+  exit 1
+}
+cmp -s "${FAN_HELPER}" "${DMG_APP}/Contents/Resources/MacVitalsFanHelper" || {
+  echo "ZIP and DMG fan helpers differ" >&2
+  exit 1
+}
+cmp -s "${FAN_DAEMON_PLIST}" "${DMG_APP}/Contents/Library/LaunchDaemons/com.mishkacher.MacVitals.FanControl.plist" || {
+  echo "ZIP and DMG fan daemon plists differ" >&2
   exit 1
 }
 cmp -s "${INFO_PLIST}" "${DMG_APP}/Contents/Info.plist" || {
@@ -251,4 +294,4 @@ codesign --verify --deep --strict "${DMG_APP}" >/dev/null 2>&1 || {
   fi
 }
 
-echo "Verified MacVitals ${VERSION} (${build_version}): provenance, app icon, bundle metadata, EN/RU resources, arm64 executable, ZIP, DMG and checksums are valid"
+echo "Verified MacVitals ${VERSION} (${build_version}): provenance, app icon, bundle metadata, EN/RU resources, native arm64 app and fan helper, constrained launch daemon, ZIP, DMG and checksums are valid"
