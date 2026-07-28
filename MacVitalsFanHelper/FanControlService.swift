@@ -20,6 +20,9 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 
   func run() {
     queue.sync { performStartupRecovery() }
+    guard let applicationRequirement = FanControlPeerValidator.mainApplicationRequirement()
+    else { return }
+    listener.setConnectionCodeSigningRequirement(applicationRequirement)
     startWatchdog()
     listener.resume()
     RunLoop.current.run()
@@ -407,18 +410,30 @@ final class FanControlService: NSObject, NSXPCListenerDelegate, FanControlXPCPro
 }
 
 nonisolated enum FanControlPeerValidator {
+  static func mainApplicationRequirement() -> String? {
+    guard let helperFacts = validatedHelperFacts() else { return nil }
+    return FanControlCodeSigning.developerIDRequirementSource(
+      identifier: FanControlSigningPolicy.mainApplicationIdentifier,
+      teamIdentifier: helperFacts.teamIdentifier)
+  }
+
   static func isAuthorizedMainApplication(pid: pid_t) -> Bool {
+    guard let helperFacts = validatedHelperFacts(),
+      FanControlCodeSigning.facts(
+        pid: pid,
+        expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
+        expectedTeamIdentifier: helperFacts.teamIdentifier) != nil
+    else { return false }
+    return true
+  }
+
+  private static func validatedHelperFacts() -> FanControlSigningFacts? {
     guard let helperFacts = FanControlCodeSigning.currentFacts(),
       FanControlSigningPolicy.accepts(
         helperFacts,
         expectedIdentifier: FanControlSigningPolicy.helperIdentifier,
-        expectedTeamIdentifier: helperFacts.teamIdentifier),
-      let applicationFacts = FanControlCodeSigning.facts(pid: pid),
-      FanControlSigningPolicy.accepts(
-        applicationFacts,
-        expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
         expectedTeamIdentifier: helperFacts.teamIdentifier)
-    else { return false }
-    return true
+    else { return nil }
+    return helperFacts
   }
 }
