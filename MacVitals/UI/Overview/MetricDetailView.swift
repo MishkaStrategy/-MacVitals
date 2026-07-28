@@ -97,6 +97,7 @@ struct MetricDetailView: View {
   @EnvironmentObject private var fanControl: FanControlClient
   @State private var selectedRange: MetricHistoryRange = .fifteenMinutes
   @State private var selectedTemperatureSensorID: String?
+  @StateObject private var processMonitor = ProcessConsumersMonitor()
 
   let kind: MetricDetailKind
 
@@ -117,7 +118,11 @@ struct MetricDetailView: View {
           points: HistoryChartSegmentation.points(from: metricHistory),
           title: kind.title,
           yDomain: metricYDomain)
+          .frame(height: 205)
         if kind == .battery { batteryBreakdown }
+        if let processMetric {
+          ProcessConsumersView(monitor: processMonitor, metric: processMetric)
+        }
       }
     }
     .padding(16)
@@ -125,6 +130,11 @@ struct MetricDetailView: View {
     .onAppear {
       if kind == .fans { fanControl.refreshStatus() }
       if kind == .temperature { chooseInitialTemperatureSensor() }
+      if processMetric != nil { processMonitor.start(interval: settings.samplingInterval) }
+    }
+    .onDisappear { processMonitor.stop() }
+    .onChange(of: settings.samplingInterval) { interval in
+      if processMetric != nil { processMonitor.restart(interval: interval) }
     }
     .onChange(of: coordinator.snapshot.temperature.value?.sensors.map(\.id) ?? []) { _ in
       if kind == .temperature { chooseInitialTemperatureSensor() }
@@ -134,7 +144,7 @@ struct MetricDetailView: View {
   private var detailWidth: CGFloat {
     switch kind {
     case .fans, .temperature, .power: return 640
-    default: return 580
+    case .cpu, .memory, .gpu, .battery: return 700
     }
   }
 
@@ -143,8 +153,8 @@ struct MetricDetailView: View {
     case .fans: return 650
     case .temperature: return 660
     case .power: return 520
-    case .battery: return 520
-    default: return 390
+    case .battery: return 780
+    case .cpu, .memory, .gpu: return 610
     }
   }
 
@@ -509,6 +519,16 @@ struct MetricDetailView: View {
   private func filtered(_ history: [TimedPoint]) -> [TimedPoint] {
     let cutoff = Date().addingTimeInterval(-selectedRange.duration)
     return history.filter { $0.timestamp >= cutoff }
+  }
+
+  private var processMetric: ProcessConsumerMetric? {
+    switch kind {
+    case .cpu: return .cpu
+    case .memory: return .memory
+    case .gpu: return .gpu
+    case .battery: return .energy
+    case .temperature, .fans, .power: return nil
+    }
   }
 
   private var metricHistory: [TimedPoint] {
