@@ -17,9 +17,11 @@ final class ProcessConsumersMonitor: ObservableObject {
     task = Task { [weak self, provider] in
       await provider.reset()
       while !Task.isCancelled {
-        let next = await provider.sample()
+        guard let self else { break }
+        let applications = self.runningApplicationDescriptors()
+        let next = await provider.sample(runningApplications: applications)
         guard !Task.isCancelled else { break }
-        self?.snapshot = next
+        self.snapshot = next
         let nanoseconds = UInt64(refreshInterval * 1_000_000_000)
         try? await Task.sleep(nanoseconds: nanoseconds)
       }
@@ -39,6 +41,19 @@ final class ProcessConsumersMonitor: ObservableObject {
 
   deinit {
     task?.cancel()
+  }
+
+  private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
+    NSWorkspace.shared.runningApplications.compactMap { application in
+      guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
+      let name = application.localizedName
+        ?? application.bundleIdentifier
+        ?? L10n.string("Unknown process")
+      return RunningApplicationDescriptor(
+        pid: application.processIdentifier,
+        name: name,
+        bundleIdentifier: application.bundleIdentifier)
+    }
   }
 }
 
@@ -152,10 +167,10 @@ struct ProcessConsumersView: View {
 
   @ViewBuilder
   private func applicationIcon(_ application: ApplicationProcessUsage) -> some View {
-    if let path = application.iconPath,
-      ProcessFilePrivacyPolicy.permitsFileMetadataAccess(path)
-    {
-      Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+    if let icon = NSWorkspace.shared.runningApplications.first(where: {
+      $0.processIdentifier == application.representativePID
+    })?.icon {
+      Image(nsImage: icon)
         .resizable()
         .scaledToFit()
         .accessibilityHidden(true)
