@@ -1,0 +1,209 @@
+name: Agent Apply Process Consumers
+
+on:
+  push:
+    branches:
+      - agent/process-consumers
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'chore: finalize process consumer UI integration'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Patch detail UI and localizations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('MacVitals/UI/Overview/MetricDetailView.swift')
+          text = path.read_text()
+
+          replacements = [
+          (
+          '''  @State private var selectedRange: MetricHistoryRange = .fifteenMinutes
+            @State private var selectedTemperatureSensorID: String?
+
+            let kind: MetricDetailKind
+          ''',
+          '''  @State private var selectedRange: MetricHistoryRange = .fifteenMinutes
+            @State private var selectedTemperatureSensorID: String?
+            @StateObject private var processMonitor = ProcessConsumersMonitor()
+
+            let kind: MetricDetailKind
+          '''),
+          (
+          '''      default:
+                  metricChart(
+                    points: HistoryChartSegmentation.points(from: metricHistory),
+                    title: kind.title,
+                    yDomain: metricYDomain)
+                  if kind == .battery { batteryBreakdown }
+                }
+          ''',
+          '''      default:
+                  metricChart(
+                    points: HistoryChartSegmentation.points(from: metricHistory),
+                    title: kind.title,
+                    yDomain: metricYDomain)
+                    .frame(height: 205)
+                  if kind == .battery { batteryBreakdown }
+                  if let processMetric {
+                    ProcessConsumersView(monitor: processMonitor, metric: processMetric)
+                  }
+                }
+          '''),
+          (
+          '''    .onAppear {
+                if kind == .fans { fanControl.refreshStatus() }
+                if kind == .temperature { chooseInitialTemperatureSensor() }
+              }
+              .onChange(of: coordinator.snapshot.temperature.value?.sensors.map(\.id) ?? []) { _ in
+                if kind == .temperature { chooseInitialTemperatureSensor() }
+              }
+          ''',
+          '''    .onAppear {
+                if kind == .fans { fanControl.refreshStatus() }
+                if kind == .temperature { chooseInitialTemperatureSensor() }
+                if processMetric != nil { processMonitor.start(interval: settings.samplingInterval) }
+              }
+              .onDisappear { processMonitor.stop() }
+              .onChange(of: settings.samplingInterval) { interval in
+                if processMetric != nil { processMonitor.restart(interval: interval) }
+              }
+              .onChange(of: coordinator.snapshot.temperature.value?.sensors.map(\.id) ?? []) { _ in
+                if kind == .temperature { chooseInitialTemperatureSensor() }
+              }
+          '''),
+          (
+          '''  private var detailWidth: CGFloat {
+                switch kind {
+                case .fans, .temperature, .power: return 640
+                default: return 580
+                }
+              }
+          ''',
+          '''  private var detailWidth: CGFloat {
+                switch kind {
+                case .fans, .temperature, .power: return 640
+                case .cpu, .memory, .gpu, .battery: return 700
+                }
+              }
+          '''),
+          (
+          '''  private var detailHeight: CGFloat {
+                switch kind {
+                case .fans: return 650
+                case .temperature: return 660
+                case .power: return 520
+                case .battery: return 520
+                default: return 390
+                }
+              }
+          ''',
+          '''  private var detailHeight: CGFloat {
+                switch kind {
+                case .fans: return 650
+                case .temperature: return 660
+                case .power: return 520
+                case .battery: return 780
+                case .cpu, .memory, .gpu: return 610
+                }
+              }
+          '''),
+          (
+          '''  private var metricHistory: [TimedPoint] {
+          ''',
+          '''  private var processMetric: ProcessConsumerMetric? {
+                switch kind {
+                case .cpu: return .cpu
+                case .memory: return .memory
+                case .gpu: return .gpu
+                case .battery: return .energy
+                case .temperature, .fans, .power: return nil
+                }
+              }
+
+              private var metricHistory: [TimedPoint] {
+          ''')]
+
+          for old, new in replacements:
+              if old not in text:
+                  if new.strip() in text:
+                      continue
+                  raise SystemExit(f'Expected MetricDetailView snippet not found:\n{old}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+          en = Path('MacVitals/Resources/en.lproj/UXV2.strings')
+          ru = Path('MacVitals/Resources/ru.lproj/UXV2.strings')
+          en_add = r'''
+          "Unknown process" = "Unknown process";
+          "Estimated" = "Estimated";
+          "Application count" = "Application count";
+          "Collecting application activity" = "Collecting application activity";
+          "CPU and energy deltas appear after the second sample." = "CPU and energy deltas appear after the second sample.";
+          "Top CPU applications" = "Top CPU applications";
+          "Top memory applications" = "Top memory applications";
+          "Top GPU applications" = "Top GPU applications";
+          "Top energy applications" = "Top energy applications";
+          "%.0f score" = "%.0f score";
+          "≈ %.2f W" = "≈ %.2f W";
+          "%.0f impact" = "%.0f impact";
+          "CPU %@" = "CPU %@";
+          "CPU, memory and disk estimate" = "CPU, memory and disk estimate";
+          "Kernel energy accounting" = "Kernel energy accounting";
+          "Application helpers are grouped under their parent app. CPU use can exceed 100% on multicore Macs." = "Application helpers are grouped under their parent app. CPU use can exceed 100% on multicore Macs.";
+          "Memory uses physical footprint and combines helper processes belonging to the same app." = "Memory uses physical footprint and combines helper processes belonging to the same app.";
+          "macOS does not expose public per-app GPU percentages. This ranking is a relative estimate from energy counters and graphics helper activity." = "macOS does not expose public per-app GPU percentages. This ranking is a relative estimate from energy counters and graphics helper activity.";
+          "This is current energy impact, not historical battery drain. Exact battery watts per app are not exposed by macOS." = "This is current energy impact, not historical battery drain. Exact battery watts per app are not exposed by macOS.";
+          "1 process" = "1 process";
+          "%d processes" = "%d processes";
+          '''
+          ru_add = r'''
+          "Unknown process" = "Неизвестный процесс";
+          "Estimated" = "Оценка";
+          "Application count" = "Количество приложений";
+          "Collecting application activity" = "Сбор активности приложений";
+          "CPU and energy deltas appear after the second sample." = "Данные ЦП и энергии появятся после второго замера.";
+          "Top CPU applications" = "Больше всего нагружают ЦП";
+          "Top memory applications" = "Больше всего используют память";
+          "Top GPU applications" = "Самые активные приложения GPU";
+          "Top energy applications" = "Больше всего расходуют энергию";
+          "%.0f score" = "%.0f баллов";
+          "≈ %.2f W" = "≈ %.2f Вт";
+          "%.0f impact" = "влияние %.0f";
+          "CPU %@" = "ЦП %@";
+          "CPU, memory and disk estimate" = "Оценка по ЦП, памяти и диску";
+          "Kernel energy accounting" = "Системный счётчик энергии";
+          "Application helpers are grouped under their parent app. CPU use can exceed 100% on multicore Macs." = "Вспомогательные процессы объединены с основным приложением. На многоядерном Mac нагрузка приложения может превышать 100%.";
+          "Memory uses physical footprint and combines helper processes belonging to the same app." = "Используется физический объём памяти, а вспомогательные процессы объединяются с основным приложением.";
+          "macOS does not expose public per-app GPU percentages. This ranking is a relative estimate from energy counters and graphics helper activity." = "macOS не предоставляет публичный точный процент GPU для каждого приложения. Рейтинг является относительной оценкой по энергии и графическим процессам.";
+          "This is current energy impact, not historical battery drain. Exact battery watts per app are not exposed by macOS." = "Показано текущее влияние на энергопотребление, а не расход батареи за всё время. macOS не раскрывает точные ватты батареи по приложениям.";
+          "1 process" = "1 процесс";
+          "%d processes" = "%d процессов";
+          '''
+          for localization, addition, marker in [
+              (en, en_add, '"Top CPU applications"'),
+              (ru, ru_add, '"Top CPU applications"')]:
+              current = localization.read_text()
+              if marker not in current:
+                  localization.write_text(current.rstrip() + '\n' + addition.strip() + '\n')
+          PY
+
+          git config user.name 'MacVitals Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add MacVitals/UI/Overview/MetricDetailView.swift MacVitals/Resources/en.lproj/UXV2.strings MacVitals/Resources/ru.lproj/UXV2.strings
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'chore: finalize process consumer UI integration'
+          git push origin HEAD:agent/process-consumers
