@@ -244,8 +244,9 @@ actor ProcessMetricsProvider {
 
   private func readProcess(pid: pid_t) -> ProcessCounterSample? {
     var usage = rusage_info_v6()
-    let usageResult = withUnsafeMutablePointer(to: &usage) { pointer in
-      proc_pid_rusage(pid, RUSAGE_INFO_V6, pointer)
+    let usageResult: Int32 = withUnsafeMutablePointer(to: &usage) { pointer in
+      var rawPointer: rusage_info_t? = UnsafeMutableRawPointer(pointer)
+      return proc_pid_rusage(pid, RUSAGE_INFO_V6, &rawPointer)
     }
 
     var taskInfo = proc_taskinfo()
@@ -274,7 +275,7 @@ actor ProcessMetricsProvider {
       diskWrite = usage.ri_diskio_byteswritten
     } else {
       cpuTime = taskInfo.pti_total_user &+ taskInfo.pti_total_system
-      footprint = taskInfo.pti_phys_footprint
+      footprint = taskInfo.pti_resident_size
       startTime = 0
       energy = nil
       diskRead = nil
@@ -306,7 +307,7 @@ actor ProcessMetricsProvider {
   }
 
   private func processPath(pid: pid_t) -> String? {
-    var buffer = [CChar](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+    var buffer = [CChar](repeating: 0, count: 4_096)
     let length = buffer.withUnsafeMutableBytes { bytes -> Int32 in
       proc_pidpath(pid, bytes.baseAddress, UInt32(bytes.count))
     }
