@@ -67,6 +67,10 @@ private enum MetricHistoryRange: String, CaseIterable, Identifiable {
     case .oneHour: return 10
     }
   }
+
+  var minorSecondStride: Int? {
+    MetricChartAxisPolicy.minorSecondStride(for: duration)
+  }
 }
 
 private struct FanHistoryChartPoint: Identifiable {
@@ -509,6 +513,14 @@ struct MetricDetailView: View {
 
   @AxisContentBuilder
   private var chartXAxis: some AxisContent {
+    if let minorSecondStride = selectedRange.minorSecondStride {
+      AxisMarks(values: .stride(by: .second, count: minorSecondStride)) { _ in
+        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.25, dash: [1, 3]))
+          .foregroundStyle(.secondary.opacity(0.18))
+        AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
+          .foregroundStyle(.secondary.opacity(0.35))
+      }
+    }
     AxisMarks(values: .stride(by: .minute, count: selectedRange.axisMinuteStride)) { value in
       AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
       AxisTick()
