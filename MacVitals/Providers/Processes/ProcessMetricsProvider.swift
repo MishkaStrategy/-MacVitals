@@ -8,11 +8,17 @@ nonisolated enum ProcessConsumerMetric: String, CaseIterable, Sendable {
   case energy
 }
 
+nonisolated struct RunningApplicationDescriptor: Sendable, Equatable {
+  let pid: pid_t
+  let name: String
+  let bundleIdentifier: String?
+}
+
 nonisolated struct ApplicationProcessUsage: Identifiable, Sendable, Equatable {
   let id: String
   let name: String
   let bundleIdentifier: String?
-  let iconPath: String?
+  let representativePID: pid_t
   let processCount: Int
   let cpuPercent: Double
   let memoryBytes: UInt64
@@ -39,9 +45,9 @@ nonisolated struct ProcessMetricsSnapshot: Sendable, Equatable {
 
 nonisolated struct ProcessCounterSample: Sendable, Equatable {
   let pid: pid_t
+  let parentPID: pid_t
   let startTime: UInt64
   let name: String
-  let executablePath: String?
   let cpuTimeNanoseconds: UInt64
   let physicalFootprintBytes: UInt64
   let energyNanojoules: UInt64?
@@ -111,15 +117,6 @@ nonisolated enum ProcessCounterCalculator {
   }
 }
 
-nonisolated enum ProcessFilePrivacyPolicy {
-  /// Kernel-reported paths are opaque identifiers only. MacVitals must not
-  /// open another process's executable, app bundle, icon, or user folder.
-  static func permitsFileMetadataAccess(_ path: String?) -> Bool {
-    _ = path
-    return false
-  }
-}
-
 actor ProcessMetricsProvider {
   private struct ProcessIdentity: Hashable {
     let pid: pid_t
@@ -130,7 +127,7 @@ actor ProcessMetricsProvider {
     let id: String
     let name: String
     let bundleIdentifier: String?
-    let iconPath: String?
+    let representativePID: pid_t
   }
 
   private struct ApplicationAccumulator {
@@ -152,10 +149,13 @@ actor ProcessMetricsProvider {
     previousSamples.removeAll(keepingCapacity: true)
   }
 
-  func sample() -> ProcessMetricsSnapshot {
+  func sample(runningApplications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     let now = Date()
     let samples = readAllProcesses()
     let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
+    let samplesByPID = Dictionary(uniqueKeysWithValues: samples.map { ($0.pid, $0) })
+    let applicationsByPID = Dictionary(
+      uniqueKeysWithValues: runningApplications.map { ($0.pid, $0) })
     var accumulators: [String: ApplicationAccumulator] = [:]
     var energyCountersAvailable = false
 
@@ -165,7 +165,10 @@ actor ProcessMetricsProvider {
         previous: previousSamples[identity],
         current: sample,
         elapsedSeconds: elapsed)
-      let descriptor = applicationDescriptor(for: sample)
+      let descriptor = applicationDescriptor(
+        for: sample,
+        samplesByPID: samplesByPID,
+        applicationsByPID: applicationsByPID)
       var accumulator = accumulators[descriptor.id]
         ?? ApplicationAccumulator(descriptor: descriptor)
 
@@ -178,7 +181,7 @@ actor ProcessMetricsProvider {
         accumulator.hasEnergy = true
         energyCountersAvailable = true
       }
-      accumulator.graphicsSignal += graphicsSignal(for: sample)
+      accumulator.graphicsSignal += graphicsSignal(processName: sample.name)
       accumulators[descriptor.id] = accumulator
     }
 
@@ -218,7 +221,7 @@ actor ProcessMetricsProvider {
         id: accumulator.descriptor.id,
         name: accumulator.descriptor.name,
         bundleIdentifier: accumulator.descriptor.bundleIdentifier,
-        iconPath: accumulator.descriptor.iconPath,
+        representativePID: accumulator.descriptor.representativePID,
         processCount: accumulator.processCount,
         cpuPercent: accumulator.cpuPercent,
         memoryBytes: accumulator.memoryBytes,
@@ -264,10 +267,14 @@ actor ProcessMetricsProvider {
       proc_pidinfo(pid, PROC_PIDTASKINFO, 0, pointer, expectedTaskSize)
     }
 
+    var bsdInfo = proc_bsdinfo()
+    let expectedBSDSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+    let bsdResult = withUnsafeMutablePointer(to: &bsdInfo) { pointer in
+      proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, pointer, expectedBSDSize)
+    }
+
     guard usageResult == 0 || taskResult == expectedTaskSize else { return nil }
 
-    let name = processName(pid: pid)
-    let path = processPath(pid: pid)
     let cpuTime: UInt64
     let footprint: UInt64
     let startTime: UInt64
@@ -293,9 +300,9 @@ actor ProcessMetricsProvider {
 
     return ProcessCounterSample(
       pid: pid,
+      parentPID: bsdResult == expectedBSDSize ? pid_t(bsdInfo.pbi_ppid) : 0,
       startTime: startTime,
-      name: name,
-      executablePath: path,
+      name: processName(pid: pid),
       cpuTimeNanoseconds: cpuTime,
       physicalFootprintBytes: footprint,
       energyNanojoules: energy,
@@ -315,59 +322,40 @@ actor ProcessMetricsProvider {
     }
   }
 
-  private func processPath(pid: pid_t) -> String? {
-    var buffer = [CChar](repeating: 0, count: 4_096)
-    let length = buffer.withUnsafeMutableBytes { bytes -> Int32 in
-      proc_pidpath(pid, bytes.baseAddress, UInt32(bytes.count))
-    }
-    guard length > 0 else { return nil }
-    return buffer.withUnsafeBufferPointer { pointer in
-      guard let base = pointer.baseAddress else { return nil }
-      return String(cString: base)
-    }
-  }
+  private func applicationDescriptor(
+    for sample: ProcessCounterSample,
+    samplesByPID: [pid_t: ProcessCounterSample],
+    applicationsByPID: [pid_t: RunningApplicationDescriptor]
+  ) -> ApplicationDescriptor {
+    var candidatePID = sample.pid
+    var visited = Set<pid_t>()
 
-  private func applicationDescriptor(for sample: ProcessCounterSample) -> ApplicationDescriptor {
-    if let appPath = applicationBundlePath(from: sample.executablePath),
-      ProcessFilePrivacyPolicy.permitsFileMetadataAccess(appPath)
-    {
-      let bundle = Bundle(path: appPath)
-      let bundleID = bundle?.bundleIdentifier
-      let displayName = (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-        ?? (bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String)
-        ?? URL(fileURLWithPath: appPath).deletingPathExtension().lastPathComponent
-      return ApplicationDescriptor(
-        id: bundleID ?? appPath,
-        name: displayName,
-        bundleIdentifier: bundleID,
-        iconPath: nil)
+    for _ in 0..<16 {
+      guard candidatePID > 0, visited.insert(candidatePID).inserted else { break }
+      if let application = applicationsByPID[candidatePID] {
+        return ApplicationDescriptor(
+          id: application.bundleIdentifier ?? "application:\(application.pid)",
+          name: application.name,
+          bundleIdentifier: application.bundleIdentifier,
+          representativePID: application.pid)
+      }
+      guard let process = samplesByPID[candidatePID] else { break }
+      candidatePID = process.parentPID
     }
 
-    let path = sample.executablePath
     return ApplicationDescriptor(
-      id: path ?? "process:\(sample.name)",
+      id: "process:\(sample.name)",
       name: sample.name,
       bundleIdentifier: nil,
-      iconPath: nil)
+      representativePID: sample.pid)
   }
 
-  private func applicationBundlePath(from executablePath: String?) -> String? {
-    guard let executablePath else { return nil }
-    let components = executablePath.split(separator: "/", omittingEmptySubsequences: true)
-    var current = ""
-    for component in components {
-      current += "/\(component)"
-      if component.lowercased().hasSuffix(".app") { return current }
-    }
-    return nil
-  }
-
-  private func graphicsSignal(for sample: ProcessCounterSample) -> Double {
-    let haystack = "\(sample.name) \(sample.executablePath ?? "")".lowercased()
-    let strongKeywords = ["gpu", "metal", "coreanimation", "windowserver", "webkit.gpu"]
-    if strongKeywords.contains(where: haystack.contains) { return 1.25 }
+  private func graphicsSignal(processName: String) -> Double {
+    let name = processName.lowercased()
+    let strongKeywords = ["gpu", "metal", "coreanimation", "windowserver"]
+    if strongKeywords.contains(where: name.contains) { return 1.25 }
     let moderateKeywords = ["renderer", "render", "webcontent", "video", "media"]
-    if moderateKeywords.contains(where: haystack.contains) { return 0.55 }
+    if moderateKeywords.contains(where: name.contains) { return 0.55 }
     return 0
   }
 }
