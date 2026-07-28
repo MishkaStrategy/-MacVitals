@@ -16,8 +16,7 @@ jobs:
   fan-rpm-probe:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login == github.repository_owner &&
-      github.actor == github.repository_owner &&
+      github.event.pull_request.user.login == 'mishkacher' &&
       github.event.pull_request.head.ref == 'feature/macvitals-v1'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 20
