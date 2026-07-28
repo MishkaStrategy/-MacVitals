@@ -165,6 +165,44 @@ else
 fi''',
         "energy template fallback",
     ),
+    (
+        '''  if [[ ${all_collected} -eq 1 ]]; then
+    python3 "${HARNESS}" manual \\
+      --session "${SESSION}" \\
+      --gate "${gate}" \\
+      --status "pending-review" \\
+      --note "${description} collected locally with SHA-256; human review required"
+  else
+    python3 "${HARNESS}" manual \\
+      --session "${SESSION}" \\
+      --gate "${gate}" \\
+      --status "not-tested" \\
+      --note "${description} incomplete: ${details}"
+    INSTRUMENT_GAPS=$((INSTRUMENT_GAPS + 1))
+  fi''',
+        '''  if [[ ${all_collected} -eq 1 ]]; then
+    python3 "${HARNESS}" manual \\
+      --session "${SESSION}" \\
+      --gate "${gate}" \\
+      --status "pending-review" \\
+      --note "${description} collected locally with SHA-256; human review required"
+  elif [[ "${gate}" == "instrumentsEnergy" && "$(instrument_status "energy-log")" == "failed(exit=2)" && -f "${INSTRUMENTS_SESSION}/energy-log.log" && ! -L "${INSTRUMENTS_SESSION}/energy-log.log" ]] && grep -Fq "The Power Profiler instrument is not supported on macOS." "${INSTRUMENTS_SESSION}/energy-log.log"; then
+    python3 "${HARNESS}" manual \\
+      --session "${SESSION}" \\
+      --gate "${gate}" \\
+      --status "not-tested" \\
+      --note "Power Profiler is unsupported on macOS; the Instruments energy gate remains open without failing physical collection"
+    printf '%s\\n' 'Power Profiler unsupported on macOS; Instruments energy gate remains not-tested'
+  else
+    python3 "${HARNESS}" manual \\
+      --session "${SESSION}" \\
+      --gate "${gate}" \\
+      --status "not-tested" \\
+      --note "${description} incomplete: ${details}"
+    INSTRUMENT_GAPS=$((INSTRUMENT_GAPS + 1))
+  fi''',
+        "macOS Power Profiler unsupported classification",
+    ),
 )
 for old, new, label in replacements:
     count = text.count(old)
@@ -223,6 +261,8 @@ for required in (
     '"${command_line}" == "${EXECUTABLE}"',
     'MACVITALS_RUN_LONG_STABILITY',
     'Six-hour stability is opt-in',
+    'The Power Profiler instrument is not supported on macOS.',
+    'Power Profiler unsupported on macOS; Instruments energy gate remains not-tested',
 ):
     if required not in runner:
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
