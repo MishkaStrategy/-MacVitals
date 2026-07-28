@@ -4,17 +4,21 @@ on:
   push:
     branches:
       - agent/process-consumers
+  pull_request:
+    branches:
+      - feature/macvitals-v1
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.event.head_commit.message != 'chore: finalize process consumer UI integration'
+    if: github.event_name == 'pull_request' || github.event.head_commit.message != 'chore: finalize process consumer UI integration'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: agent/process-consumers
           fetch-depth: 0
       - name: Patch detail UI and localizations
         shell: bash
