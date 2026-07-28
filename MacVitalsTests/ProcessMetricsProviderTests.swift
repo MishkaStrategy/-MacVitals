@@ -64,6 +64,29 @@ final class ProcessMetricsProviderTests: XCTestCase {
     XCTAssertEqual(scores[3], 0)
   }
 
+  func testProcessMetricsNeverOpenProtectedUserLocations() {
+  let protectedPaths = [
+    "/Users/test/Desktop/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Documents/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Downloads/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Music/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Movies/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Pictures/Tool.app/Contents/MacOS/Tool",
+    "/Users/test/Library/Mobile Documents/Tool.app/Contents/MacOS/Tool",
+  ]
+
+  for path in protectedPaths {
+    XCTAssertFalse(ProcessFilePrivacyPolicy.permitsFileMetadataAccess(path), path)
+  }
+}
+
+func testProcessMetricsFailClosedForEveryFilePath() {
+  XCTAssertFalse(
+    ProcessFilePrivacyPolicy.permitsFileMetadataAccess(
+      "/Applications/Safari.app/Contents/MacOS/Safari"))
+  XCTAssertFalse(ProcessFilePrivacyPolicy.permitsFileMetadataAccess(nil))
+}
+
   private func sample(
     cpu: UInt64,
     energy: UInt64?,

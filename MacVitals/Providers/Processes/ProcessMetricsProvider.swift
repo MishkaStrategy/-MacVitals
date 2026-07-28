@@ -111,6 +111,15 @@ nonisolated enum ProcessCounterCalculator {
   }
 }
 
+nonisolated enum ProcessFilePrivacyPolicy {
+  /// Kernel-reported paths are opaque identifiers only. MacVitals must not
+  /// open another process's executable, app bundle, icon, or user folder.
+  static func permitsFileMetadataAccess(_ path: String?) -> Bool {
+    _ = path
+    return false
+  }
+}
+
 actor ProcessMetricsProvider {
   private struct ProcessIdentity: Hashable {
     let pid: pid_t
@@ -319,7 +328,9 @@ actor ProcessMetricsProvider {
   }
 
   private func applicationDescriptor(for sample: ProcessCounterSample) -> ApplicationDescriptor {
-    if let appPath = applicationBundlePath(from: sample.executablePath) {
+    if let appPath = applicationBundlePath(from: sample.executablePath),
+      ProcessFilePrivacyPolicy.permitsFileMetadataAccess(appPath)
+    {
       let bundle = Bundle(path: appPath)
       let bundleID = bundle?.bundleIdentifier
       let displayName = (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
@@ -329,7 +340,7 @@ actor ProcessMetricsProvider {
         id: bundleID ?? appPath,
         name: displayName,
         bundleIdentifier: bundleID,
-        iconPath: appPath)
+        iconPath: nil)
     }
 
     let path = sample.executablePath
@@ -337,7 +348,7 @@ actor ProcessMetricsProvider {
       id: path ?? "process:\(sample.name)",
       name: sample.name,
       bundleIdentifier: nil,
-      iconPath: path)
+      iconPath: nil)
   }
 
   private func applicationBundlePath(from executablePath: String?) -> String? {

@@ -152,7 +152,9 @@ struct ProcessConsumersView: View {
 
   @ViewBuilder
   private func applicationIcon(_ application: ApplicationProcessUsage) -> some View {
-    if let path = application.iconPath {
+    if let path = application.iconPath,
+      ProcessFilePrivacyPolicy.permitsFileMetadataAccess(path)
+    {
       Image(nsImage: NSWorkspace.shared.icon(forFile: path))
         .resizable()
         .scaledToFit()
