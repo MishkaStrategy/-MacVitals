@@ -1,3 +1,4 @@
+import Security
 import XCTest
 
 @testable import MacVitals
@@ -5,40 +6,63 @@ import XCTest
 final class FanControlSigningPolicyTests: XCTestCase {
   private let team = "ABCDE12345"
 
-  func testAcceptsTrustedDeveloperIDMainApplication() {
+  func testAcceptsValidatedDeveloperIDMainApplication() {
     XCTAssertTrue(
       FanControlSigningPolicy.accepts(
-        facts(
-          identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)"),
+        facts(identifier: FanControlSigningPolicy.mainApplicationIdentifier),
         expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
         expectedTeamIdentifier: team))
   }
 
-  func testAcceptsTrustedDeveloperIDHelper() {
+  func testAcceptsValidatedDeveloperIDHelper() {
     XCTAssertTrue(
       FanControlSigningPolicy.accepts(
-        facts(
-          identifier: FanControlSigningPolicy.helperIdentifier,
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)"),
+        facts(identifier: FanControlSigningPolicy.helperIdentifier),
         expectedIdentifier: FanControlSigningPolicy.helperIdentifier,
         expectedTeamIdentifier: team))
   }
 
-  func testRejectsAppleDevelopmentIdentity() {
-    XCTAssertFalse(
-      acceptsMain(
-        facts(
-          identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Apple Development: MacVitals Developer (ABCDE12345)")))
+  func testDeveloperIDRequirementsCompileForBothXPCPeers() throws {
+    for identifier in [
+      FanControlSigningPolicy.mainApplicationIdentifier,
+      FanControlSigningPolicy.helperIdentifier,
+    ] {
+      let source = try XCTUnwrap(
+        FanControlCodeSigning.developerIDRequirementSource(
+          identifier: identifier,
+          teamIdentifier: team))
+      XCTAssertTrue(source.contains("anchor apple generic"))
+      XCTAssertTrue(source.contains("anchor trusted"))
+      XCTAssertTrue(source.contains("1.2.840.113635.100.6.2.6"))
+      XCTAssertTrue(source.contains("1.2.840.113635.100.6.1.13"))
+      XCTAssertTrue(source.contains(identifier))
+      XCTAssertTrue(source.contains(team))
+
+      var requirement: SecRequirement?
+      XCTAssertEqual(
+        SecRequirementCreateWithString(source as CFString, [], &requirement),
+        errSecSuccess)
+      XCTAssertNotNil(requirement)
+    }
   }
 
-  func testRejectsAppleDistributionIdentity() {
+  func testRequirementSourceRejectsUnapprovedIdentifierAndInvalidTeam() {
+    XCTAssertNil(
+      FanControlCodeSigning.developerIDRequirementSource(
+        identifier: "com.example.Impostor",
+        teamIdentifier: team))
+    XCTAssertNil(
+      FanControlCodeSigning.developerIDRequirementSource(
+        identifier: FanControlSigningPolicy.mainApplicationIdentifier,
+        teamIdentifier: "invalid"))
+  }
+
+  func testRejectsAppleDevelopmentOrDistributionRequirementMismatch() {
     XCTAssertFalse(
       acceptsMain(
         facts(
           identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Apple Distribution: MacVitals Developer (ABCDE12345)")))
+          developerIDRequirementValid: false)))
   }
 
   func testRejectsGetTaskAllow() {
@@ -46,25 +70,12 @@ final class FanControlSigningPolicyTests: XCTestCase {
       acceptsMain(
         facts(
           identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)",
           getTaskAllow: true)))
-  }
-
-  func testRejectsUntrustedCertificateChain() {
-    XCTAssertFalse(
-      acceptsMain(
-        facts(
-          identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)",
-          trustValid: false)))
   }
 
   func testRejectsWrongBundleIdentifier() {
     XCTAssertFalse(
-      acceptsMain(
-        facts(
-          identifier: "com.example.Impostor",
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)")))
+      acceptsMain(facts(identifier: "com.example.Impostor")))
   }
 
   func testRejectsWrongTeamIdentifier() {
@@ -73,27 +84,26 @@ final class FanControlSigningPolicyTests: XCTestCase {
         FanControlSigningFacts(
           identifier: FanControlSigningPolicy.mainApplicationIdentifier,
           teamIdentifier: "OTHER12345",
-          leafCommonName: "Developer ID Application: Other Developer (OTHER12345)",
-          trustValid: true,
+          developerIDRequirementValid: true,
           getTaskAllow: false)))
-  }
-
-  func testRejectsDeveloperIDCommonNameForDifferentTeam() {
-    XCTAssertFalse(
-      acceptsMain(
-        facts(
-          identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Developer ID Application: Other Developer (OTHER12345)")))
   }
 
   func testRejectsEmptyExpectedTeamIdentifier() {
     XCTAssertFalse(
       FanControlSigningPolicy.accepts(
-        facts(
-          identifier: FanControlSigningPolicy.mainApplicationIdentifier,
-          commonName: "Developer ID Application: MacVitals Developer (ABCDE12345)"),
+        facts(identifier: FanControlSigningPolicy.mainApplicationIdentifier),
         expectedIdentifier: FanControlSigningPolicy.mainApplicationIdentifier,
         expectedTeamIdentifier: ""))
+  }
+
+  func testTeamIdentifierRequiresTenUppercaseAlphanumericCharacters() {
+    XCTAssertTrue(FanControlSigningPolicy.validTeamIdentifier("ABCDE12345"))
+    XCTAssertTrue(FanControlSigningPolicy.validTeamIdentifier("1234567890"))
+    XCTAssertFalse(FanControlSigningPolicy.validTeamIdentifier("ABCDE1234"))
+    XCTAssertFalse(FanControlSigningPolicy.validTeamIdentifier("ABCDE123456"))
+    XCTAssertFalse(FanControlSigningPolicy.validTeamIdentifier("abcde12345"))
+    XCTAssertFalse(FanControlSigningPolicy.validTeamIdentifier("ABCDE-2345"))
+    XCTAssertFalse(FanControlSigningPolicy.validTeamIdentifier("ABCDE 2345"))
   }
 
   private func acceptsMain(_ signingFacts: FanControlSigningFacts) -> Bool {
@@ -105,15 +115,13 @@ final class FanControlSigningPolicyTests: XCTestCase {
 
   private func facts(
     identifier: String,
-    commonName: String,
-    trustValid: Bool = true,
+    developerIDRequirementValid: Bool = true,
     getTaskAllow: Bool = false
   ) -> FanControlSigningFacts {
     FanControlSigningFacts(
       identifier: identifier,
       teamIdentifier: team,
-      leafCommonName: commonName,
-      trustValid: trustValid,
+      developerIDRequirementValid: developerIDRequirementValid,
       getTaskAllow: getTaskAllow)
   }
 }
