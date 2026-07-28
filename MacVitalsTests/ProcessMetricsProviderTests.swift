@@ -64,27 +64,15 @@ final class ProcessMetricsProviderTests: XCTestCase {
     XCTAssertEqual(scores[3], 0)
   }
 
-  func testProcessMetricsNeverOpenProtectedUserLocations() {
-    let protectedPaths = [
-      "/Users/test/Desktop/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Documents/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Downloads/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Music/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Movies/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Pictures/Tool.app/Contents/MacOS/Tool",
-      "/Users/test/Library/Mobile Documents/Tool.app/Contents/MacOS/Tool",
-    ]
+  func testRunningApplicationDescriptorContainsNoFilePath() {
+    let descriptor = RunningApplicationDescriptor(
+      pid: 42,
+      name: "Test App",
+      bundleIdentifier: "com.example.test")
 
-    for path in protectedPaths {
-      XCTAssertFalse(ProcessFilePrivacyPolicy.permitsFileMetadataAccess(path), path)
-    }
-  }
-
-  func testProcessMetricsFailClosedForEveryFilePath() {
-    XCTAssertFalse(
-      ProcessFilePrivacyPolicy.permitsFileMetadataAccess(
-        "/Applications/Safari.app/Contents/MacOS/Safari"))
-    XCTAssertFalse(ProcessFilePrivacyPolicy.permitsFileMetadataAccess(nil))
+    XCTAssertEqual(descriptor.pid, 42)
+    XCTAssertEqual(descriptor.name, "Test App")
+    XCTAssertEqual(descriptor.bundleIdentifier, "com.example.test")
   }
 
   private func sample(
@@ -96,9 +84,9 @@ final class ProcessMetricsProviderTests: XCTestCase {
   ) -> ProcessCounterSample {
     ProcessCounterSample(
       pid: 42,
+      parentPID: 1,
       startTime: startTime,
       name: "Test App",
-      executablePath: "/Applications/Test App.app/Contents/MacOS/Test App",
       cpuTimeNanoseconds: cpu,
       physicalFootprintBytes: 512 * 1_024 * 1_024,
       energyNanojoules: energy,
