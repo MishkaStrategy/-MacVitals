@@ -220,10 +220,23 @@ final class FanControlClient: ObservableObject {
 
   private func ensureConnection() {
     guard connection == nil else { return }
+    guard let teamIdentifier = FanControlSigningIdentity.controlTeamIdentifier(),
+      let helperRequirement = FanControlCodeSigning.developerIDRequirementSource(
+        identifier: FanControlSigningPolicy.helperIdentifier,
+        teamIdentifier: teamIdentifier)
+    else {
+      operationInProgress = false
+      state = .monitoringOnly
+      lastMessage = L10n.string(
+        "Fan RPM monitoring is available. Control requires an approved signed helper.")
+      return
+    }
+
     let connection = NSXPCConnection(
       machServiceName: FanControlServiceConstants.machServiceName,
       options: .privileged)
     connection.remoteObjectInterface = NSXPCInterface(with: FanControlXPCProtocol.self)
+    connection.setCodeSigningRequirement(helperRequirement)
     connection.interruptionHandler = { [weak self] in
       Task { @MainActor in
         self?.operationInProgress = false
