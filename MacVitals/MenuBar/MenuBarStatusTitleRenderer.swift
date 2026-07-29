@@ -76,52 +76,76 @@ nonisolated enum MenuBarStatusTitleRenderer {
       width: max(12, ceil(contentWidth + horizontalPadding * 2)),
       height: canvasHeight)
 
-    let image = NSImage(size: imageSize, flipped: false) { rect in
-      NSGraphicsContext.current?.imageInterpolation = .high
-      var x = horizontalPadding
-
-      for (index, layout) in layouts.enumerated() {
-        if let icon = layout.icon {
-          let iconRect = NSRect(
-            x: x,
-            y: floor((rect.height - icon.size.height) / 2),
-            width: icon.size.width,
-            height: icon.size.height)
-          icon.draw(in: iconRect)
-        } else {
-          let fallbackAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-            .foregroundColor: NSColor.black,
-          ]
-          let fallback = "·" as NSString
-          let fallbackSize = fallback.size(withAttributes: fallbackAttributes)
-          fallback.draw(
-            at: NSPoint(
-              x: x,
-              y: floor((rect.height - fallbackSize.height) / 2)),
-            withAttributes: fallbackAttributes)
-        }
-
-        x += layout.iconWidth
-
-        if !layout.value.isEmpty {
-          x += iconTextGap
-          (layout.value as NSString).draw(
-            at: NSPoint(
-              x: x,
-              y: floor((rect.height - layout.valueSize.height) / 2) - 0.5),
-            withAttributes: layout.valueAttributes)
-          x += ceil(layout.valueSize.width)
-        }
-
-        if index < layouts.count - 1 {
-          x += segmentGap
-        }
-      }
-
-      return true
+    let backingScale: CGFloat = 2
+    guard
+      let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: Int(ceil(imageSize.width * backingScale)),
+        pixelsHigh: Int(ceil(imageSize.height * backingScale)),
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bitmapFormat: [],
+        bytesPerRow: 0,
+        bitsPerPixel: 0),
+      let graphicsContext = NSGraphicsContext(bitmapImageRep: bitmap)
+    else {
+      return fallbackTemplateImage()
     }
 
+    bitmap.size = imageSize
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = graphicsContext
+    graphicsContext.cgContext.scaleBy(x: backingScale, y: backingScale)
+    graphicsContext.cgContext.clear(CGRect(origin: .zero, size: imageSize))
+    graphicsContext.imageInterpolation = .high
+
+    var x = horizontalPadding
+    for (index, layout) in layouts.enumerated() {
+      if let icon = layout.icon {
+        let iconRect = NSRect(
+          x: x,
+          y: floor((imageSize.height - icon.size.height) / 2),
+          width: icon.size.width,
+          height: icon.size.height)
+        icon.draw(in: iconRect)
+      } else {
+        let fallbackAttributes: [NSAttributedString.Key: Any] = [
+          .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+          .foregroundColor: NSColor.black,
+        ]
+        let fallback = "·" as NSString
+        let fallbackSize = fallback.size(withAttributes: fallbackAttributes)
+        fallback.draw(
+          at: NSPoint(
+            x: x,
+            y: floor((imageSize.height - fallbackSize.height) / 2)),
+          withAttributes: fallbackAttributes)
+      }
+
+      x += layout.iconWidth
+
+      if !layout.value.isEmpty {
+        x += iconTextGap
+        (layout.value as NSString).draw(
+          at: NSPoint(
+            x: x,
+            y: floor((imageSize.height - layout.valueSize.height) / 2) - 0.5),
+          withAttributes: layout.valueAttributes)
+        x += ceil(layout.valueSize.width)
+      }
+
+      if index < layouts.count - 1 {
+        x += segmentGap
+      }
+    }
+
+    NSGraphicsContext.restoreGraphicsState()
+
+    let image = NSImage(size: imageSize)
+    image.addRepresentation(bitmap)
     // The complete status item is one monochrome template. NSStatusBarButton now owns
     // the tinting, including dark/light menu bars and the pressed/highlighted state.
     image.isTemplate = true
@@ -233,6 +257,15 @@ nonisolated enum MenuBarStatusTitleRenderer {
     let image = configured.copy() as? NSImage ?? configured
     image.size = source.size
     image.isTemplate = false
+    return image
+  }
+
+  @MainActor
+  private static func fallbackTemplateImage() -> NSImage {
+    let source = MenuBarIconCatalog.minimalImage(for: .cpu, state: .normal)
+      ?? NSImage(size: NSSize(width: 12, height: 18))
+    let image = source.copy() as? NSImage ?? source
+    image.isTemplate = true
     return image
   }
 
