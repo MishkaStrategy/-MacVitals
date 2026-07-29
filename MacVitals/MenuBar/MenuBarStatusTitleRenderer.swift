@@ -35,7 +35,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
     metrics: [MenuMetric]
   ) -> NSAttributedString {
     let segments = segments(snapshot: snapshot, metrics: metrics)
-    let result = NSMutableAttributedString()
+    let result = NSMutableAttributedString(string: "")
 
     guard !segments.isEmpty else {
       appendIcon(
