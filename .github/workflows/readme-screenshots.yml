@@ -1,15 +1,8 @@
 name: README Screenshots
 
-# Agent-branch and pull-request updates regenerate documentation images without writing directly to main.
+# Pull-request updates regenerate documentation images without writing directly to main.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - "agent/**"
-    paths:
-      - "MacVitals/MenuBar/StatusItemController.swift"
-      - "MacVitalsUITests/MacVitalsUITests.swift"
-      - ".github/workflows/readme-screenshots.yml"
   pull_request:
     branches:
       - main
@@ -161,6 +154,8 @@ jobs:
             exit 0
           fi
           git commit -m "docs: refresh Russian MacVitals screenshots"
+          git reset --hard HEAD
+          git clean -fd
           git fetch origin "${TARGET_BRANCH}"
           git rebase "origin/${TARGET_BRANCH}"
           git push origin "HEAD:${TARGET_BRANCH}"
