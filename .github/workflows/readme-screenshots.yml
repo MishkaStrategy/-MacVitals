@@ -1,13 +1,11 @@
 name: README Screenshots
 
 on:
-  push:
-    branches:
-      - feature/macvitals-v1
+  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: readme-screenshots-${{ github.ref }}
+  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -100,7 +98,7 @@ jobs:
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: readme-screenshots-${{ github.sha }}
+          name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
           path: docs/screenshots/
           if-no-files-found: error
           retention-days: 30
