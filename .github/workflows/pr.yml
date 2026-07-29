@@ -119,7 +119,7 @@ jobs:
           /usr/bin/caffeinate -dimsu &
           caffeinate_pid=$!
 
-          launchctl asuser "${runner_uid}" /usr/bin/xcodebuild \
+          /usr/bin/xcodebuild \
             -project MacVitals.xcodeproj \
             -scheme MacVitals \
             -destination 'platform=macOS' \
