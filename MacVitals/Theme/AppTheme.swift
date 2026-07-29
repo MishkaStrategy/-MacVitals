@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import Combine
 import Foundation
 import SwiftUI
