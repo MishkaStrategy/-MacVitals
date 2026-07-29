@@ -66,37 +66,38 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
   }
 
   @MainActor
-  func testDarkMenuBarAppearanceUsesLightForeground() throws {
-    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
-    let color = MenuBarStatusTitleRenderer.statusBarForegroundColor(for: appearance)
-    let rgb = try XCTUnwrap(color.usingColorSpace(.deviceRGB))
+  func testCompleteStatusSurfaceUsesNativeTemplateTinting() {
+    let image = MenuBarStatusTitleRenderer.templateImage(
+      snapshot: .empty,
+      metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
 
-    XCTAssertGreaterThan(rgb.redComponent, 0.9)
-    XCTAssertGreaterThan(rgb.greenComponent, 0.9)
-    XCTAssertGreaterThan(rgb.blueComponent, 0.9)
-    XCTAssertGreaterThan(rgb.alphaComponent, 0.9)
+    XCTAssertTrue(image.isTemplate)
+    XCTAssertEqual(image.size.height, 18)
+    XCTAssertGreaterThan(image.size.width, 12)
   }
 
   @MainActor
-  func testDarkMenuBarAttachmentsArePreTintedInsteadOfTemplateBlack() throws {
-    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
-    let title = MenuBarStatusTitleRenderer.attributedTitle(
+  func testTemplateSurfaceExpandsForAdditionalMetrics() {
+    let singleMetric = MenuBarStatusTitleRenderer.templateImage(
       snapshot: .empty,
-      metrics: [.cpu, .temperature, .fans, .battery],
-      appearance: appearance)
-    var images: [NSImage] = []
+      metrics: [.cpu])
+    let multipleMetrics = MenuBarStatusTitleRenderer.templateImage(
+      snapshot: .empty,
+      metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
 
-    title.enumerateAttribute(
-      .attachment,
-      in: NSRange(location: 0, length: title.length)
-    ) { value, _, _ in
-      guard let attachment = value as? NSTextAttachment,
-        let image = attachment.image
-      else { return }
-      images.append(image)
-    }
+    XCTAssertTrue(singleMetric.isTemplate)
+    XCTAssertTrue(multipleMetrics.isTemplate)
+    XCTAssertGreaterThan(multipleMetrics.size.width, singleMetric.size.width)
+  }
 
-    XCTAssertEqual(images.count, 4)
-    XCTAssertTrue(images.allSatisfy { !$0.isTemplate })
+  @MainActor
+  func testEmptyMetricSelectionStillProducesAVisibleTemplateSymbol() {
+    let image = MenuBarStatusTitleRenderer.templateImage(
+      snapshot: .empty,
+      metrics: [])
+
+    XCTAssertTrue(image.isTemplate)
+    XCTAssertGreaterThanOrEqual(image.size.width, 12)
+    XCTAssertNotNil(image.tiffRepresentation)
   }
 }

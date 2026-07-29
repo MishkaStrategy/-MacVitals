@@ -7,6 +7,15 @@ nonisolated struct MenuBarStatusSegment: Equatable {
   let value: String
 }
 
+private struct MenuBarStatusSegmentLayout {
+  let icon: NSImage?
+  let value: String
+  let valueAttributes: [NSAttributedString.Key: Any]
+  let valueSize: NSSize
+  let iconWidth: CGFloat
+  let totalWidth: CGFloat
+}
+
 nonisolated enum MenuBarStatusTitleRenderer {
   static func segments(
     snapshot: SystemSnapshot,
@@ -30,60 +39,117 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
-  static func statusBarForegroundColor(for appearance: NSAppearance) -> NSColor {
-    let darkMatches: [NSAppearance.Name] = [.vibrantDark, .darkAqua]
-    let lightMatches: [NSAppearance.Name] = [.vibrantLight, .aqua]
-    let match = appearance.bestMatch(from: darkMatches + lightMatches)
-
-    if match == .vibrantDark || match == .darkAqua {
-      return NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.94)
-    }
-
-    return NSColor(srgbRed: 0.12, green: 0.12, blue: 0.13, alpha: 0.92)
-  }
-
-  @MainActor
-  static func attributedTitle(
+  static func templateImage(
     snapshot: SystemSnapshot,
-    metrics: [MenuMetric],
-    appearance: NSAppearance
-  ) -> NSAttributedString {
-    let segments = segments(snapshot: snapshot, metrics: metrics)
-    let foregroundColor = statusBarForegroundColor(for: appearance)
-    let result = NSMutableAttributedString(string: "")
+    metrics: [MenuMetric]
+  ) -> NSImage {
+    let resolvedSegments = segments(snapshot: snapshot, metrics: metrics)
+    let drawableSegments = resolvedSegments.isEmpty
+      ? [MenuBarStatusSegment(metric: .cpu, state: .normal, value: "")]
+      : resolvedSegments
 
-    guard !segments.isEmpty else {
-      appendIcon(
-        metric: .cpu,
-        state: .normal,
-        foregroundColor: foregroundColor,
-        to: result)
-      return result
+    let iconTextGap: CGFloat = 2
+    let segmentGap: CGFloat = 8
+    let horizontalPadding: CGFloat = 1
+    let canvasHeight: CGFloat = 18
+
+    let layouts = drawableSegments.map { segment -> MenuBarStatusSegmentLayout in
+      let icon = maskImage(for: segment.metric, state: segment.state)
+      let attributes = valueAttributes(for: segment.state)
+      let valueSize = (segment.value as NSString).size(withAttributes: attributes)
+      let iconWidth = icon?.size.width ?? 3
+      let valueWidth = segment.value.isEmpty ? 0 : ceil(valueSize.width)
+      let totalWidth = iconWidth + (segment.value.isEmpty ? 0 : iconTextGap + valueWidth)
+
+      return MenuBarStatusSegmentLayout(
+        icon: icon,
+        value: segment.value,
+        valueAttributes: attributes,
+        valueSize: valueSize,
+        iconWidth: iconWidth,
+        totalWidth: totalWidth)
     }
 
-    for (index, segment) in segments.enumerated() {
-      if index > 0 {
-        result.append(
-          NSAttributedString(
-            string: "   ",
-            attributes: separatorAttributes(foregroundColor: foregroundColor)))
+    let contentWidth = layouts.reduce(CGFloat.zero) { $0 + $1.totalWidth }
+      + segmentGap * CGFloat(max(0, layouts.count - 1))
+    let imageSize = NSSize(
+      width: max(12, ceil(contentWidth + horizontalPadding * 2)),
+      height: canvasHeight)
+
+    let backingScale: CGFloat = 2
+    guard
+      let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: Int(ceil(imageSize.width * backingScale)),
+        pixelsHigh: Int(ceil(imageSize.height * backingScale)),
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bitmapFormat: [],
+        bytesPerRow: 0,
+        bitsPerPixel: 0),
+      let graphicsContext = NSGraphicsContext(bitmapImageRep: bitmap)
+    else {
+      return fallbackTemplateImage()
+    }
+
+    bitmap.size = imageSize
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = graphicsContext
+    graphicsContext.cgContext.scaleBy(x: backingScale, y: backingScale)
+    graphicsContext.cgContext.clear(CGRect(origin: .zero, size: imageSize))
+    graphicsContext.imageInterpolation = .high
+
+    var x = horizontalPadding
+    for (index, layout) in layouts.enumerated() {
+      if let icon = layout.icon {
+        let iconRect = NSRect(
+          x: x,
+          y: floor((imageSize.height - icon.size.height) / 2),
+          width: icon.size.width,
+          height: icon.size.height)
+        icon.draw(in: iconRect)
+      } else {
+        let fallbackAttributes: [NSAttributedString.Key: Any] = [
+          .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+          .foregroundColor: NSColor.black,
+        ]
+        let fallback = "·" as NSString
+        let fallbackSize = fallback.size(withAttributes: fallbackAttributes)
+        fallback.draw(
+          at: NSPoint(
+            x: x,
+            y: floor((imageSize.height - fallbackSize.height) / 2)),
+          withAttributes: fallbackAttributes)
       }
 
-      appendIcon(
-        metric: segment.metric,
-        state: segment.state,
-        foregroundColor: foregroundColor,
-        to: result)
-      result.append(NSAttributedString(string: "\u{202F}"))
-      result.append(
-        NSAttributedString(
-          string: segment.value,
-          attributes: valueAttributes(
-            for: segment.state,
-            foregroundColor: foregroundColor)))
+      x += layout.iconWidth
+
+      if !layout.value.isEmpty {
+        x += iconTextGap
+        (layout.value as NSString).draw(
+          at: NSPoint(
+            x: x,
+            y: floor((imageSize.height - layout.valueSize.height) / 2) - 0.5),
+          withAttributes: layout.valueAttributes)
+        x += ceil(layout.valueSize.width)
+      }
+
+      if index < layouts.count - 1 {
+        x += segmentGap
+      }
     }
 
-    return result
+    NSGraphicsContext.restoreGraphicsState()
+
+    let image = NSImage(size: imageSize)
+    image.addRepresentation(bitmap)
+    // The complete status item is one monochrome template. NSStatusBarButton now owns
+    // the tinting, including dark/light menu bars and the pressed/highlighted state.
+    image.isTemplate = true
+    return image
   }
 
   private static func compactValue(
@@ -178,42 +244,34 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
-  private static func appendIcon(
-    metric: MenuMetric,
-    state: MenuBarIconState,
-    foregroundColor: NSColor,
-    to result: NSMutableAttributedString
-  ) {
-    guard let image = MenuBarIconCatalog.minimalImage(for: metric, state: state) else {
-      result.append(
-        NSAttributedString(
-          string: "·",
-          attributes: valueAttributes(
-            for: state,
-            foregroundColor: foregroundColor)))
-      return
+  private static func maskImage(
+    for metric: MenuMetric,
+    state: MenuBarIconState
+  ) -> NSImage? {
+    guard let source = MenuBarIconCatalog.minimalImage(for: metric, state: state) else {
+      return nil
     }
 
-    let colorConfiguration = NSImage.SymbolConfiguration(
-      hierarchicalColor: foregroundColor)
-    let tintedImage = image.withSymbolConfiguration(colorConfiguration) ?? image
-    tintedImage.size = image.size
-    tintedImage.isTemplate = false
+    let blackConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .black)
+    let configured = source.withSymbolConfiguration(blackConfiguration) ?? source
+    let image = configured.copy() as? NSImage ?? configured
+    image.size = source.size
+    image.isTemplate = false
+    return image
+  }
 
-    let attachment = NSTextAttachment()
-    attachment.image = tintedImage
-    attachment.bounds = NSRect(
-      x: 0,
-      y: -1.5,
-      width: tintedImage.size.width,
-      height: tintedImage.size.height)
-    result.append(NSAttributedString(attachment: attachment))
+  @MainActor
+  private static func fallbackTemplateImage() -> NSImage {
+    let source = MenuBarIconCatalog.minimalImage(for: .cpu, state: .normal)
+      ?? NSImage(size: NSSize(width: 12, height: 18))
+    let image = source.copy() as? NSImage ?? source
+    image.isTemplate = true
+    return image
   }
 
   @MainActor
   private static func valueAttributes(
-    for state: MenuBarIconState,
-    foregroundColor: NSColor
+    for state: MenuBarIconState
   ) -> [NSAttributedString.Key: Any] {
     let weight: NSFont.Weight
     switch state {
@@ -224,18 +282,8 @@ nonisolated enum MenuBarStatusTitleRenderer {
 
     return [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: weight),
-      .foregroundColor: foregroundColor,
+      .foregroundColor: NSColor.black,
       .kern: -0.15,
-    ]
-  }
-
-  @MainActor
-  private static func separatorAttributes(
-    foregroundColor: NSColor
-  ) -> [NSAttributedString.Key: Any] {
-    [
-      .font: NSFont.systemFont(ofSize: 11, weight: .regular),
-      .foregroundColor: foregroundColor,
     ]
   }
 }
