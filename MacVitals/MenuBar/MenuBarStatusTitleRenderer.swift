@@ -30,35 +30,57 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
+  static func statusBarForegroundColor(for appearance: NSAppearance) -> NSColor {
+    let darkMatches: [NSAppearance.Name] = [.vibrantDark, .darkAqua]
+    let lightMatches: [NSAppearance.Name] = [.vibrantLight, .aqua]
+    let match = appearance.bestMatch(from: darkMatches + lightMatches)
+
+    if match == .vibrantDark || match == .darkAqua {
+      return NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.94)
+    }
+
+    return NSColor(srgbRed: 0.12, green: 0.12, blue: 0.13, alpha: 0.92)
+  }
+
+  @MainActor
   static func attributedTitle(
     snapshot: SystemSnapshot,
-    metrics: [MenuMetric]
+    metrics: [MenuMetric],
+    appearance: NSAppearance
   ) -> NSAttributedString {
     let segments = segments(snapshot: snapshot, metrics: metrics)
+    let foregroundColor = statusBarForegroundColor(for: appearance)
     let result = NSMutableAttributedString(string: "")
 
     guard !segments.isEmpty else {
       appendIcon(
         metric: .cpu,
         state: .normal,
+        foregroundColor: foregroundColor,
         to: result)
       return result
     }
 
     for (index, segment) in segments.enumerated() {
       if index > 0 {
-        result.append(NSAttributedString(string: "   ", attributes: separatorAttributes))
+        result.append(
+          NSAttributedString(
+            string: "   ",
+            attributes: separatorAttributes(foregroundColor: foregroundColor)))
       }
 
       appendIcon(
         metric: segment.metric,
         state: segment.state,
+        foregroundColor: foregroundColor,
         to: result)
       result.append(NSAttributedString(string: "\u{202F}"))
       result.append(
         NSAttributedString(
           string: segment.value,
-          attributes: valueAttributes(for: segment.state)))
+          attributes: valueAttributes(
+            for: segment.state,
+            foregroundColor: foregroundColor)))
     }
 
     return result
@@ -159,29 +181,39 @@ nonisolated enum MenuBarStatusTitleRenderer {
   private static func appendIcon(
     metric: MenuMetric,
     state: MenuBarIconState,
+    foregroundColor: NSColor,
     to result: NSMutableAttributedString
   ) {
     guard let image = MenuBarIconCatalog.minimalImage(for: metric, state: state) else {
       result.append(
         NSAttributedString(
           string: "·",
-          attributes: valueAttributes(for: state)))
+          attributes: valueAttributes(
+            for: state,
+            foregroundColor: foregroundColor)))
       return
     }
 
+    let colorConfiguration = NSImage.SymbolConfiguration(
+      hierarchicalColor: foregroundColor)
+    let tintedImage = image.withSymbolConfiguration(colorConfiguration) ?? image
+    tintedImage.size = image.size
+    tintedImage.isTemplate = false
+
     let attachment = NSTextAttachment()
-    attachment.image = image
+    attachment.image = tintedImage
     attachment.bounds = NSRect(
       x: 0,
       y: -1.5,
-      width: image.size.width,
-      height: image.size.height)
+      width: tintedImage.size.width,
+      height: tintedImage.size.height)
     result.append(NSAttributedString(attachment: attachment))
   }
 
   @MainActor
   private static func valueAttributes(
-    for state: MenuBarIconState
+    for state: MenuBarIconState,
+    foregroundColor: NSColor
   ) -> [NSAttributedString.Key: Any] {
     let weight: NSFont.Weight
     switch state {
@@ -192,16 +224,18 @@ nonisolated enum MenuBarStatusTitleRenderer {
 
     return [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: weight),
-      .foregroundColor: NSColor.labelColor,
+      .foregroundColor: foregroundColor,
       .kern: -0.15,
     ]
   }
 
   @MainActor
-  private static var separatorAttributes: [NSAttributedString.Key: Any] {
+  private static func separatorAttributes(
+    foregroundColor: NSColor
+  ) -> [NSAttributedString.Key: Any] {
     [
       .font: NSFont.systemFont(ofSize: 11, weight: .regular),
-      .foregroundColor: NSColor.labelColor,
+      .foregroundColor: foregroundColor,
     ]
   }
 }
