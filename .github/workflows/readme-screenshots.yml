@@ -1,11 +1,10 @@
 name: README Screenshots
 
 on:
-  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
+  group: readme-screenshots-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -92,13 +91,13 @@ jobs:
             echo "README screenshots are already current"
             exit 0
           fi
-          git commit -m "docs: add real MacVitals screenshots"
+          git commit -m "docs: refresh real MacVitals screenshots"
           git push origin HEAD:feature/macvitals-v1
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
+          name: readme-screenshots-${{ github.sha }}
           path: docs/screenshots/
           if-no-files-found: error
           retention-days: 30
