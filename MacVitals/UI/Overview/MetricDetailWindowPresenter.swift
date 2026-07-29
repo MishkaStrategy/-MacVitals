@@ -13,7 +13,7 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
     settings: SettingsStore,
     fanControl: FanControlClient
   ) {
-    let rootView = ThemedOverviewRoot {
+    let rootView = ThemedMetricDetailRoot(metric: kind.themeMetricKind) {
       MetricDetailView(kind: kind)
         .environmentObject(coordinator)
         .environmentObject(settings)
