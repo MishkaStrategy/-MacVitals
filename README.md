@@ -16,6 +16,34 @@ MacVitals держит важные показатели системы на в�
 
 > **Статус разработки:** MacVitals v1 уже объединён с веткой `main` и продолжает предрелизную проверку. Текущая unsigned-сборка для Apple Silicon проходит автоматические проверки сборки, тестов, упаковки и запуска, а также физическую read-only проверку вентиляторов. Developer ID signing, notarization и публичный релиз пока не выполнялись.
 
+## Реальный интерфейс программы
+
+Изображения получены непосредственно из настоящего приложения MacVitals, собранного и запущенного на GitHub-hosted macOS 15 ARM64 runner. Это XCTest-снимки работающей программы, а не макеты и не концепт-рендеры.
+
+### Главный рабочий интерфейс: строка меню и обзор показателей
+
+Ниже показан основной popover MacVitals с карточками системных показателей, открытый из настоящего элемента приложения в строке меню macOS.
+
+[![Главный интерфейс MacVitals: строка меню и раскрытый обзор показателей](docs/screenshots/status-bar-overview.png)](docs/screenshots/status-bar-overview.png)
+
+### Окно основных настроек
+
+[![Основные настройки MacVitals](docs/screenshots/preferences-general.png)](docs/screenshots/preferences-general.png)
+
+### Настройка показателей строки меню
+
+[![Настройка строки меню MacVitals](docs/screenshots/preferences-menu-bar.png)](docs/screenshots/preferences-menu-bar.png)
+
+### Вентиляторы и безопасность
+
+[![Интерфейс мониторинга вентиляторов MacVitals](docs/screenshots/preferences-fans.png)](docs/screenshots/preferences-fans.png)
+
+### Диагностика
+
+[![Экран диагностики MacVitals](docs/screenshots/preferences-diagnostics.png)](docs/screenshots/preferences-diagnostics.png)
+
+Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера, температурных датчиков или вентиляторов в отдельных кадрах ожидаема. Воспроизводимый сценарий захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
+
 ## Что показывает MacVitals
 
 - загрузку CPU на основе разницы системных Mach-счётчиков;
@@ -35,50 +63,6 @@ MacVitals держит важные показатели системы на в�
 MacVitals живёт в строке меню macOS. Показатели можно увидеть без открытия отдельного окна, а по нажатию появляется компактный обзор с карточками метрик, историей CPU, состоянием питания и быстрым переходом к настройкам.
 
 Интерфейс создан на нативных SwiftUI и AppKit, поддерживает русский и английский языки, светлую и тёмную темы, а также двухцветное и многоцветное оформление.
-
-## Реальный интерфейс программы
-
-Все изображения ниже автоматически получены из настоящего приложения MacVitals, собранного и запущенного на GitHub-hosted runner с macOS 15 и архитектурой ARM64. Это прямые XCTest-снимки, а не макеты и не концепт-рендеры.
-
-### Строка меню и быстрый обзор
-
-![MacVitals в строке меню macOS с раскрытым обзором показателей](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/status-bar-overview.png)
-
-[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/status-bar-overview.png)
-
-### Основные настройки
-
-Частота обновления, запуск вместе с системой, отображение в Dock и внешний вид.
-
-![Основные настройки MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-general.png)
-
-[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-general.png)
-
-### Настройка строки меню
-
-Готовые наборы показателей, порядок метрик и индивидуальная настройка состава.
-
-![Настройка показателей строки меню MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-menu-bar.png)
-
-[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-menu-bar.png)
-
-### Вентиляторы и безопасность
-
-Доступность датчиков, текущие режимы и явные ограничения безопасной работы.
-
-![Мониторинг вентиляторов и настройки безопасности MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-fans.png)
-
-[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-fans.png)
-
-### Диагностика
-
-Состояние источников данных и экспорт обезличенного диагностического отчёта.
-
-![Экран диагностики MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-diagnostics.png)
-
-[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-diagnostics.png)
-
-Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера, температурных датчиков или вентиляторов в отдельных кадрах ожидаема. Воспроизводимый сценарий захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
 ## Поддерживаемая платформа
 
