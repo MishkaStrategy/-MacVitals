@@ -41,6 +41,7 @@ final class StatusItemController: NSObject {
       button.image = nil
       button.imagePosition = .noImage
       button.imageHugsTitle = true
+      button.setAccessibilityIdentifier("macVitalsStatusItem")
     }
 
     coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
