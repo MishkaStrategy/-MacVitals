@@ -11,7 +11,6 @@ struct OverviewView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
   @EnvironmentObject private var fanControl: FanControlClient
-  @State private var selectedDetail: MetricDetailKind?
 
   var body: some View {
     VStack(spacing: 10) {
@@ -33,7 +32,6 @@ struct OverviewView: View {
         }
         Spacer()
         Button {
-          selectedDetail = nil
           PreferencesWindowPresenter.shared.show(
             coordinator: coordinator,
             settings: settings,
@@ -55,42 +53,42 @@ struct OverviewView: View {
           value: MetricNumberFormatter.percentage(coordinator.snapshot.cpu.value?.total),
           symbol: "cpu.fill",
           kind: .cpu,
-          action: { selectedDetail = .cpu })
+          action: { showDetail(.cpu) })
         MetricCard(
           title: "Memory",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.memory.value?.usedPercent),
           symbol: "memorychip.fill",
           kind: .memory,
-          action: { selectedDetail = .memory })
+          action: { showDetail(.memory) })
         MetricCard(
           title: "GPU",
           value: gpuText,
           symbol: "rectangle.3.group.fill",
           kind: .gpu,
-          action: { selectedDetail = .gpu })
+          action: { showDetail(.gpu) })
         MetricCard(
           title: "Battery",
           value: batteryText,
           symbol: batterySymbol,
           kind: .battery,
-          action: { selectedDetail = .battery })
+          action: { showDetail(.battery) })
         MetricCard(
           title: LocalizedStringKey(TemperatureL10n.string("Temperature")),
           value: temperatureText,
           symbol: "thermometer.high",
           kind: .temperature,
-          action: { selectedDetail = .temperature })
+          action: { showDetail(.temperature) })
         MetricCard(
           title: "Fans",
           value: FanDisplayText.summary(coordinator.snapshot.fans),
           symbol: "fan.fill",
           kind: .fans,
-          action: { selectedDetail = .fans })
+          action: { showDetail(.fans) })
       }
 
       memorySummary
       gpuSummary
-      PowerFlowView(snapshot: coordinator.snapshot) { selectedDetail = .power }
+      PowerFlowView(snapshot: coordinator.snapshot) { showDetail(.power) }
         .tint(theme.color(for: .systemPower))
       history
       Divider()
@@ -103,23 +101,14 @@ struct OverviewView: View {
     .padding(16)
     .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
-    .popover(
-      isPresented: Binding(
-        get: { selectedDetail != nil },
-        set: { isPresented in
-          if !isPresented { selectedDetail = nil }
-        }),
-      attachmentAnchor: .rect(.bounds),
-      arrowEdge: .trailing
-    ) {
-      if let selectedDetail {
-        MetricDetailView(kind: selectedDetail)
-          .environmentObject(coordinator)
-          .environmentObject(settings)
-          .environmentObject(fanControl)
-          .tint(theme.color(for: selectedDetail.themeMetricKind))
-      }
-    }
+  }
+
+  private func showDetail(_ kind: MetricDetailKind) {
+    MetricDetailWindowPresenter.shared.show(
+      kind: kind,
+      coordinator: coordinator,
+      settings: settings,
+      fanControl: fanControl)
   }
 
   private var memorySummary: some View {
