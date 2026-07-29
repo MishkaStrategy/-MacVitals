@@ -1,15 +1,17 @@
 name: README Screenshots
 
 on:
-  pull_request:
+  push:
+    branches:
+      - feature/macvitals-v1
   workflow_dispatch:
 
 concurrency:
-  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
+  group: readme-screenshots-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   capture:
@@ -17,6 +19,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: feature/macvitals-v1
+          persist-credentials: true
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -30,8 +35,9 @@ jobs:
       - name: Capture real application screenshots
         run: |
           result_bundle="${RUNNER_TEMP}/MacVitals-readme-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.xcresult"
-          screenshot_dir="${RUNNER_TEMP}/macvitals-readme-screenshots"
-          rm -rf "${result_bundle}" "${screenshot_dir}"
+          export_dir="${RUNNER_TEMP}/macvitals-readme-export"
+          screenshot_dir="docs/screenshots"
+          rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}"
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
@@ -40,13 +46,61 @@ jobs:
             -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
           xcrun xcresulttool export attachments \
             --path "${result_bundle}" \
-            --output-path "${screenshot_dir}"
+            --output-path "${export_dir}"
+          python3 - "${export_dir}" "${screenshot_dir}" <<'PY'
+          import json
+          import shutil
+          import sys
+          from pathlib import Path
+
+          export_dir = Path(sys.argv[1])
+          screenshot_dir = Path(sys.argv[2])
+          manifest = json.loads((export_dir / "manifest.json").read_text())
+          expected = {
+              "preferences-general",
+              "preferences-menu-bar",
+              "preferences-fans",
+              "preferences-diagnostics",
+          }
+          attachments = manifest[0]["attachments"]
+          found = set()
+          screenshot_dir.mkdir(parents=True, exist_ok=True)
+          for attachment in attachments:
+              name = attachment["suggestedHumanReadableName"].split("_0_", 1)[0]
+              if name not in expected:
+                  continue
+              source = export_dir / attachment["exportedFileName"]
+              target = screenshot_dir / f"{name}.png"
+              shutil.copyfile(source, target)
+              found.add(name)
+          if found != expected:
+              raise SystemExit(
+                  f"screenshot set mismatch: missing={sorted(expected - found)} "
+                  f"extra={sorted(found - expected)}"
+              )
+          PY
           test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
+          for image in "${screenshot_dir}"/*.png; do
+            test "$(sips -g pixelWidth "${image}" | awk '/pixelWidth/ {print $2}')" -eq 900
+            test "$(sips -g pixelHeight "${image}" | awk '/pixelHeight/ {print $2}')" -eq 728
+          done
+
+      - name: Commit real application screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots/*.png
+          if git diff --cached --quiet; then
+            echo "README screenshots are already current"
+            exit 0
+          fi
+          git commit -m "docs: add real MacVitals screenshots"
+          git push origin HEAD:feature/macvitals-v1
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/macvitals-readme-screenshots/
+          name: readme-screenshots-${{ github.sha }}
+          path: docs/screenshots/
           if-no-files-found: error
           retention-days: 30
