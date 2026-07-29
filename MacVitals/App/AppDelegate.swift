@@ -23,12 +23,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     settings.$notificationsEnabled
-      .combineLatest(settings.$memoryAlertThreshold, settings.$lowBatteryAlertThreshold)
-      .sink { [weak self] enabled, memoryThreshold, batteryThreshold in
+      .combineLatest(
+        settings.$memoryAlertsEnabled.combineLatest(settings.$memoryAlertThreshold),
+        settings.$lowBatteryAlertsEnabled.combineLatest(settings.$lowBatteryAlertThreshold)
+      )
+      .sink { [weak self] enabled, memoryRule, batteryRule in
         self?.notificationCoordinator.setEnabled(
           enabled,
-          memoryThreshold: memoryThreshold,
-          lowBatteryThreshold: batteryThreshold)
+          memoryAlertsEnabled: memoryRule.0,
+          memoryThreshold: memoryRule.1,
+          lowBatteryAlertsEnabled: batteryRule.0,
+          lowBatteryThreshold: batteryRule.1)
       }
       .store(in: &cancellables)
 
