@@ -141,6 +141,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitalsUITests
         GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: NO
 schemes:
   MacVitals:
     build:
