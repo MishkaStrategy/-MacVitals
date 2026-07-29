@@ -55,6 +55,8 @@ final class MacVitalsUITests: XCTestCase {
     Thread.sleep(forTimeInterval: 0.5)
     captureScreenScreenshot(named: "status-bar-overview")
 
+    statusItem.click()
+    Thread.sleep(forTimeInterval: 0.5)
     app.typeKey(",", modifierFlags: .command)
     XCTAssertTrue(
       app.windows.firstMatch.waitForExistence(timeout: 5),
