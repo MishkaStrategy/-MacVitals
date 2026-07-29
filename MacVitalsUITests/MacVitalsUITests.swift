@@ -31,6 +31,35 @@ final class MacVitalsUITests: XCTestCase {
     }
   }
 
+  func testCaptureReadmeScreenshots() {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "-AppleLanguages", "(en)",
+      "-AppleLocale", "en_US",
+      "-AppleInterfaceStyle", "Dark",
+      "-interfaceColorScheme", "duotone",
+    ]
+    app.launch()
+    app.typeKey(",", modifierFlags: .command)
+
+    XCTAssertTrue(
+      app.windows.firstMatch.waitForExistence(timeout: 5),
+      "Preferences window did not open for README screenshot capture")
+
+    captureWindowScreenshot(named: "preferences-general", in: app)
+
+    selectTab("Menu Bar", language: "en", in: app, file: #filePath, line: #line)
+    captureWindowScreenshot(named: "preferences-menu-bar", in: app)
+
+    selectTab("Fans", language: "en", in: app, file: #filePath, line: #line)
+    captureWindowScreenshot(named: "preferences-fans", in: app)
+
+    selectTab("Diagnostics", language: "en", in: app, file: #filePath, line: #line)
+    captureWindowScreenshot(named: "preferences-diagnostics", in: app)
+
+    app.terminate()
+  }
+
   private func assertPreferencesLaunch(
     language: String,
     locale: String,
@@ -136,6 +165,35 @@ final class MacVitalsUITests: XCTestCase {
       return
     }
     element.click()
+  }
+
+  private func captureWindowScreenshot(
+    named name: String,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    guard let outputPath = ProcessInfo.processInfo.environment["MACVITALS_SCREENSHOT_DIR"] else {
+      XCTFail("MACVITALS_SCREENSHOT_DIR is not configured", file: file, line: line)
+      return
+    }
+
+    let window = app.windows.firstMatch
+    guard window.waitForExistence(timeout: 3) else {
+      XCTFail("Missing window for screenshot \(name)", file: file, line: line)
+      return
+    }
+
+    do {
+      let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: outputDirectory,
+        withIntermediateDirectories: true)
+      let outputURL = outputDirectory.appendingPathComponent("\(name).png")
+      try window.screenshot().pngRepresentation.write(to: outputURL, options: .atomic)
+    } catch {
+      XCTFail("Unable to save screenshot \(name): \(error)", file: file, line: line)
+    }
   }
 
   private func assertElementExists(
