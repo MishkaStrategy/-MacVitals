@@ -1,57 +1,86 @@
 # MacVitals
 
-MacVitals is a lightweight, privacy-first native macOS menu bar utility for CPU, memory, battery, adapter and real-time power diagnostics on Apple Silicon Macs.
+MacVitals is a native, privacy-first macOS menu bar monitor for Apple Silicon Macs. It keeps the most useful system indicators close at hand without accounts, telemetry, advertising or a cloud service.
 
-> **Release status:** The Apple Silicon hosted macOS workflow verifies formatting, native arm64 builds, unit/provider tests, packaged-app runtime smoke, arm64-only unsigned Release packaging, the production application icon, ZIP/DMG consistency, EN/RU resources, SHA-256 checksums and machine-readable build provenance. Apple signing, notarization, physical battery/adapter validation, Instruments energy measurements and final hardware screenshots remain incomplete.
+The app combines live CPU and memory information, battery and charger diagnostics, temperature readings, process consumers, power-flow interpretation and read-only fan monitoring in a compact SwiftUI interface.
+
+> **Development status:** MacVitals v1 is under active validation in Draft PR #1. The current unsigned Apple Silicon build passes hosted arm64 build, test, packaging and runtime checks, as well as physical read-only fan and direct-session validation. Developer ID signing, notarization, final accessibility review and public release remain intentionally incomplete.
+
+## What MacVitals shows
+
+- CPU usage from delta-based Mach host counters
+- Memory usage and native macOS memory-pressure state
+- Battery level, charging state, health and capability-checked extended fields
+- Adapter rated and negotiated power, kept separate from measured input power
+- Direct or derived system-power telemetry with clear source labels
+- Battery and processor temperature when supported by the current Mac
+- Metal GPU identity and capabilities without fabricated utilization values
+- Read-only fan RPM, limits and operating mode through AppleSMC
+- Top process consumers for quicker diagnosis of unexpected load
+- Bounded metric history with sleep and wake discontinuities
+- Local alerts with cooldown and explicit notification permission handling
+
+## Interface
+
+MacVitals lives in the macOS menu bar. Opening it reveals an overview with clickable metric cards. Detailed views provide recent history and supporting values, while Preferences contains separate sections for general behavior, alerts, menu-bar content, diagnostics and privacy.
+
+The interface is available in English and Russian and is built with native SwiftUI and AppKit components.
+
+## Screenshots
+
+Real application screenshots are not committed yet. The current CI and physical-validation artifacts contain runtime, Instruments and diagnostic evidence, but no trustworthy visual captures of the running interface.
+
+Screenshots will be added under `docs/images/` only after capture from the actual application on representative Apple Silicon hardware. Concept renders are intentionally not presented as real program images.
+
+Planned README layout:
+
+```text
+docs/images/macvitals-overview.png
+docs/images/macvitals-metric-detail.png
+docs/images/macvitals-preferences.png
+docs/images/macvitals-diagnostics.png
+```
 
 ## Supported platform
 
 - Apple Silicon (`arm64`) only
 - macOS 13 or later
-- Intel (`x86_64`) builds are intentionally unsupported and are rejected by release verification
+- Intel (`x86_64`) and universal release binaries are intentionally rejected
 
-## Highlights
+## Privacy
 
-- Native SwiftUI + AppKit menu bar application for macOS 13+
-- CPU usage from delta-based Mach host counters
-- Memory accounting from `host_statistics64`
-- Native macOS memory-pressure transitions from `DispatchSourceMemoryPressure`
-- Battery state through public IOKit Power Sources APIs
-- Capability-checked extended battery fields from IORegistry, marked experimental
-- Adapter rated/negotiated power kept separate from measured input power
-- Robust charger sufficiency window based primarily on sustained battery discharge while external power is connected
-- Metal GPU identity and capability detection; no fabricated system utilization
-- Local state-transition alerts with cooldown and explicit permission handling
-- Bounded in-memory history with sleep/wake discontinuities
-- Reproducible unsigned arm64 ZIP and DMG packaging with provenance and checksum verification
-- Reproducible project-owned macOS application icon with structural and checksum validation
-- Native hosted runtime smoke on arm64
-- English and Russian localization resources and five-tab Preferences accessibility smoke coverage
-- No accounts, ads, analytics, telemetry, cloud backend, root helper or `sudo`
+All metrics are processed locally. MacVitals makes no network requests and contains no accounts, analytics, telemetry, advertising or cloud backend. Diagnostic and runtime evidence is designed to omit usernames, home paths, serial numbers, Apple IDs, user documents and network data.
 
-## GPU limitation
+See [PRIVACY.md](PRIVACY.md).
 
-macOS does not expose one universal public API for whole-system GPU utilization across supported Macs. MacVitals therefore shows Metal device information and reports system GPU utilization as unavailable when no reliable provider exists.
+## Important limitations
+
+- macOS does not expose one universal public API for reliable whole-system GPU utilization across supported Macs. MacVitals reports the metric as unavailable when no trustworthy provider exists.
+- Nominal adapter power is never presented as live system consumption.
+- Extended battery fields from IORegistry are capability-checked and marked experimental.
+- Fan monitoring is read-only in unsigned builds. Physical fan control is not claimed as working or release-ready.
+- Hosted runtime measurements are regression evidence for specific runners, not universal performance promises.
 
 ## Build from source
 
 Requirements: Apple Silicon Mac, macOS 13+, Xcode 16+, Homebrew.
 
 ```bash
-git clone https://github.com/mishkacher/-MacVitals.git
+git clone https://github.com/MishkaStrategy/-MacVitals.git
 cd -- -MacVitals
+git switch feature/macvitals-v1
 make bootstrap
 open MacVitals.xcodeproj
 ```
 
-For command-line validation and tests:
+Run validation and tests:
 
 ```bash
 make validate-tooling
 make test
 ```
 
-For an explicitly unsigned local package:
+Create an explicitly unsigned local package:
 
 ```bash
 make package VERSION=0.0.0
@@ -65,15 +94,13 @@ The package output includes:
 - `BUILD_STATUS.txt`
 - `BUILD_MANIFEST.json`
 
-The verifier checks the application icon, bundle, localizations, arm64-only executable, ZIP/DMG payload consistency, signing/notarization classification and exact checksum scope. A universal or x86_64 executable is rejected. An artifact must not be described as Developer ID signed or notarized unless the actual bundle and provenance checks confirm those states.
-
-To run the same short packaged-app regression guardrail used by CI:
+Run the packaged-app runtime smoke used by CI:
 
 ```bash
 make runtime-smoke VERSION=0.0.0
 ```
 
-To collect a longer process-level CSV/JSON record from an already running MacVitals instance:
+Collect a longer process-level CSV/JSON record from an already running instance:
 
 ```bash
 make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
@@ -81,42 +108,35 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 
 These process samples do not replace Instruments energy, wakeup, thermal or physical battery testing.
 
-For the physical M1/M-series release pass, place the exact workflow candidate in `dist/` and start the conservative guided flow:
+## Validation status
 
-```bash
-python3 scripts/run_physical_validation_guided.py start --dist dist
-```
+The current validation pipeline covers:
 
-The guide extracts and verifies the exact candidate, chooses approved scenario timings and keeps every result pending human review. See the [guided physical-validation guide](docs/PHYSICAL_VALIDATION_GUIDED.md) and the [full low-level runbook](docs/PHYSICAL_VALIDATION_RUNBOOK.md).
-
-## Verified hosted evidence
-
-The current workflow has successfully:
-
-- built, tested and launched the packaged app natively on hosted arm64 macOS;
-- retained raw runtime CSV/JSON evidence;
-- kept broad CPU, RSS, sample-continuity and thread-count runaway guardrails green;
-- verified that the distributable executable contains only the `arm64` architecture.
-
-This confirms hosted Apple Silicon compatibility. It does not prove physical MacBook battery, charger, thermal, sleep/wake or energy behavior. See [performance evidence](docs/PERFORMANCE.md) and [physical validation protocol](docs/HARDWARE_VALIDATION.md).
-
-## Screenshots
-
-Verified screenshots will be added only after the application has been captured on representative physical Apple Silicon Mac hardware. Concept renders are intentionally not presented as real screenshots.
-
-## Privacy
-
-All metrics are processed locally. MacVitals makes no network requests and contains no telemetry. Support and runtime evidence are designed to omit usernames, home paths, serial numbers, Apple ID, user documents and network data. See [PRIVACY.md](PRIVACY.md).
-
-## Power sufficiency
-
-The evaluator does **not** compare voltages. Its most important practical signal is sustained battery discharge while external power is connected. It uses a rolling window, median smoothing, minimum duration and conflict detection. Nominal adapter power is never presented as live consumption.
+- formatting and generated-project checks;
+- native Apple Silicon build and automated tests;
+- packaged application runtime smoke;
+- arm64-only unsigned ZIP and DMG packaging;
+- application icon, localization, checksum and provenance verification;
+- English and Russian Preferences accessibility smoke;
+- physical read-only fan RPM evidence;
+- physical direct-session stability and Instruments collection.
 
 ## Remaining release gates
 
-- Apple Developer ID signing, notarization, stapling and Gatekeeper validation with real credentials
-- Physical Apple Silicon laptop validation under battery/adapter transitions
-- Instruments energy/wakeup/allocations evidence and multi-hour stability testing
-- Final screenshots, VoiceOver review and visual review on physical Apple Silicon hardware
+- Developer ID signing, notarization, stapling and clean-Mac Gatekeeper validation
+- Final manual VoiceOver, keyboard and EN/RU visual review
+- Real application screenshots captured on representative Apple Silicon hardware
+- Independent review of physical and Instruments evidence
+- Explicit authorization before merge, tag or public release
 
-See [README_RU.md](README_RU.md), [architecture](ARCHITECTURE.md), [application icon](docs/APP_ICON.md), [sensor compatibility](docs/SENSOR_COMPATIBILITY.md), [build provenance](docs/BUILD_PROVENANCE.md), and [release process](docs/RELEASE.md).
+## Documentation
+
+- [Russian README](README_RU.md)
+- [Architecture](ARCHITECTURE.md)
+- [Privacy](PRIVACY.md)
+- [Application icon](docs/APP_ICON.md)
+- [Power model](docs/POWER_MODEL.md)
+- [Sensor compatibility](docs/SENSOR_COMPATIBILITY.md)
+- [Performance evidence](docs/PERFORMANCE.md)
+- [Build provenance](docs/BUILD_PROVENANCE.md)
+- [Release process](docs/RELEASE.md)
