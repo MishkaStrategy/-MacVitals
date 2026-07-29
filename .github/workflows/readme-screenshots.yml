@@ -161,6 +161,8 @@ jobs:
             exit 0
           fi
           git commit -m "docs: refresh Russian MacVitals screenshots"
+          git fetch origin "${TARGET_BRANCH}"
+          git rebase "origin/${TARGET_BRANCH}"
           git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Upload real application screenshots
