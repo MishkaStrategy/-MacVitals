@@ -52,18 +52,40 @@ nonisolated struct ThemePalette: Equatable, Sendable {
     case .neutral: return .gray
     }
   }
+
+  func chartSeriesTokens(for metric: MetricKind) -> [ThemeColorToken] {
+    guard style == .multicolor else { return [.blue, .blue, .blue] }
+
+    switch metric {
+    case .systemPower: return [.orange, .mint, .blue]
+    case .fans: return [.cyan, .blue, .purple]
+    default:
+      let token = token(for: metric)
+      return [token, token, token]
+    }
+  }
 }
 
 struct AppTheme: Equatable {
   let style: ColorSchemeStyle
   let palette: ThemePalette
+  let scopedMetric: MetricKind?
 
-  init(style: ColorSchemeStyle) {
+  init(style: ColorSchemeStyle, scopedMetric: MetricKind? = nil) {
     self.style = style
+    self.scopedMetric = scopedMetric
     palette = ThemePalette(style: style)
   }
 
-  var primaryAccent: Color { .blue }
+  var primaryAccentToken: ThemeColorToken {
+    token(for: scopedMetric ?? .cpu)
+  }
+
+  var primaryAccent: Color { color(for: primaryAccentToken) }
+
+  func scoped(to metric: MetricKind) -> AppTheme {
+    AppTheme(style: style, scopedMetric: metric)
+  }
 
   func token(for metric: MetricKind) -> ThemeColorToken {
     palette.token(for: metric)
@@ -84,6 +106,15 @@ struct AppTheme: Equatable {
     case .cyan: return .cyan
     case .gray: return Color(nsColor: .systemGray)
     }
+  }
+
+  func chartSeriesColors(for metric: MetricKind) -> [Color] {
+    let tokens = palette.chartSeriesTokens(for: metric)
+    guard style == .multicolor else {
+      let base = color(for: metric)
+      return [base, base.opacity(0.72), base.opacity(0.48)]
+    }
+    return tokens.map(color(for:))
   }
 }
 
@@ -127,6 +158,13 @@ extension View {
     environment(\.appTheme, theme)
       .tint(theme.primaryAccent)
   }
+
+  func metricTheme(_ theme: AppTheme, metric: MetricKind) -> some View {
+    let scopedTheme = theme.scoped(to: metric)
+    return environment(\.appTheme, scopedTheme)
+      .tint(scopedTheme.primaryAccent)
+      .chartForegroundStyleScale(range: scopedTheme.chartSeriesColors(for: metric))
+  }
 }
 
 extension MetricDetailKind {
@@ -139,6 +177,17 @@ extension MetricDetailKind {
     case .temperature: return .temperature
     case .fans: return .fans
     case .power: return .systemPower
+    }
+  }
+}
+
+extension ProcessConsumerMetric {
+  var themeMetricKind: MetricKind {
+    switch self {
+    case .cpu: return .cpu
+    case .memory: return .memory
+    case .gpu: return .gpu
+    case .energy: return .battery
     }
   }
 }
