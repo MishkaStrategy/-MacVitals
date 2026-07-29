@@ -1,0 +1,65 @@
+name: Physical Legacy Queue Guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+# Reuse the legacy group so this lightweight guard replaces any pending copy of
+# the superseded long-running canonical workflow. The authoritative physical
+# collector is Physical Direct-Session Validation.
+concurrency:
+  group: physical-apple-silicon-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  superseded-physical-path:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login == github.repository_owner &&
+       github.actor == github.repository_owner &&
+       github.event.pull_request.head.ref == 'feature/macvitals-v1')
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify authoritative hardened physical path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          required=(
+            .github/workflows/physical-direct-session-validation.yml
+            scripts/run_ci_physical_validation_hardened.sh
+            scripts/run_physical_validation_hardened.py
+            scripts/run_physical_validation_guided_hardened.py
+          )
+          for path in "${required[@]}"; do
+            [[ -f "${path}" && ! -L "${path}" ]] || {
+              echo "Authoritative hardened physical path is missing or unsafe: ${path}" >&2
+              exit 1
+            }
+          done
+          python3 -m py_compile \
+            scripts/run_physical_validation_hardened.py \
+            scripts/run_physical_validation_guided_hardened.py
+          bash -n scripts/run_ci_physical_validation_hardened.sh
+          {
+            echo "## Legacy physical queue superseded"
+            echo
+            echo "This job intentionally performs no physical-device validation."
+            echo "It replaces the obsolete duplicate self-hosted queue only."
+            echo "Physical acceptance remains exclusively in Physical Direct-Session Validation."
+            echo "No human, Instruments, independent-review, signing or publication gate is approved here."
+          } >> "${GITHUB_STEP_SUMMARY}"

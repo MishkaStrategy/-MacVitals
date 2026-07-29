@@ -1,0 +1,163 @@
+name: MacVitals
+options:
+  bundleIdPrefix: com.mishkacher
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    MACOSX_DEPLOYMENT_TARGET: 13.0
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.0.0
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    CLANG_ENABLE_MODULES: YES
+    GENERATE_INFOPLIST_FILE: NO
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+configs:
+  Debug: debug
+  Release: release
+targets:
+  MacVitalsFanHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - MacVitalsFanHelper
+      - MacVitals/Domain/MetricModels.swift
+      - MacVitals/Providers/Fans/AppleSMCConnection.swift
+      - MacVitals/Providers/Fans/FanValueNormalizer.swift
+      - MacVitals/Providers/Fans/FanControlSafetyPolicy.swift
+      - MacVitals/Providers/Fans/FanControlRecoveryStore.swift
+      - MacVitals/Providers/Fans/FanControlSigningPolicy.swift
+      - MacVitals/Providers/Fans/FanControlXPCProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals.FanControl
+        PRODUCT_NAME: MacVitalsFanHelper
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - sdk: IOKit.framework
+      - sdk: Security.framework
+  MacVitalsFanProbe:
+    type: tool
+    platform: macOS
+    sources:
+      - MacVitalsFanProbe
+      - MacVitals/Domain/MetricModels.swift
+      - MacVitals/Providers/Fans/AppleSMCConnection.swift
+      - MacVitals/Providers/Fans/FanValueNormalizer.swift
+      - MacVitals/Providers/Fans/FanProvider.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals.FanProbe
+        PRODUCT_NAME: MacVitalsFanProbe
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - sdk: IOKit.framework
+  MacVitals:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacVitals
+        excludes:
+          - Resources/Info.plist
+    resources:
+      - MacVitals/Resources
+    info:
+      path: MacVitals/Resources/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: MacVitals
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIconFile: AppIcon.icns
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSHumanReadableCopyright: Copyright © 2026 MacVitals contributors.
+        CFBundleLocalizations:
+          - en
+          - ru
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitals
+        PRODUCT_NAME: MacVitals
+        INFOPLIST_FILE: MacVitals/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacVitals/Resources/MacVitals.entitlements
+        ENABLE_APP_SANDBOX: NO
+    dependencies:
+      - target: MacVitalsFanHelper
+      - sdk: IOKit.framework
+      - sdk: ServiceManagement.framework
+      - sdk: Security.framework
+      - sdk: Metal.framework
+    postBuildScripts:
+      - name: Bundle managed fan helper
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          app_contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
+          helper_source="$BUILT_PRODUCTS_DIR/MacVitalsFanHelper"
+          helper_destination="$app_contents/Resources/MacVitalsFanHelper"
+          daemon_directory="$app_contents/Library/LaunchDaemons"
+          test -x "$helper_source"
+          mkdir -p "$app_contents/Resources" "$daemon_directory"
+          cp -f "$helper_source" "$helper_destination"
+          chmod 0755 "$helper_destination"
+          cp -f "$SRCROOT/MacVitalsFanHelper/com.mishkacher.MacVitals.FanControl.plist" \
+            "$daemon_directory/com.mishkacher.MacVitals.FanControl.plist"
+  MacVitalsTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - MacVitalsTests
+    dependencies:
+      - target: MacVitals
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitalsTests
+        GENERATE_INFOPLIST_FILE: YES
+  MacVitalsUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - MacVitalsUITests
+    dependencies:
+      - target: MacVitals
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mishkacher.MacVitalsUITests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MacVitals:
+    build:
+      targets:
+        MacVitalsFanHelper: all
+        MacVitalsFanProbe: all
+        MacVitals: all
+        MacVitalsTests: [test]
+        MacVitalsUITests: [test]
+    test:
+      gatherCoverageData: true
+      language: en
+      region: US
+      targets:
+        - MacVitalsTests
+        - MacVitalsUITests
+    run:
+      config: Debug
+    archive:
+      config: Release

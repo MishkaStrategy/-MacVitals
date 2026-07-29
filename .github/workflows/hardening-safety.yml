@@ -1,0 +1,70 @@
+name: Hardened Tooling Safety
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hardened-tooling-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hardened-tooling:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Compile hardened Python entrypoints
+        run: |
+          python3 -m py_compile \
+            scripts/run_physical_validation.py \
+            scripts/run_physical_validation_hardened.py \
+            scripts/run_physical_validation_guided.py \
+            scripts/run_physical_validation_guided_hardened.py \
+            scripts/prepare_physical_artifact.py \
+            scripts/prepare_physical_artifact_hardened.py \
+            scripts/repair_sanitized_physical_xml.py \
+            scripts/sanitize_physical_fan_evidence.py \
+            scripts/sign_notarize_release.py \
+            scripts/sign_notarize_release_hardened.py \
+            scripts/signed_release_entrypoint.py \
+            scripts/signed_release_entrypoint_hardened.py \
+            scripts/validate_app_zip.py \
+            scripts/validate_fan_evidence.py \
+            scripts/validate_fan_helper_bundle.py \
+            scripts/validate_release_metadata.py \
+            scripts/validate_runtime_metrics.py \
+            scripts/validate_runtime_metrics_hardened.py \
+            scripts/verify_xcodegen_version.py
+
+      - name: Run hardened regression self-tests
+        run: |
+          python3 scripts/run_physical_validation_hardened.py self-test
+          python3 scripts/run_physical_validation_guided_hardened.py self-test
+          python3 scripts/prepare_physical_artifact_hardened.py self-test
+          python3 scripts/repair_sanitized_physical_xml.py --self-test
+          python3 scripts/sanitize_physical_fan_evidence.py --self-test
+          python3 scripts/sign_notarize_release_hardened.py self-test
+          python3 scripts/signed_release_entrypoint_hardened.py self-test
+          python3 scripts/validate_app_zip.py --self-test
+          python3 scripts/validate_fan_evidence.py --self-test
+          python3 scripts/validate_fan_helper_bundle.py --self-test
+          python3 scripts/validate_release_metadata.py --self-test
+          python3 scripts/validate_runtime_metrics_hardened.py --self-test
+          python3 scripts/verify_xcodegen_version.py --self-test
+
+      - name: Validate shell routing contracts
+        run: |
+          bash -n \
+            scripts/package_release.sh \
+            scripts/verify_release.sh \
+            scripts/run_ci_physical_validation_hardened.sh \
+            scripts/run_ci_runtime_smoke.sh \
+            scripts/run_ci_runtime_smoke_hardened.sh
+          bash scripts/run_ci_physical_validation_hardened.sh --self-test
+          bash scripts/run_ci_runtime_smoke_hardened.sh --self-test

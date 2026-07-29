@@ -1,0 +1,120 @@
+name: Release Candidate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric version to package without a leading v
+        required: false
+        default: 0.0.0
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package-arm64:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Validate localization, app icon and runtime tooling
+        run: |
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_guided.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
+          python3 scripts/materialize_app_icon.py --self-test
+          python3 scripts/materialize_app_icon.py
+          python3 scripts/validate_localizations.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/validate_runtime_metrics.py --self-test
+          python3 scripts/run_physical_validation.py self-test
+          python3 scripts/run_physical_validation_guided.py self-test
+          python3 scripts/prepare_physical_artifact.py self-test
+          python3 scripts/sign_notarize_release.py self-test
+          python3 scripts/signed_release_entrypoint.py self-test
+          bash -n \
+            scripts/package_release.sh \
+            scripts/verify_release.sh \
+            scripts/collect_runtime_metrics.sh \
+            scripts/run_ci_runtime_smoke.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          [[ -n "${version}" ]] || version=0.0.0
+          [[ "${version}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || {
+            echo "Version must contain one to three numeric components: ${version}" >&2
+            exit 2
+          }
+          echo "value=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Run arm64 unit and hardware-smoke tests
+        run: >-
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
+          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+
+      - name: Build and verify unsigned arm64 release candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "${{ steps.version.outputs.value }}"
+
+      - name: Packaged runtime smoke guardrail
+        timeout-minutes: 5
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            > runtime-smoke-run.log 2>&1
+          status=$?
+          cat runtime-smoke-run.log
+          exit $status
+
+      - name: Upload runtime smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runtime-smoke-evidence-arm64
+          path: |
+            runtime-smoke-run.log
+            runtime-smoke-results/
+          if-no-files-found: ignore
+
+      - name: Upload unsigned arm64 candidate for internal validation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacVitals-${{ steps.version.outputs.value }}-arm64-unsigned
+          path: dist/
+          if-no-files-found: error
+
+      - name: Record publication gate
+        run: |
+          {
+            echo "## Publication blocked"
+            echo
+            echo "This workflow produces an unsigned, non-notarized arm64 validation artifact only."
+            echo "It intentionally does not create a public GitHub Release."
+            echo "The separate Signed Release Candidate workflow can create only a private signed artifact after protected manual authorization."
+            echo "Public release publication still requires clean-Mac validation, independent review and separate user authorization."
+          } >> "${GITHUB_STEP_SUMMARY}"
