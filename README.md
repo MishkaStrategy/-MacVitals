@@ -16,33 +16,46 @@ MacVitals держит важные показатели системы на в�
 
 > **Статус разработки:** MacVitals v1 уже объединён с веткой `main` и продолжает предрелизную проверку. Текущая unsigned-сборка для Apple Silicon проходит автоматические проверки сборки, тестов, упаковки и запуска, а также физическую read-only проверку вентиляторов. Developer ID signing, notarization и публичный релиз пока не выполнялись.
 
-## Реальный интерфейс программы
+## Концептуальный интерфейс
 
-Изображения получены непосредственно из настоящего приложения MacVitals, собранного и запущенного на GitHub-hosted macOS 15 ARM64 runner. Это XCTest-снимки работающей программы, а не макеты и не концепт-рендеры.
+Ниже показаны специально подготовленные продуктовые визуалы MacVitals. Они передают направление дизайна и возможности приложения, но намеренно не являются буквальными скриншотами текущей сборки.
 
-### Главный рабочий интерфейс: строка меню и обзор показателей
+### Строка меню и быстрый обзор
 
-Ниже показан основной popover MacVitals с карточками системных показателей, открытый из настоящего элемента приложения в строке меню macOS.
+<p align="center">
+  <img src="docs/concepts/status-bar-overview.svg" alt="Концепт MacVitals в строке меню macOS" width="900">
+</p>
 
-[![Главный интерфейс MacVitals: строка меню и раскрытый обзор показателей](docs/screenshots/status-bar-overview.png)](docs/screenshots/status-bar-overview.png)
+### Настройки и диагностика
 
-### Окно основных настроек
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>⚙️ Основные настройки</strong><br>
+      <sub>Интервал обновления, история, запуск вместе с системой и внешний вид.</sub><br><br>
+      <img src="docs/concepts/preferences-general.svg" alt="Концепт основных настроек MacVitals" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>📊 Строка меню</strong><br>
+      <sub>Выбор показателей, наборы метрик и компактное отображение.</sub><br><br>
+      <img src="docs/concepts/preferences-menu-bar.svg" alt="Концепт настройки строки меню MacVitals" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>🌀 Вентиляторы и безопасность</strong><br>
+      <sub>Красивое отображение доступных read-only данных и ограничений безопасности.</sub><br><br>
+      <img src="docs/concepts/preferences-fans.svg" alt="Концепт мониторинга вентиляторов MacVitals" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>🩺 Диагностика</strong><br>
+      <sub>Сводка системы, состояние датчиков и ключевые диагностические сведения.</sub><br><br>
+      <img src="docs/concepts/preferences-diagnostics.svg" alt="Концепт диагностики MacVitals" width="100%">
+    </td>
+  </tr>
+</table>
 
-[![Основные настройки MacVitals](docs/screenshots/preferences-general.png)](docs/screenshots/preferences-general.png)
-
-### Настройка показателей строки меню
-
-[![Настройка строки меню MacVitals](docs/screenshots/preferences-menu-bar.png)](docs/screenshots/preferences-menu-bar.png)
-
-### Вентиляторы и безопасность
-
-[![Интерфейс мониторинга вентиляторов MacVitals](docs/screenshots/preferences-fans.png)](docs/screenshots/preferences-fans.png)
-
-### Диагностика
-
-[![Экран диагностики MacVitals](docs/screenshots/preferences-diagnostics.png)](docs/screenshots/preferences-diagnostics.png)
-
-Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера, температурных датчиков или вентиляторов в отдельных кадрах ожидаема. Воспроизводимый сценарий захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
+Концептуальные изображения не используются как доказательство реализованных функций. Реальные XCTest-снимки и воспроизводимый сценарий их получения сохранены отдельно в [`docs/screenshots/`](docs/screenshots/) и [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
 ## Что показывает MacVitals
 
@@ -158,6 +171,7 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 ## Документация
 
 - [English README](README_EN.md)
+- [Концептуальные изображения](docs/concepts/README.md)
 - [Архитектура](ARCHITECTURE.md)
 - [Приватность](PRIVACY.md)
 - [Иконка приложения](docs/APP_ICON.md)
