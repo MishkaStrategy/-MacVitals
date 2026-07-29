@@ -117,7 +117,7 @@ struct OverviewView: View {
           .environmentObject(coordinator)
           .environmentObject(settings)
           .environmentObject(fanControl)
-          .tint(theme.color(for: selectedDetail.themeMetricKind))
+          .metricTheme(theme, metric: selectedDetail.themeMetricKind)
       }
     }
   }
