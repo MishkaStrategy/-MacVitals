@@ -1,0 +1,49 @@
+name: README Screenshots
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Capture real application screenshots
+        env:
+          MACVITALS_SCREENSHOT_DIR: ${{ github.workspace }}/docs/screenshots
+        run: |
+          rm -rf "${MACVITALS_SCREENSHOT_DIR}"
+          mkdir -p "${MACVITALS_SCREENSHOT_DIR}"
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+            -destination 'platform=macOS' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            clean test \
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
+          test "$(find "${MACVITALS_SCREENSHOT_DIR}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
+
+      - name: Upload real application screenshots
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
+          path: docs/screenshots/
+          if-no-files-found: error
+          retention-days: 30
