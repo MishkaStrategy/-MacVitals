@@ -1,0 +1,123 @@
+name: Feature Head
+
+on:
+  push:
+    branches: [feature/macvitals-v1]
+
+concurrency:
+  group: feature-head-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-exact-feature-head:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact feature head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact checkout identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/feature/macvitals-v1" ]]
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+          git diff --quiet
+          git diff --cached --quiet
+
+      - name: Validate localization, app icon and runtime tooling
+        run: |
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py
+          python3 scripts/materialize_app_icon.py --self-test
+          python3 scripts/materialize_app_icon.py
+          python3 scripts/validate_localizations.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/validate_runtime_metrics.py --self-test
+          bash -n scripts/package_release.sh scripts/verify_release.sh scripts/run_ci_runtime_smoke.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Run exact-head arm64 unit tests
+        run: >-
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
+          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+
+      - name: Run exact-head theme UI smoke
+        run: >-
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals
+          -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGNING_ALLOWED=NO test
+          -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches
+
+      - name: Package exact-head unsigned arm64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
+
+      - name: Verify packaged commit provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(Path("dist/BUILD_MANIFEST.json").read_text())
+          expected = os.environ["GITHUB_SHA"]
+          actual = manifest.get("gitCommit")
+          if actual != expected:
+              raise SystemExit(f"Packaged commit mismatch: expected {expected}, got {actual}")
+          if manifest.get("architectures") != ["arm64"]:
+              raise SystemExit(f"Unexpected architectures: {manifest.get('architectures')}")
+          if manifest.get("signingStatus") != "unsigned":
+              raise SystemExit(f"Unexpected signing status: {manifest.get('signingStatus')}")
+          if manifest.get("notarizationStatus") != "not-notarized":
+              raise SystemExit(
+                  f"Unexpected notarization status: {manifest.get('notarizationStatus')}"
+              )
+          PY
+
+      - name: Packaged runtime smoke guardrail
+        timeout-minutes: 5
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            > runtime-smoke-run.log 2>&1
+          status=$?
+          cat runtime-smoke-run.log
+          exit $status
+
+      - name: Upload exact-head runtime smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: feature-head-runtime-smoke-arm64
+          path: |
+            runtime-smoke-run.log
+            runtime-smoke-results/
+          if-no-files-found: ignore
+
+      - name: Upload exact feature-head candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacVitals-feature-0.0.${{ github.run_number }}-arm64-unsigned
+          path: dist/
+          if-no-files-found: error
