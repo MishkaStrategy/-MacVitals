@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   signed-candidate:
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     environment: signed-release
     steps:
