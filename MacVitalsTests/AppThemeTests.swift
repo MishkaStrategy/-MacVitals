@@ -57,4 +57,41 @@ final class AppThemeTests: XCTestCase {
     XCTAssertEqual(palette.token(for: .fans), .cyan)
     XCTAssertEqual(palette.token(for: .neutral), .gray)
   }
+
+  func testScopedThemeUsesMetricAccentOnlyInMulticolorMode() {
+    XCTAssertEqual(
+      AppTheme(style: .duotone).scoped(to: .memory).primaryAccentToken,
+      .blue)
+    XCTAssertEqual(
+      AppTheme(style: .multicolor).scoped(to: .memory).primaryAccentToken,
+      .purple)
+    XCTAssertEqual(
+      AppTheme(style: .multicolor).scoped(to: .fans).primaryAccentToken,
+      .cyan)
+  }
+
+  func testDetailAndProcessMetricsMapToExpectedThemeKinds() {
+    XCTAssertEqual(MetricDetailKind.cpu.themeMetricKind, .cpu)
+    XCTAssertEqual(MetricDetailKind.memory.themeMetricKind, .memory)
+    XCTAssertEqual(MetricDetailKind.gpu.themeMetricKind, .gpu)
+    XCTAssertEqual(MetricDetailKind.battery.themeMetricKind, .battery)
+    XCTAssertEqual(MetricDetailKind.temperature.themeMetricKind, .temperature)
+    XCTAssertEqual(MetricDetailKind.fans.themeMetricKind, .fans)
+    XCTAssertEqual(MetricDetailKind.power.themeMetricKind, .systemPower)
+
+    XCTAssertEqual(ProcessConsumerMetric.cpu.themeMetricKind, .cpu)
+    XCTAssertEqual(ProcessConsumerMetric.memory.themeMetricKind, .memory)
+    XCTAssertEqual(ProcessConsumerMetric.gpu.themeMetricKind, .gpu)
+    XCTAssertEqual(ProcessConsumerMetric.energy.themeMetricKind, .battery)
+  }
+
+  func testChartSeriesPaletteKeepsDuotoneBlueAndMulticolorSemantic() {
+    let duotone = ThemePalette(style: .duotone)
+    XCTAssertEqual(duotone.chartSeriesTokens(for: .systemPower), [.blue, .blue, .blue])
+    XCTAssertEqual(duotone.chartSeriesTokens(for: .fans), [.blue, .blue, .blue])
+
+    let multicolor = ThemePalette(style: .multicolor)
+    XCTAssertEqual(multicolor.chartSeriesTokens(for: .systemPower), [.orange, .mint, .blue])
+    XCTAssertEqual(multicolor.chartSeriesTokens(for: .fans), [.cyan, .blue, .purple])
+  }
 }
