@@ -73,9 +73,62 @@ jobs:
         run: |
           set +e
           ui_derived_data="${RUNNER_TEMP}/MacVitals-ui-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ui_lock="/tmp/com.mishkacher.MacVitals.ui-automation.lock"
+          lock_acquired=0
+          caffeinate_pid=""
+
+          cleanup_ui_smoke() {
+            if [[ -n "${caffeinate_pid}" ]]; then
+              kill "${caffeinate_pid}" 2>/dev/null || true
+            fi
+            rm -rf "${ui_derived_data}"
+            if [[ ${lock_acquired} -eq 1 ]]; then
+              rmdir "${ui_lock}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_ui_smoke EXIT
+
+          for _ in $(seq 1 300); do
+            if mkdir "${ui_lock}" 2>/dev/null; then
+              lock_acquired=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ ${lock_acquired} -ne 1 ]]; then
+            echo "Could not acquire the host UI-automation lock" >&2
+            exit 1
+          fi
+
+          runner_uid="$(id -u)"
+          console_uid="$(stat -f '%u' /dev/console)"
+          if [[ "${console_uid}" != "${runner_uid}" ]]; then
+            echo "UI smoke requires the runner user to own the active console session" >&2
+            exit 1
+          fi
+          if ! launchctl print "gui/${runner_uid}" >/dev/null 2>&1; then
+            echo "UI smoke requires an active user GUI bootstrap session" >&2
+            exit 1
+          fi
+          if /usr/sbin/ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked" = Yes'; then
+            echo "UI smoke requires an unlocked console session" >&2
+            exit 1
+          fi
+
           rm -rf "${ui_derived_data}"
-          trap 'rm -rf "${ui_derived_data}"' EXIT
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' -derivedDataPath "${ui_derived_data}" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES clean test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
+          /usr/bin/caffeinate -dimsu &
+          caffeinate_pid=$!
+
+          launchctl asuser "${runner_uid}" /usr/bin/xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${ui_derived_data}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            clean test \
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches \
+            > native-ui-tests.log 2>&1
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
           cat native-ui-test-diagnostics.txt
