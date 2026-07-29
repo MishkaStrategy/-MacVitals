@@ -1,145 +1,185 @@
 # MacVitals
 
-MacVitals is a native, privacy-first macOS menu bar monitor for Apple Silicon Macs. It keeps the most useful system indicators close at hand without accounts, telemetry, advertising or a cloud service.
+<p align="center">
+  <strong>Нативный монитор состояния Mac прямо в строке меню macOS</strong>
+</p>
 
-The app combines live CPU and memory information, battery and charger diagnostics, temperature readings, process consumers, power-flow interpretation and read-only fan monitoring in a compact SwiftUI interface.
+<p align="center">
+  <code>Apple Silicon</code> · <code>macOS 13+</code> · <code>Swift 6</code> · <code>Без телеметрии</code> · <code>Локальная обработка</code>
+</p>
 
-> **Development status:** MacVitals v1 is under active validation in Draft PR #1. The current unsigned Apple Silicon build passes hosted arm64 build, test, packaging and runtime checks, as well as physical read-only fan and direct-session validation. Developer ID signing, notarization, final accessibility review and public release remain intentionally incomplete.
+<p align="center">
+  <strong>Русский</strong> · <a href="README_EN.md">English</a>
+</p>
 
-## What MacVitals shows
+MacVitals держит важные показатели системы на виду: загрузку CPU и памяти, состояние батареи и питания, температуры, ресурсоёмкие процессы и доступные показатели вентиляторов. Приложение работает без аккаунтов, рекламы, аналитики, облачного сервиса и фоновой отправки данных.
 
-- CPU usage from delta-based Mach host counters
-- Memory usage and native macOS memory-pressure state
-- Battery level, charging state, health and capability-checked extended fields
-- Adapter rated and negotiated power, kept separate from measured input power
-- Direct or derived system-power telemetry with clear source labels
-- Battery and processor temperature when supported by the current Mac
-- Metal GPU identity and capabilities without fabricated utilization values
-- Read-only fan RPM, limits and operating mode through AppleSMC
-- Top process consumers for quicker diagnosis of unexpected load
-- Bounded metric history with sleep and wake discontinuities
-- Local alerts with cooldown and explicit notification permission handling
+> **Статус разработки:** MacVitals v1 уже объединён с веткой `main` и продолжает предрелизную проверку. Текущая unsigned-сборка для Apple Silicon проходит автоматические проверки сборки, тестов, упаковки и запуска, а также физическую read-only проверку вентиляторов. Developer ID signing, notarization и публичный релиз пока не выполнялись.
 
-## Interface
+## Что показывает MacVitals
 
-MacVitals lives in the macOS menu bar. Opening it reveals an overview with clickable metric cards. Detailed views provide recent history and supporting values, while Preferences contains separate sections for general behavior, alerts, menu-bar content, fan monitoring, diagnostics and privacy.
+- загрузку CPU на основе разницы системных Mach-счётчиков;
+- использование памяти и нативное состояние memory pressure macOS;
+- заряд, состояние зарядки и здоровье батареи;
+- номинальную и согласованную мощность адаптера отдельно от измеренного питания;
+- прямую или вычисленную системную мощность с указанием источника данных;
+- температуру батареи и процессора, когда она доступна на конкретном Mac;
+- модель и возможности Metal GPU без выдуманных показателей загрузки;
+- обороты, пределы и режим вентиляторов в read-only режиме через AppleSMC;
+- процессы с наибольшим потреблением ресурсов;
+- ограниченную локальную историю метрик с учётом сна и пробуждения;
+- локальные уведомления с cooldown и явным запросом разрешения.
 
-The interface is available in English and Russian and is built with native SwiftUI and AppKit components.
+## Интерфейс
 
-## Real application screenshots
+MacVitals живёт в строке меню macOS. Показатели можно увидеть без открытия отдельного окна, а по нажатию появляется компактный обзор с карточками метрик, историей CPU, состоянием питания и быстрым переходом к настройкам.
 
-These screenshots were captured automatically from the actual MacVitals application built and launched on a GitHub-hosted macOS 15 ARM64 runner. They are direct XCTest window captures, not mockups or concept renders. Hardware-dependent values reflect the CI runner, so unavailable battery, adapter or fan providers are expected there.
+Интерфейс создан на нативных SwiftUI и AppKit, поддерживает русский и английский языки, светлую и тёмную темы, а также двухцветное и многоцветное оформление.
+
+## Реальный интерфейс программы
+
+Все изображения ниже автоматически получены из настоящего приложения MacVitals, собранного и запущенного на GitHub-hosted runner с macOS 15 и архитектурой ARM64. Это прямые XCTest-снимки, а не макеты и не концепт-рендеры.
+
+### Строка меню и быстрый обзор
+
+<p align="center">
+  <img src="docs/screenshots/status-bar-overview.png" alt="MacVitals в строке меню macOS с раскрытым обзором показателей" width="900">
+</p>
+
+<p align="center">
+  <sub>Настоящий элемент MacVitals в строке меню macOS и раскрытый popover с живыми показателями CI-системы.</sub>
+</p>
+
+### Настройки и диагностика
 
 <table>
   <tr>
-    <td width="50%"><strong>General settings</strong><br><img src="docs/screenshots/preferences-general.png" alt="MacVitals General settings" width="100%"></td>
-    <td width="50%"><strong>Menu bar configuration</strong><br><img src="docs/screenshots/preferences-menu-bar.png" alt="MacVitals menu bar configuration" width="100%"></td>
+    <td width="50%" valign="top">
+      <strong>⚙️ Основные настройки</strong><br>
+      <sub>Частота обновления, запуск вместе с системой, отображение в Dock и внешний вид.</sub><br><br>
+      <img src="docs/screenshots/preferences-general.png" alt="Основные настройки MacVitals на русском языке" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>📊 Строка меню</strong><br>
+      <sub>Готовые наборы показателей, порядок метрик и индивидуальная настройка состава.</sub><br><br>
+      <img src="docs/screenshots/preferences-menu-bar.png" alt="Настройка показателей строки меню MacVitals" width="100%">
+    </td>
   </tr>
   <tr>
-    <td width="50%"><strong>Fan monitoring and safety</strong><br><img src="docs/screenshots/preferences-fans.png" alt="MacVitals fan monitoring and safety settings" width="100%"></td>
-    <td width="50%"><strong>Diagnostics</strong><br><img src="docs/screenshots/preferences-diagnostics.png" alt="MacVitals diagnostics screen" width="100%"></td>
+    <td width="50%" valign="top">
+      <strong>🌀 Вентиляторы и безопасность</strong><br>
+      <sub>Доступность датчиков, текущие режимы и явные ограничения безопасной работы.</sub><br><br>
+      <img src="docs/screenshots/preferences-fans.png" alt="Мониторинг вентиляторов и настройки безопасности MacVitals" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>🩺 Диагностика</strong><br>
+      <sub>Состояние источников данных и экспорт обезличенного диагностического отчёта.</sub><br><br>
+      <img src="docs/screenshots/preferences-diagnostics.png" alt="Экран диагностики MacVitals" width="100%">
+    </td>
   </tr>
 </table>
 
-The reproducible capture workflow is available in [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
+Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера, температурных датчиков или вентиляторов в отдельных кадрах ожидаема. Воспроизводимый сценарий захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
-## Supported platform
+## Поддерживаемая платформа
 
-- Apple Silicon (`arm64`) only
-- macOS 13 or later
-- Intel (`x86_64`) and universal release binaries are intentionally rejected
+- только Apple Silicon (`arm64`);
+- macOS 13 и новее;
+- Intel (`x86_64`) и universal release-сборки намеренно отклоняются проверкой.
 
-## Privacy
+## Приватность
 
-All metrics are processed locally. MacVitals makes no network requests and contains no accounts, analytics, telemetry, advertising or cloud backend. Diagnostic and runtime evidence is designed to omit usernames, home paths, serial numbers, Apple IDs, user documents and network data.
+Все метрики обрабатываются локально. MacVitals не выполняет сетевых запросов и не содержит аккаунтов, аналитики, телеметрии, рекламы или облачного backend.
 
-See [PRIVACY.md](PRIVACY.md).
+Диагностические и runtime-данные формируются без имён пользователей, домашних путей, серийных номеров, Apple ID, пользовательских документов и сетевой информации.
 
-## Important limitations
+Подробнее: [PRIVACY.md](PRIVACY.md).
 
-- macOS does not expose one universal public API for reliable whole-system GPU utilization across supported Macs. MacVitals reports the metric as unavailable when no trustworthy provider exists.
-- Nominal adapter power is never presented as live system consumption.
-- Extended battery fields from IORegistry are capability-checked and marked experimental.
-- Fan monitoring is read-only in unsigned builds. Physical fan control is not claimed as working or release-ready.
-- Hosted runtime measurements are regression evidence for specific runners, not universal performance promises.
+## Важные ограничения
 
-## Build from source
+- macOS не предоставляет единый публичный API для достоверной системной загрузки GPU на всех поддерживаемых Mac. При отсутствии надёжного источника MacVitals показывает метрику как недоступную;
+- номинальная мощность адаптера никогда не выдаётся за текущее потребление системы;
+- расширенные поля батареи из IORegistry проверяются во время выполнения и помечаются как экспериментальные;
+- в unsigned-сборках мониторинг вентиляторов остаётся read-only. Работа физического управления вентиляторами не заявляется;
+- hosted runtime-цифры являются регрессионным свидетельством конкретных runner, а не обещанием производительности на всех Mac.
 
-Requirements: Apple Silicon Mac, macOS 13+, Xcode 16+, Homebrew.
+## Сборка из исходников
+
+Требования: Mac с Apple Silicon, macOS 13+, Xcode 16+, Homebrew.
 
 ```bash
 git clone https://github.com/MishkaStrategy/-MacVitals.git
 cd -- -MacVitals
-git switch feature/macvitals-v1
+git switch main
 make bootstrap
 open MacVitals.xcodeproj
 ```
 
-Run validation and tests:
+Проверка инструментов и тесты:
 
 ```bash
 make validate-tooling
 make test
 ```
 
-Create an explicitly unsigned local package:
+Создание явно unsigned локального пакета:
 
 ```bash
 make package VERSION=0.0.0
 ```
 
-The package output includes:
+В `dist/` создаются:
 
-- `MacVitals-<version>.zip`
-- `MacVitals-<version>.dmg`
-- `SHA256SUMS.txt`
-- `BUILD_STATUS.txt`
-- `BUILD_MANIFEST.json`
+- `MacVitals-<version>.zip`;
+- `MacVitals-<version>.dmg`;
+- `SHA256SUMS.txt`;
+- `BUILD_STATUS.txt`;
+- `BUILD_MANIFEST.json`.
 
-Run the packaged-app runtime smoke used by CI:
+Короткий runtime smoke упакованного приложения:
 
 ```bash
 make runtime-smoke VERSION=0.0.0
 ```
 
-Collect a longer process-level CSV/JSON record from an already running instance:
+Более длинный сбор CPU, RSS, VSZ и числа потоков для уже запущенного приложения:
 
 ```bash
 make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 ```
 
-These process samples do not replace Instruments energy, wakeup, thermal or physical battery testing.
+Эти замеры не заменяют Instruments, Energy Impact, wakeups, температурные и физические тесты батареи.
 
-## Validation status
+## Текущий объём проверки
 
-The current validation pipeline covers:
+Пайплайн уже проверяет:
 
-- formatting and generated-project checks;
-- native Apple Silicon build and automated tests;
-- packaged application runtime smoke;
-- arm64-only unsigned ZIP and DMG packaging;
-- application icon, localization, checksum and provenance verification;
-- English and Russian Preferences accessibility smoke;
-- reproducible real-application screenshot capture;
-- physical read-only fan RPM evidence;
-- physical direct-session stability and Instruments collection.
+- форматирование и генерацию Xcode-проекта;
+- нативную Apple Silicon сборку и автоматические тесты;
+- запуск упакованного приложения;
+- arm64-only unsigned ZIP и DMG;
+- иконку, локализации, контрольные суммы и provenance;
+- accessibility smoke настроек на русском и английском;
+- воспроизводимый захват реального status item, popover и окон настроек;
+- реальные read-only данные оборотов вентиляторов;
+- физическую direct-session стабильность и сбор Instruments.
 
-## Remaining release gates
+## Оставшиеся релизные проверки
 
-- Developer ID signing, notarization, stapling and clean-Mac Gatekeeper validation
-- Final manual VoiceOver, keyboard and EN/RU visual review
-- Representative physical Apple Silicon screenshot and visual review
-- Independent review of physical and Instruments evidence
-- Explicit authorization before merge, tag or public release
+- Developer ID signing, notarization, stapling и Gatekeeper на чистом Mac;
+- финальная ручная проверка VoiceOver, клавиатуры и интерфейса на русском и английском;
+- снимки и визуальная проверка на представительном физическом Apple Silicon Mac;
+- независимая проверка физических и Instruments-артефактов;
+- отдельное явное разрешение перед тегом и публичным релизом.
 
-## Documentation
+## Документация
 
-- [Russian README](README_RU.md)
-- [Architecture](ARCHITECTURE.md)
-- [Privacy](PRIVACY.md)
-- [Application icon](docs/APP_ICON.md)
-- [Power model](docs/POWER_MODEL.md)
-- [Sensor compatibility](docs/SENSOR_COMPATIBILITY.md)
+- [English README](README_EN.md)
+- [Архитектура](ARCHITECTURE.md)
+- [Приватность](PRIVACY.md)
+- [Иконка приложения](docs/APP_ICON.md)
+- [Модель питания](docs/POWER_MODEL.md)
+- [Совместимость датчиков](docs/SENSOR_COMPATIBILITY.md)
 - [Performance evidence](docs/PERFORMANCE.md)
 - [Build provenance](docs/BUILD_PROVENANCE.md)
-- [Release process](docs/RELEASE.md)
+- [Процесс релиза](docs/RELEASE.md)
