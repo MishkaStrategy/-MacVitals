@@ -172,7 +172,7 @@ struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 10) {
               Picker("Update interval", selection: $settings.samplingInterval) {
                 ForEach(SamplingIntervalPolicy.supportedValues, id: \.self) {
-                  Text("\($0, specifier: \"%g\") s").tag($0)
+                  Text(L10n.format("%g s", $0)).tag($0)
                 }
               }
               .labelsHidden()
