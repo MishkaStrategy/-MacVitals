@@ -111,8 +111,8 @@ final class StatusItemController: NSObject {
       button.image = MenuBarIconCatalog.image(for: iconMetric, state: iconState)
       button.image?.isTemplate = true
       button.title = MenuBarRenderer.render(snapshot: snapshot, metrics: normalized)
-      button.accessibilityLabel = "MacVitals, \(iconMetric.displayName)"
-      button.accessibilityValue = button.title
+      button.setAccessibilityLabel("MacVitals, \(iconMetric.displayName)")
+      button.setAccessibilityValue(button.title)
     }
     statusItem.length = NSStatusItem.variableLength
   }
