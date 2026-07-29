@@ -66,38 +66,65 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
   }
 
   @MainActor
-  func testCompleteStatusSurfaceUsesNativeTemplateTinting() {
-    let image = MenuBarStatusTitleRenderer.templateImage(
+  func testCompleteStatusSurfaceIsPhysicallyWhiteAndNonTemplate() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
       metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
 
-    XCTAssertTrue(image.isTemplate)
+    XCTAssertFalse(image.isTemplate)
     XCTAssertEqual(image.size.height, 18)
     XCTAssertGreaterThan(image.size.width, 12)
+
+    let representation = try bitmapRepresentation(of: image)
+    let opaqueColor = try XCTUnwrap(firstOpaqueColor(in: representation))
+    let rgb = try XCTUnwrap(opaqueColor.usingColorSpace(.deviceRGB))
+
+    XCTAssertGreaterThan(rgb.redComponent, 0.9)
+    XCTAssertGreaterThan(rgb.greenComponent, 0.9)
+    XCTAssertGreaterThan(rgb.blueComponent, 0.9)
   }
 
   @MainActor
-  func testTemplateSurfaceExpandsForAdditionalMetrics() {
-    let singleMetric = MenuBarStatusTitleRenderer.templateImage(
+  func testLightSurfaceExpandsForAdditionalMetrics() {
+    let singleMetric = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
       metrics: [.cpu])
-    let multipleMetrics = MenuBarStatusTitleRenderer.templateImage(
+    let multipleMetrics = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
       metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
 
-    XCTAssertTrue(singleMetric.isTemplate)
-    XCTAssertTrue(multipleMetrics.isTemplate)
+    XCTAssertFalse(singleMetric.isTemplate)
+    XCTAssertFalse(multipleMetrics.isTemplate)
     XCTAssertGreaterThan(multipleMetrics.size.width, singleMetric.size.width)
   }
 
   @MainActor
-  func testEmptyMetricSelectionStillProducesAVisibleTemplateSymbol() {
-    let image = MenuBarStatusTitleRenderer.templateImage(
+  func testEmptyMetricSelectionStillProducesAVisibleWhiteSymbol() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
       metrics: [])
 
-    XCTAssertTrue(image.isTemplate)
+    XCTAssertFalse(image.isTemplate)
     XCTAssertGreaterThanOrEqual(image.size.width, 12)
-    XCTAssertNotNil(image.tiffRepresentation)
+
+    let representation = try bitmapRepresentation(of: image)
+    XCTAssertNotNil(firstOpaqueColor(in: representation))
+  }
+
+  private func bitmapRepresentation(of image: NSImage) throws -> NSBitmapImageRep {
+    let data = try XCTUnwrap(image.tiffRepresentation)
+    return try XCTUnwrap(NSBitmapImageRep(data: data))
+  }
+
+  private func firstOpaqueColor(in representation: NSBitmapImageRep) -> NSColor? {
+    for y in 0..<representation.pixelsHigh {
+      for x in 0..<representation.pixelsWide {
+        guard let color = representation.colorAt(x: x, y: y), color.alphaComponent > 0.8 else {
+          continue
+        }
+        return color
+      }
+    }
+    return nil
   }
 }
