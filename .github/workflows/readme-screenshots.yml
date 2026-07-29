@@ -1,18 +1,11 @@
 name: README Screenshots
 
-# Pull-request updates regenerate documentation images without writing directly to main.
+# Run manually on a non-main branch to refresh real documentation images.
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "MacVitals/MenuBar/StatusItemController.swift"
-      - "MacVitalsUITests/MacVitalsUITests.swift"
-      - ".github/workflows/readme-screenshots.yml"
 
 concurrency:
-  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
+  group: readme-screenshots-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -23,7 +16,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     env:
-      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+      TARGET_BRANCH: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
