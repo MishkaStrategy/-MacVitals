@@ -69,25 +69,6 @@ jobs:
             native-test-diagnostics.txt
           if-no-files-found: ignore
 
-      - name: Bilingual preferences accessibility smoke test
-        run: |
-          set +e
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches > native-ui-tests.log 2>&1
-          status=$?
-          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
-          cat native-ui-test-diagnostics.txt
-          exit $status
-
-      - name: Upload native UI test diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-ui-test-diagnostics
-          path: |
-            native-ui-tests.log
-            native-ui-test-diagnostics.txt
-          if-no-files-found: ignore
-
       - name: Package and verify arm64 release candidate
         env:
           BUILD_NUMBER: ${{ github.run_number }}
@@ -168,6 +149,48 @@ jobs:
           name: MacVitals-0.0.${{ github.run_number }}-arm64-unsigned
           path: dist/
           if-no-files-found: error
+
+  ui-smoke:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Bilingual theme accessibility smoke test
+        run: |
+          set +e
+          ui_derived_data="${RUNNER_TEMP}/MacVitals-ui-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${ui_derived_data}"
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${ui_derived_data}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            clean test \
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches \
+            > native-ui-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
+          cat native-ui-test-diagnostics.txt
+          exit $status
+
+      - name: Upload native UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-ui-test-diagnostics
+          path: |
+            native-ui-tests.log
+            native-ui-test-diagnostics.txt
+          if-no-files-found: ignore
 
   repository-safety:
     runs-on: [self-hosted, macOS, ARM64]
