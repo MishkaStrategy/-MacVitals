@@ -22,24 +22,26 @@ The app combines live CPU and memory information, battery and charger diagnostic
 
 ## Interface
 
-MacVitals lives in the macOS menu bar. Opening it reveals an overview with clickable metric cards. Detailed views provide recent history and supporting values, while Preferences contains separate sections for general behavior, alerts, menu-bar content, diagnostics and privacy.
+MacVitals lives in the macOS menu bar. Opening it reveals an overview with clickable metric cards. Detailed views provide recent history and supporting values, while Preferences contains separate sections for general behavior, alerts, menu-bar content, fan monitoring, diagnostics and privacy.
 
 The interface is available in English and Russian and is built with native SwiftUI and AppKit components.
 
-## Screenshots
+## Real application screenshots
 
-Real application screenshots are not committed yet. The current CI and physical-validation artifacts contain runtime, Instruments and diagnostic evidence, but no trustworthy visual captures of the running interface.
+These screenshots were captured automatically from the actual MacVitals application built and launched on a GitHub-hosted macOS 15 ARM64 runner. They are direct XCTest window captures, not mockups or concept renders. Hardware-dependent values reflect the CI runner, so unavailable battery, adapter or fan providers are expected there.
 
-Screenshots will be added under `docs/images/` only after capture from the actual application on representative Apple Silicon hardware. Concept renders are intentionally not presented as real program images.
+<table>
+  <tr>
+    <td width="50%"><strong>General settings</strong><br><img src="docs/screenshots/preferences-general.png" alt="MacVitals General settings" width="100%"></td>
+    <td width="50%"><strong>Menu bar configuration</strong><br><img src="docs/screenshots/preferences-menu-bar.png" alt="MacVitals menu bar configuration" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>Fan monitoring and safety</strong><br><img src="docs/screenshots/preferences-fans.png" alt="MacVitals fan monitoring and safety settings" width="100%"></td>
+    <td width="50%"><strong>Diagnostics</strong><br><img src="docs/screenshots/preferences-diagnostics.png" alt="MacVitals diagnostics screen" width="100%"></td>
+  </tr>
+</table>
 
-Planned README layout:
-
-```text
-docs/images/macvitals-overview.png
-docs/images/macvitals-metric-detail.png
-docs/images/macvitals-preferences.png
-docs/images/macvitals-diagnostics.png
-```
+The reproducible capture workflow is available in [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
 ## Supported platform
 
@@ -118,6 +120,7 @@ The current validation pipeline covers:
 - arm64-only unsigned ZIP and DMG packaging;
 - application icon, localization, checksum and provenance verification;
 - English and Russian Preferences accessibility smoke;
+- reproducible real-application screenshot capture;
 - physical read-only fan RPM evidence;
 - physical direct-session stability and Instruments collection.
 
@@ -125,7 +128,7 @@ The current validation pipeline covers:
 
 - Developer ID signing, notarization, stapling and clean-Mac Gatekeeper validation
 - Final manual VoiceOver, keyboard and EN/RU visual review
-- Real application screenshots captured on representative Apple Silicon hardware
+- Representative physical Apple Silicon screenshot and visual review
 - Independent review of physical and Instruments evidence
 - Explicit authorization before merge, tag or public release
 
