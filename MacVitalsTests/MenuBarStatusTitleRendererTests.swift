@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import MacVitals
 
@@ -62,5 +63,40 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
         MenuBarIconCatalog.minimalImage(for: metric, state: .normal),
         "Expected an available SF Symbol or fallback for \(metric)")
     }
+  }
+
+  @MainActor
+  func testDarkMenuBarAppearanceUsesLightForeground() throws {
+    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+    let color = MenuBarStatusTitleRenderer.statusBarForegroundColor(for: appearance)
+    let rgb = try XCTUnwrap(color.usingColorSpace(.deviceRGB))
+
+    XCTAssertGreaterThan(rgb.redComponent, 0.9)
+    XCTAssertGreaterThan(rgb.greenComponent, 0.9)
+    XCTAssertGreaterThan(rgb.blueComponent, 0.9)
+    XCTAssertGreaterThan(rgb.alphaComponent, 0.9)
+  }
+
+  @MainActor
+  func testDarkMenuBarAttachmentsArePreTintedInsteadOfTemplateBlack() throws {
+    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+    let title = MenuBarStatusTitleRenderer.attributedTitle(
+      snapshot: .empty,
+      metrics: [.cpu, .temperature, .fans, .battery],
+      appearance: appearance)
+    var images: [NSImage] = []
+
+    title.enumerateAttribute(
+      .attachment,
+      in: NSRange(location: 0, length: title.length)
+    ) { value, _, _ in
+      guard let attachment = value as? NSTextAttachment,
+        let image = attachment.image
+      else { return }
+      images.append(image)
+    }
+
+    XCTAssertEqual(images.count, 4)
+    XCTAssertTrue(images.allSatisfy { !$0.isTemplate })
   }
 }
