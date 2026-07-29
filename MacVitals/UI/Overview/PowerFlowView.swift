@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct PowerFlowView: View {
+  @Environment(\.appTheme) private var theme
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
+
   let snapshot: SystemSnapshot
   var onOpen: (() -> Void)?
 
@@ -10,10 +14,12 @@ struct PowerFlowView: View {
   }
 
   var body: some View {
+    let accent = theme.color(for: .systemPower)
     VStack(alignment: .leading, spacing: 12) {
       HStack(spacing: 8) {
         Label("Power flow", systemImage: "bolt.horizontal.circle.fill")
           .font(.headline)
+          .foregroundStyle(accent)
         Spacer()
         statusBadge
         if onOpen != nil {
@@ -28,17 +34,20 @@ struct PowerFlowView: View {
           title: L10n.string("System consumption"),
           value: systemPower,
           detail: systemPowerDetail,
-          symbol: "laptopcomputer.and.arrow.down")
+          symbol: "laptopcomputer.and.arrow.down",
+          metric: .systemPower)
         powerTile(
           title: L10n.string("Battery flow"),
           value: batteryPower,
           detail: batteryFlowState.displayName,
-          symbol: batteryFlowState.symbolName)
+          symbol: batteryFlowState.symbolName,
+          metric: .battery)
         powerTile(
           title: L10n.string("Adapter input"),
           value: adapterInputPower,
           detail: adapterDetail,
-          symbol: "powerplug.fill")
+          symbol: "powerplug.fill",
+          metric: .systemPower)
       }
 
       HStack(spacing: 8) {
@@ -50,11 +59,17 @@ struct PowerFlowView: View {
       }
     }
     .padding(13)
-    .background(.quaternary.opacity(0.34), in: RoundedRectangle(cornerRadius: 14))
+    .background(
+      reduceTransparency
+        ? Color(nsColor: .controlBackgroundColor)
+        : accent.opacity(theme.style == .multicolor ? 0.065 : 0.045),
+      in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 14)
-        .stroke(.quaternary.opacity(0.45), lineWidth: 1))
-    .contentShape(RoundedRectangle(cornerRadius: 14))
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .stroke(
+          contrast == .increased ? accent.opacity(0.62) : Color.secondary.opacity(0.16),
+          lineWidth: contrast == .increased ? 1.5 : 1))
+    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .onTapGesture { onOpen?() }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Power flow")
@@ -66,12 +81,14 @@ struct PowerFlowView: View {
     title: String,
     value: String,
     detail: String,
-    symbol: String
+    symbol: String,
+    metric: MetricKind
   ) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+    let color = theme.color(for: metric)
+    return VStack(alignment: .leading, spacing: 6) {
       Label(title, systemImage: symbol)
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(color)
         .lineLimit(1)
       Text(value)
         .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
@@ -85,7 +102,9 @@ struct PowerFlowView: View {
     }
     .padding(10)
     .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-    .background(.background.opacity(0.36), in: RoundedRectangle(cornerRadius: 10))
+    .background(
+      reduceTransparency ? Color(nsColor: .windowBackgroundColor) : color.opacity(0.055),
+      in: RoundedRectangle(cornerRadius: 10, style: .continuous))
   }
 
   private var systemPowerWatts: Double? {
@@ -163,9 +182,19 @@ struct PowerFlowView: View {
     let status = snapshot.power.value?.status ?? .unknown
     return Label(status.displayName, systemImage: status.symbolName)
       .font(.caption.bold())
+      .foregroundStyle(statusColor(status))
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
       .background(.quaternary.opacity(0.45), in: Capsule())
+  }
+
+  private func statusColor(_ status: PowerSufficiencyStatus) -> Color {
+    switch status {
+    case .insufficient, .sensorConflict: return .red
+    case .borderline: return .orange
+    case .unknown: return .secondary
+    default: return theme.color(for: .systemPower)
+    }
   }
 
   private var powerSourceTitle: String {
