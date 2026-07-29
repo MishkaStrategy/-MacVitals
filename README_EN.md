@@ -16,6 +16,47 @@ MacVitals keeps essential system information close at hand: CPU and memory load,
 
 > **Development status:** MacVitals v1 has been merged into `main` and remains in pre-release validation. The current unsigned Apple Silicon build passes automated build, test, packaging and runtime checks, together with physical read-only fan validation. Developer ID signing, notarization and public release have not been performed.
 
+## Concept interface
+
+The visuals below are polished product concepts created for the README. They communicate the design direction and feature set, but intentionally are not literal screenshots of the current build.
+
+### Menu bar and quick overview
+
+<p align="center">
+  <img src="docs/concepts/status-bar-overview.svg" alt="MacVitals menu bar concept" width="900">
+</p>
+
+### Preferences and diagnostics
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>⚙️ General settings</strong><br>
+      <sub>Sampling interval, history, login launch and appearance.</sub><br><br>
+      <img src="docs/concepts/preferences-general.svg" alt="MacVitals General settings concept" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>📊 Menu bar</strong><br>
+      <sub>Metric selection, presets and compact composition.</sub><br><br>
+      <img src="docs/concepts/preferences-menu-bar.svg" alt="MacVitals menu bar settings concept" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>🌀 Fans and safety</strong><br>
+      <sub>Clear read-only monitoring data and explicit safety boundaries.</sub><br><br>
+      <img src="docs/concepts/preferences-fans.svg" alt="MacVitals fan monitoring concept" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <strong>🩺 Diagnostics</strong><br>
+      <sub>System summary, sensor state and key diagnostic information.</sub><br><br>
+      <img src="docs/concepts/preferences-diagnostics.svg" alt="MacVitals diagnostics concept" width="100%">
+    </td>
+  </tr>
+</table>
+
+Concept visuals are not used as evidence for implemented behavior. Real XCTest captures and their reproducible workflow remain available in [`docs/screenshots/`](docs/screenshots/) and [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
+
 ## What MacVitals shows
 
 - CPU usage from delta-based Mach host counters;
@@ -35,51 +76,6 @@ MacVitals keeps essential system information close at hand: CPU and memory load,
 MacVitals lives in the macOS menu bar. Key values remain visible without opening a window, while a click reveals a compact overview with metric cards, CPU history, power status and quick access to Preferences.
 
 The interface uses native SwiftUI and AppKit components, supports English and Russian, light and dark appearance, and both duotone and multicolor themes.
-
-## Real application interface
-
-Every image below is captured automatically from the actual MacVitals application built and launched on a GitHub-hosted macOS 15 ARM64 runner. These are direct XCTest captures, not mockups or concept renders.
-
-### Menu bar and quick overview
-
-<p align="center">
-  <img src="docs/screenshots/status-bar-overview.png" alt="MacVitals status item and open metrics overview in the macOS menu bar" width="900">
-</p>
-
-<p align="center">
-  <sub>The real MacVitals status item and overview popover showing live values from the CI system.</sub>
-</p>
-
-### Preferences and diagnostics
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>⚙️ General settings</strong><br>
-      <sub>Sampling interval, login launch, Dock visibility and appearance.</sub><br><br>
-      <img src="docs/screenshots/preferences-general.png" alt="MacVitals General settings in Russian" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <strong>📊 Menu bar</strong><br>
-      <sub>Metric presets, ordering and individual menu-bar composition.</sub><br><br>
-      <img src="docs/screenshots/preferences-menu-bar.png" alt="MacVitals menu-bar metric configuration" width="100%">
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>🌀 Fans and safety</strong><br>
-      <sub>Sensor availability, current modes and explicit safety limitations.</sub><br><br>
-      <img src="docs/screenshots/preferences-fans.png" alt="MacVitals fan monitoring and safety settings" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <strong>🩺 Diagnostics</strong><br>
-      <sub>Provider status and export of a privacy-filtered diagnostic report.</sub><br><br>
-      <img src="docs/screenshots/preferences-diagnostics.png" alt="MacVitals diagnostics screen" width="100%">
-    </td>
-  </tr>
-</table>
-
-Hardware-dependent values belong to the CI runner, so unavailable battery, adapter, temperature or fan providers are expected in some captures. The reproducible capture workflow is available in [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
 ## Supported platform
 
@@ -175,6 +171,7 @@ The current validation pipeline covers:
 ## Documentation
 
 - [Русский README](README.md)
+- [Concept visuals](docs/concepts/README.md)
 - [Architecture](ARCHITECTURE.md)
 - [Privacy](PRIVACY.md)
 - [Application icon](docs/APP_ICON.md)
