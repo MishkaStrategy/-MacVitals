@@ -172,7 +172,7 @@ struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 10) {
               Picker("Update interval", selection: $settings.samplingInterval) {
                 ForEach(SamplingIntervalPolicy.supportedValues, id: \.self) {
-                  Text("\($0, specifier: "%g") s").tag($0)
+                  Text(L10n.format("%g s", $0)).tag($0)
                 }
               }
               .labelsHidden()
@@ -283,17 +283,21 @@ struct PreferencesView: View {
                 title: L10n.string("Memory threshold"),
                 detail: L10n.string("Notify when memory use stays above this level."),
                 symbol: "memorychip",
+                isEnabled: $settings.memoryAlertsEnabled,
                 value: $settings.memoryAlertThreshold,
                 range: 50...100,
-                identifier: "memoryAlertThresholdSlider")
+                toggleIdentifier: "memoryAlertsEnabledToggle",
+                sliderIdentifier: "memoryAlertThresholdSlider")
               Divider()
               thresholdRow(
                 title: L10n.string("Low battery threshold"),
                 detail: L10n.string("Notify while running on battery below this level."),
                 symbol: "battery.25percent",
+                isEnabled: $settings.lowBatteryAlertsEnabled,
                 value: $settings.lowBatteryAlertThreshold,
                 range: 5...50,
-                identifier: "lowBatteryAlertThresholdSlider")
+                toggleIdentifier: "lowBatteryAlertsEnabledToggle",
+                sliderIdentifier: "lowBatteryAlertThresholdSlider")
             }
             .disabled(!settings.notificationsEnabled)
           }
@@ -500,25 +504,33 @@ struct PreferencesView: View {
     title: String,
     detail: String,
     symbol: String,
+    isEnabled: Binding<Bool>,
     value: Binding<Double>,
     range: ClosedRange<Double>,
-    identifier: String
+    toggleIdentifier: String,
+    sliderIdentifier: String
   ) -> some View {
     HStack(spacing: 11) {
       Image(systemName: symbol)
         .font(.title3)
-        .foregroundStyle(Color.accentColor)
+        .foregroundStyle(isEnabled.wrappedValue ? Color.accentColor : Color.secondary)
         .frame(width: 25)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(.subheadline.weight(.semibold))
         Text(detail).font(.caption).foregroundStyle(.secondary)
       }
       Spacer()
+      Toggle("", isOn: isEnabled)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .accessibilityIdentifier(toggleIdentifier)
       Slider(value: value, in: range, step: 5)
-        .frame(width: 180)
-        .accessibilityIdentifier(identifier)
+        .frame(width: 160)
+        .disabled(!isEnabled.wrappedValue)
+        .accessibilityIdentifier(sliderIdentifier)
       Text("\(Int(value.wrappedValue))%")
         .font(.body.monospacedDigit())
+        .foregroundStyle(isEnabled.wrappedValue ? .primary : .secondary)
         .frame(width: 45, alignment: .trailing)
     }
   }

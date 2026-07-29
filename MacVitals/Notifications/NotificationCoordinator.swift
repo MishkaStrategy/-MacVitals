@@ -73,13 +73,17 @@ final class NotificationCoordinator {
 
   func setEnabled(
     _ enabled: Bool,
+    memoryAlertsEnabled: Bool,
     memoryThreshold: Double,
+    lowBatteryAlertsEnabled: Bool,
     lowBatteryThreshold: Double
   ) {
     let wasEnabled = self.enabled
     self.enabled = enabled
     policy.updateConfiguration(
       .init(
+        memoryAlertsEnabled: memoryAlertsEnabled,
+        lowBatteryAlertsEnabled: lowBatteryAlertsEnabled,
         memoryThresholdPercent: memoryThreshold,
         lowBatteryThresholdPercent: lowBatteryThreshold))
 
