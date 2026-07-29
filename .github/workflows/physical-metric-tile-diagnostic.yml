@@ -80,8 +80,9 @@ jobs:
           CODE_SIGNING_ALLOWED: NO
         run: |
           set -Eeuo pipefail
-          python3 -m py_compile scripts/diagnose_app_lifetime.py
+          python3 -m py_compile scripts/diagnose_app_lifetime.py scripts/collect_recent_crash_report.py
           python3 scripts/diagnose_app_lifetime.py --self-test
+          python3 scripts/collect_recent_crash_report.py --self-test
           python3 scripts/materialize_app_icon.py
           python3 scripts/validate_localizations.py
           xcodegen generate
@@ -92,12 +93,41 @@ jobs:
           bash scripts/package_release.sh "${CANDIDATE_VERSION}"
           [[ "$(lipo -archs build/MacVitals.xcarchive/Products/Applications/MacVitals.app/Contents/MacOS/MacVitals)" == "arm64" ]]
 
-      - name: Run manual metric tile diagnostic
-        id: diagnostic
+      - name: Capture recent pre-existing MacVitals crash report
+        id: recent_crash
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf -- metric-tile-evidence metric-tile-run.log
+          rm -rf -- recent-crash-evidence
+          set +e
+          python3 scripts/collect_recent_crash_report.py \
+            --repository "${PWD}" \
+            --output recent-crash-evidence \
+            --since-minutes 240
+          status=$?
+          set -e
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload recent pre-existing crash report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: recent-metric-tile-crash-${{ env.CANDIDATE_SHA }}
+          path: recent-crash-evidence/
+          if-no-files-found: error
+
+      - name: Run manual metric tile diagnostic
+        id: diagnostic
+        shell: bash
+        env:
+          SWIFT_BACKTRACE: enable=yes,interactive=no,output-to=stderr
+          NSUnbufferedIO: "YES"
+          NSExceptionLoggingEnabled: "YES"
+          OBJC_PRINT_EXCEPTIONS: "YES"
+        run: |
+          set -Eeuo pipefail
+          rm -rf -- metric-tile-evidence metric-tile-run.log metric-tile-crash-evidence
+          touch metric-tile-start.marker
           echo "MacVitals will now remain open for 15 minutes without XCTest or UI automation."
           echo "Open CPU, Memory, GPU and Battery tiles and leave each detail window open for at least 10 seconds."
           shim_root="$(mktemp -d /private/tmp/macvitals-metric-tile-launchctl.XXXXXX)"
@@ -127,7 +157,16 @@ jobs:
           status=$?
           set -e
           cat metric-tile-run.log
+          sleep 5
+          set +e
+          python3 scripts/collect_recent_crash_report.py \
+            --repository "${PWD}" \
+            --output metric-tile-crash-evidence \
+            --since-marker metric-tile-start.marker
+          crash_status=$?
+          set -e
           echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          echo "crash_status=${crash_status}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload metric tile crash evidence
         if: always()
@@ -136,6 +175,7 @@ jobs:
           name: metric-tile-${{ env.CANDIDATE_SHA }}
           path: |
             metric-tile-evidence/
+            metric-tile-crash-evidence/
             metric-tile-run.log
           if-no-files-found: error
 
