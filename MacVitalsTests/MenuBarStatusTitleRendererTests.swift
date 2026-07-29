@@ -30,7 +30,7 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
     }
   }
 
-  func testPreferredMinimalSymbolsAvoidHeavyWarningTrianglesAndFillVariants() {
+  func testPreferredMinimalSymbolsAvoidHeavyWarningTrianglesAndFillVariants() throws {
     let metrics: [MenuMetric] = [
       .battery, .cpu, .gpu, .memory, .temperature, .fans,
       .systemPower, .adapterPower, .powerStatus,
