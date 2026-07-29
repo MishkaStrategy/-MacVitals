@@ -39,7 +39,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
       return NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.94)
     }
 
-    return NSColor.controlTextColor.resolvedColor(with: appearance)
+    return NSColor(srgbRed: 0.12, green: 0.12, blue: 0.13, alpha: 0.92)
   }
 
   @MainActor
