@@ -42,42 +42,41 @@ MacVitals живёт в строке меню macOS. Показатели мож
 
 ### Строка меню и быстрый обзор
 
-<p align="center">
-  <img src="docs/screenshots/status-bar-overview.png" alt="MacVitals в строке меню macOS с раскрытым обзором показателей" width="900">
-</p>
+![MacVitals в строке меню macOS с раскрытым обзором показателей](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/status-bar-overview.png)
 
-<p align="center">
-  <sub>Настоящий элемент MacVitals в строке меню macOS и раскрытый popover с живыми показателями CI-системы.</sub>
-</p>
+[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/status-bar-overview.png)
 
-### Настройки и диагностика
+### Основные настройки
 
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>⚙️ Основные настройки</strong><br>
-      <sub>Частота обновления, запуск вместе с системой, отображение в Dock и внешний вид.</sub><br><br>
-      <img src="docs/screenshots/preferences-general.png" alt="Основные настройки MacVitals на русском языке" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <strong>📊 Строка меню</strong><br>
-      <sub>Готовые наборы показателей, порядок метрик и индивидуальная настройка состава.</sub><br><br>
-      <img src="docs/screenshots/preferences-menu-bar.png" alt="Настройка показателей строки меню MacVitals" width="100%">
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>🌀 Вентиляторы и безопасность</strong><br>
-      <sub>Доступность датчиков, текущие режимы и явные ограничения безопасной работы.</sub><br><br>
-      <img src="docs/screenshots/preferences-fans.png" alt="Мониторинг вентиляторов и настройки безопасности MacVitals" width="100%">
-    </td>
-    <td width="50%" valign="top">
-      <strong>🩺 Диагностика</strong><br>
-      <sub>Состояние источников данных и экспорт обезличенного диагностического отчёта.</sub><br><br>
-      <img src="docs/screenshots/preferences-diagnostics.png" alt="Экран диагностики MacVitals" width="100%">
-    </td>
-  </tr>
-</table>
+Частота обновления, запуск вместе с системой, отображение в Dock и внешний вид.
+
+![Основные настройки MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-general.png)
+
+[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-general.png)
+
+### Настройка строки меню
+
+Готовые наборы показателей, порядок метрик и индивидуальная настройка состава.
+
+![Настройка показателей строки меню MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-menu-bar.png)
+
+[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-menu-bar.png)
+
+### Вентиляторы и безопасность
+
+Доступность датчиков, текущие режимы и явные ограничения безопасной работы.
+
+![Мониторинг вентиляторов и настройки безопасности MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-fans.png)
+
+[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-fans.png)
+
+### Диагностика
+
+Состояние источников данных и экспорт обезличенного диагностического отчёта.
+
+![Экран диагностики MacVitals](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-diagnostics.png)
+
+[Открыть изображение отдельно](https://raw.githubusercontent.com/MishkaStrategy/-MacVitals/main/docs/screenshots/preferences-diagnostics.png)
 
 Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера, температурных датчиков или вентиляторов в отдельных кадрах ожидаема. Воспроизводимый сценарий захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
