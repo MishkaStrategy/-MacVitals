@@ -39,7 +39,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
-  static func templateImage(
+  static func lightImage(
     snapshot: SystemSnapshot,
     metrics: [MenuMetric]
   ) -> NSImage {
@@ -54,7 +54,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
     let canvasHeight: CGFloat = 18
 
     let layouts = drawableSegments.map { segment -> MenuBarStatusSegmentLayout in
-      let icon = maskImage(for: segment.metric, state: segment.state)
+      let icon = lightMaskImage(for: segment.metric, state: segment.state)
       let attributes = valueAttributes(for: segment.state)
       let valueSize = (segment.value as NSString).size(withAttributes: attributes)
       let iconWidth = icon?.size.width ?? 3
@@ -92,7 +92,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
         bitsPerPixel: 0),
       let graphicsContext = NSGraphicsContext(bitmapImageRep: bitmap)
     else {
-      return fallbackTemplateImage()
+      return fallbackLightImage()
     }
 
     bitmap.size = imageSize
@@ -114,7 +114,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
       } else {
         let fallbackAttributes: [NSAttributedString.Key: Any] = [
           .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-          .foregroundColor: NSColor.black,
+          .foregroundColor: NSColor.white,
         ]
         let fallback = "·" as NSString
         let fallbackSize = fallback.size(withAttributes: fallbackAttributes)
@@ -146,9 +146,9 @@ nonisolated enum MenuBarStatusTitleRenderer {
 
     let image = NSImage(size: imageSize)
     image.addRepresentation(bitmap)
-    // The complete status item is one monochrome template. NSStatusBarButton now owns
-    // the tinting, including dark/light menu bars and the pressed/highlighted state.
-    image.isTemplate = true
+    // Keep the complete surface physically white and non-template. This prevents
+    // NSStatusBarButton from recoloring it black on affected macOS 26 configurations.
+    image.isTemplate = false
     return image
   }
 
@@ -244,7 +244,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
-  private static func maskImage(
+  private static func lightMaskImage(
     for metric: MenuMetric,
     state: MenuBarIconState
   ) -> NSImage? {
@@ -252,8 +252,8 @@ nonisolated enum MenuBarStatusTitleRenderer {
       return nil
     }
 
-    let blackConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .black)
-    let configured = source.withSymbolConfiguration(blackConfiguration) ?? source
+    let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
+    let configured = source.withSymbolConfiguration(whiteConfiguration) ?? source
     let image = configured.copy() as? NSImage ?? configured
     image.size = source.size
     image.isTemplate = false
@@ -261,11 +261,13 @@ nonisolated enum MenuBarStatusTitleRenderer {
   }
 
   @MainActor
-  private static func fallbackTemplateImage() -> NSImage {
+  private static func fallbackLightImage() -> NSImage {
     let source = MenuBarIconCatalog.minimalImage(for: .cpu, state: .normal)
       ?? NSImage(size: NSSize(width: 12, height: 18))
-    let image = source.copy() as? NSImage ?? source
-    image.isTemplate = true
+    let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
+    let configured = source.withSymbolConfiguration(whiteConfiguration) ?? source
+    let image = configured.copy() as? NSImage ?? configured
+    image.isTemplate = false
     return image
   }
 
@@ -282,7 +284,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
 
     return [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: weight),
-      .foregroundColor: NSColor.black,
+      .foregroundColor: NSColor.white,
       .kern: -0.15,
     ]
   }
