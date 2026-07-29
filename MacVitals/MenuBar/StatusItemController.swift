@@ -38,8 +38,10 @@ final class StatusItemController: NSObject {
       button.action = #selector(togglePopover)
       button.sendAction(on: [.leftMouseUp, .rightMouseUp])
       button.toolTip = "MacVitals"
-      button.imagePosition = .imageLeading
+      button.image = nil
+      button.imagePosition = .noImage
       button.imageHugsTitle = true
+      button.contentTintColor = .labelColor
     }
 
     coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
@@ -104,15 +106,16 @@ final class StatusItemController: NSObject {
 
   private func render(snapshot: SystemSnapshot, metrics: [MenuMetric]) {
     let normalized = MenuLayoutRules.normalized(metrics)
-    let iconMetric = normalized.first ?? .cpu
-    let iconState = MenuBarIconCatalog.state(for: iconMetric, snapshot: snapshot)
 
     if let button = statusItem.button {
-      button.image = MenuBarIconCatalog.image(for: iconMetric, state: iconState)
-      button.image?.isTemplate = true
-      button.title = MenuBarRenderer.render(snapshot: snapshot, metrics: normalized)
-      button.setAccessibilityLabel("MacVitals, \(iconMetric.displayName)")
-      button.setAccessibilityValue(button.title)
+      button.image = nil
+      button.imagePosition = .noImage
+      button.attributedTitle = MenuBarStatusTitleRenderer.attributedTitle(
+        snapshot: snapshot,
+        metrics: normalized)
+      button.setAccessibilityLabel("MacVitals")
+      button.setAccessibilityValue(
+        MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
     }
     statusItem.length = NSStatusItem.variableLength
   }
