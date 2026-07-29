@@ -159,17 +159,15 @@ final class MacVitalsUITests: XCTestCase {
   }
 
   private func findStatusItem(in app: XCUIApplication) -> XCUIElement? {
-    let systemUI = XCUIApplication(bundleIdentifier: "com.apple.SystemUIServer")
     let labelPredicate = NSPredicate(format: "label == %@", "MacVitals")
     let candidates = [
       app.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
       app.menuBars.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
+      app.descendants(matching: .statusItem)
+        .matching(identifier: "macVitalsStatusItem").firstMatch,
       app.statusItems.matching(labelPredicate).firstMatch,
       app.menuBars.statusItems.matching(labelPredicate).firstMatch,
-      systemUI.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
-      systemUI.menuBars.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
-      systemUI.statusItems.matching(labelPredicate).firstMatch,
-      systemUI.menuBars.statusItems.matching(labelPredicate).firstMatch,
+      app.descendants(matching: .statusItem).matching(labelPredicate).firstMatch,
     ]
 
     return candidates.first { $0.waitForExistence(timeout: 2) }
