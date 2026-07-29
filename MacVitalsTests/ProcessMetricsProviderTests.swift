@@ -75,7 +75,46 @@ final class ProcessMetricsProviderTests: XCTestCase {
     XCTAssertEqual(descriptor.bundleIdentifier, "com.example.test")
   }
 
+  func testUniquePIDsDropsInvalidAndDuplicateEntriesWithoutReordering() {
+    XCTAssertEqual(
+      ProcessCollectionSanitizer.uniquePIDs([0, 42, 42, -1, 7, 42, 7, 9]),
+      [42, 7, 9])
+  }
+
+  func testSamplesByPIDPrefersNewestProcessIdentityForDuplicatePID() {
+    let old = sample(pid: 42, cpu: 9_000, energy: nil, startTime: 1)
+    let new = sample(pid: 42, cpu: 100, energy: nil, startTime: 2)
+
+    let indexed = ProcessCollectionSanitizer.samplesByPID([old, new, old])
+
+    XCTAssertEqual(indexed.count, 1)
+    XCTAssertEqual(indexed[42], new)
+  }
+
+  func testSamplesByPIDPrefersMostAdvancedCountersForSameIdentity() {
+    let first = sample(pid: 42, cpu: 100, energy: nil, startTime: 2)
+    let advanced = sample(pid: 42, cpu: 200, energy: nil, startTime: 2)
+
+    let indexed = ProcessCollectionSanitizer.samplesByPID([advanced, first])
+
+    XCTAssertEqual(indexed[42], advanced)
+  }
+
+  func testApplicationsByPIDPrefersDescriptorWithBundleIdentifier() {
+    let generic = RunningApplicationDescriptor(pid: 42, name: "Helper", bundleIdentifier: nil)
+    let bundled = RunningApplicationDescriptor(
+      pid: 42,
+      name: "Example",
+      bundleIdentifier: "com.example.app")
+
+    let indexed = ProcessCollectionSanitizer.applicationsByPID([generic, bundled, generic])
+
+    XCTAssertEqual(indexed.count, 1)
+    XCTAssertEqual(indexed[42], bundled)
+  }
+
   private func sample(
+    pid: pid_t = 42,
     cpu: UInt64,
     energy: UInt64?,
     read: UInt64? = 0,
@@ -83,7 +122,7 @@ final class ProcessMetricsProviderTests: XCTestCase {
     startTime: UInt64 = 1
   ) -> ProcessCounterSample {
     ProcessCounterSample(
-      pid: 42,
+      pid: pid,
       parentPID: 1,
       startTime: startTime,
       name: "Test App",
