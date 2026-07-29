@@ -41,7 +41,6 @@ final class StatusItemController: NSObject {
       button.image = nil
       button.imagePosition = .noImage
       button.imageHugsTitle = true
-      button.contentTintColor = .labelColor
     }
 
     coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
@@ -108,11 +107,17 @@ final class StatusItemController: NSObject {
     let normalized = MenuLayoutRules.normalized(metrics)
 
     if let button = statusItem.button {
+      let appearance = button.effectiveAppearance
+      let foregroundColor = MenuBarStatusTitleRenderer.statusBarForegroundColor(
+        for: appearance)
+
       button.image = nil
       button.imagePosition = .noImage
+      button.contentTintColor = foregroundColor
       button.attributedTitle = MenuBarStatusTitleRenderer.attributedTitle(
         snapshot: snapshot,
-        metrics: normalized)
+        metrics: normalized,
+        appearance: appearance)
       button.setAccessibilityLabel("MacVitals")
       button.setAccessibilityValue(
         MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
