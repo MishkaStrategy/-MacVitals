@@ -18,17 +18,23 @@ nonisolated struct AlertPolicyConfiguration: Equatable, Sendable {
   static let defaultPowerConfidenceThreshold = 0.8
   static let defaultCooldown: TimeInterval = 15 * 60
 
+  var memoryAlertsEnabled: Bool
+  var lowBatteryAlertsEnabled: Bool
   var memoryThresholdPercent: Double
   var lowBatteryThresholdPercent: Double
   var powerConfidenceThreshold: Double
   var cooldown: TimeInterval
 
   init(
+    memoryAlertsEnabled: Bool = true,
+    lowBatteryAlertsEnabled: Bool = true,
     memoryThresholdPercent: Double = defaultMemoryThresholdPercent,
     lowBatteryThresholdPercent: Double = defaultLowBatteryThresholdPercent,
     powerConfidenceThreshold: Double = defaultPowerConfidenceThreshold,
     cooldown: TimeInterval = defaultCooldown
   ) {
+    self.memoryAlertsEnabled = memoryAlertsEnabled
+    self.lowBatteryAlertsEnabled = lowBatteryAlertsEnabled
     self.memoryThresholdPercent = Self.bounded(
       memoryThresholdPercent,
       defaultValue: Self.defaultMemoryThresholdPercent,
@@ -127,7 +133,7 @@ nonisolated struct AlertPolicy: Sendable {
 
     transition(
       kind: .highMemory,
-      isActive: thresholdExceeded || pressureActive,
+      isActive: configuration.memoryAlertsEnabled && (thresholdExceeded || pressureActive),
       now: now,
       event: AlertEvent(
         kind: .highMemory,
@@ -171,7 +177,8 @@ nonisolated struct AlertPolicy: Sendable {
     let battery = snapshot.battery.value
     let percentage = validPercentage(battery?.percentage)
     let active =
-      battery?.state == .discharging
+      configuration.lowBatteryAlertsEnabled
+      && battery?.state == .discharging
       && (percentage ?? 101) <= configuration.lowBatteryThresholdPercent
 
     transition(
