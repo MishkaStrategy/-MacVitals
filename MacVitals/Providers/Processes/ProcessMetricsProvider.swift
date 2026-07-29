@@ -117,6 +117,61 @@ nonisolated enum ProcessCounterCalculator {
   }
 }
 
+nonisolated enum ProcessCollectionSanitizer {
+  static func uniquePIDs(_ pids: some Sequence<pid_t>) -> [pid_t] {
+    var seen = Set<pid_t>()
+    return pids.compactMap { pid in
+      guard pid > 0, seen.insert(pid).inserted else { return nil }
+      return pid
+    }
+  }
+
+  static func samplesByPID(_ samples: [ProcessCounterSample]) -> [pid_t: ProcessCounterSample] {
+    samples.reduce(into: [:]) { result, sample in
+      guard sample.pid > 0 else { return }
+      guard let existing = result[sample.pid] else {
+        result[sample.pid] = sample
+        return
+      }
+      if shouldPrefer(sample, over: existing) {
+        result[sample.pid] = sample
+      }
+    }
+  }
+
+  static func applicationsByPID(
+    _ applications: [RunningApplicationDescriptor]
+  ) -> [pid_t: RunningApplicationDescriptor] {
+    applications.reduce(into: [:]) { result, application in
+      guard application.pid > 0 else { return }
+      guard let existing = result[application.pid] else {
+        result[application.pid] = application
+        return
+      }
+      if existing.bundleIdentifier == nil, application.bundleIdentifier != nil {
+        result[application.pid] = application
+      } else if existing.bundleIdentifier == application.bundleIdentifier,
+        application.name.localizedCaseInsensitiveCompare(existing.name) == .orderedAscending
+      {
+        result[application.pid] = application
+      }
+    }
+  }
+
+  private static func shouldPrefer(
+    _ candidate: ProcessCounterSample,
+    over existing: ProcessCounterSample
+  ) -> Bool {
+    if candidate.startTime != existing.startTime {
+      return candidate.startTime > existing.startTime
+    }
+    if candidate.cpuTimeNanoseconds != existing.cpuTimeNanoseconds {
+      return candidate.cpuTimeNanoseconds > existing.cpuTimeNanoseconds
+    }
+    return candidate.physicalFootprintBytes > existing.physicalFootprintBytes
+  }
+}
+
 actor ProcessMetricsProvider {
   private struct ProcessIdentity: Hashable {
     let pid: pid_t
@@ -151,11 +206,10 @@ actor ProcessMetricsProvider {
 
   func sample(runningApplications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     let now = Date()
-    let samples = readAllProcesses()
+    let samplesByPID = ProcessCollectionSanitizer.samplesByPID(readAllProcesses())
+    let samples = Array(samplesByPID.values)
     let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
-    let samplesByPID = Dictionary(uniqueKeysWithValues: samples.map { ($0.pid, $0) })
-    let applicationsByPID = Dictionary(
-      uniqueKeysWithValues: runningApplications.map { ($0.pid, $0) })
+    let applicationsByPID = ProcessCollectionSanitizer.applicationsByPID(runningApplications)
     var accumulators: [String: ApplicationAccumulator] = [:]
     var energyCountersAvailable = false
 
@@ -186,10 +240,9 @@ actor ProcessMetricsProvider {
     }
 
     previousTimestamp = now
-    previousSamples = Dictionary(
-      uniqueKeysWithValues: samples.map {
-        (ProcessIdentity(pid: $0.pid, startTime: $0.startTime), $0)
-      })
+    previousSamples = samples.reduce(into: [:]) { result, sample in
+      result[ProcessIdentity(pid: sample.pid, startTime: sample.startTime)] = sample
+    }
 
     let ordered = accumulators.values.sorted {
       if $0.cpuPercent == $1.cpuPercent {
@@ -248,9 +301,9 @@ actor ProcessMetricsProvider {
     }
     guard returned > 0 else { return [] }
 
-    return pids.prefix(Int(returned)).compactMap { pid in
-      guard pid > 0 else { return nil }
-      return readProcess(pid: pid)
+    let populatedCount = min(Int(returned), pids.count)
+    return ProcessCollectionSanitizer.uniquePIDs(pids.prefix(populatedCount)).compactMap { pid in
+      readProcess(pid: pid)
     }
   }
 
