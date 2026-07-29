@@ -28,22 +28,21 @@ jobs:
         run: xcodegen generate
 
       - name: Capture real application screenshots
-        env:
-          MACVITALS_SCREENSHOT_DIR: ${{ github.workspace }}/docs/screenshots
         run: |
-          rm -rf "${MACVITALS_SCREENSHOT_DIR}"
-          mkdir -p "${MACVITALS_SCREENSHOT_DIR}"
+          screenshot_dir="/tmp/macvitals-readme-screenshots"
+          rm -rf "${screenshot_dir}"
+          mkdir -p "${screenshot_dir}"
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             clean test \
             -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
-          test "$(find "${MACVITALS_SCREENSHOT_DIR}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
+          test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
-          path: docs/screenshots/
+          path: /tmp/macvitals-readme-screenshots/
           if-no-files-found: error
           retention-days: 30
