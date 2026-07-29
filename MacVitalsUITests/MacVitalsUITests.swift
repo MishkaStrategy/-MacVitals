@@ -63,7 +63,9 @@ final class MacVitalsUITests: XCTestCase {
 
     selectTab(labels.alerts, language: language, in: app, file: file, line: line)
     assertElementExists("notificationsEnabledToggle", in: app, file: file, line: line)
+    assertElementExists("memoryAlertsEnabledToggle", in: app, file: file, line: line)
     assertElementExists("memoryAlertThresholdSlider", in: app, file: file, line: line)
+    assertElementExists("lowBatteryAlertsEnabledToggle", in: app, file: file, line: line)
     assertElementExists("lowBatteryAlertThresholdSlider", in: app, file: file, line: line)
 
     selectTab(labels.menuBar, language: language, in: app, file: file, line: line)
