@@ -179,18 +179,10 @@ final class MacVitalsUITests: XCTestCase {
       return
     }
 
-    do {
-      let outputDirectory = URL(
-        fileURLWithPath: "/tmp/macvitals-readme-screenshots",
-        isDirectory: true)
-      try FileManager.default.createDirectory(
-        at: outputDirectory,
-        withIntermediateDirectories: true)
-      let outputURL = outputDirectory.appendingPathComponent("\(name).png")
-      try window.screenshot().pngRepresentation.write(to: outputURL, options: .atomic)
-    } catch {
-      XCTFail("Unable to save screenshot \(name): \(error)", file: file, line: line)
-    }
+    let attachment = XCTAttachment(screenshot: window.screenshot())
+    attachment.name = "\(name).png"
+    attachment.lifetime = .keepAlways
+    add(attachment)
   }
 
   private func assertElementExists(
