@@ -42,6 +42,39 @@ nonisolated enum MenuBarIconCatalog {
     }
   }
 
+  static func minimalSymbolCandidates(
+    for metric: MenuMetric,
+    state: MenuBarIconState
+  ) -> [String] {
+    switch metric {
+    case .battery:
+      switch state {
+      case .normal: return ["battery.75percent"]
+      case .elevated: return ["battery.25percent", "battery.75percent"]
+      case .critical: return ["battery.0percent", "battery.25percent"]
+      }
+    case .cpu:
+      return ["cpu"]
+    case .gpu:
+      return ["gpu", "display", "rectangle.3.group"]
+    case .memory:
+      return ["memorychip"]
+    case .temperature:
+      switch state {
+      case .normal: return ["thermometer.medium"]
+      case .elevated, .critical: return ["thermometer.high", "thermometer.medium"]
+      }
+    case .fans:
+      return ["fan"]
+    case .systemPower:
+      return ["bolt"]
+    case .adapterPower:
+      return ["powerplug", "bolt"]
+    case .powerStatus:
+      return ["bolt.circle", "bolt"]
+    }
+  }
+
   static func state(for metric: MenuMetric, snapshot: SystemSnapshot) -> MenuBarIconState {
     switch metric {
     case .cpu:
@@ -92,6 +125,29 @@ nonisolated enum MenuBarIconCatalog {
     let image = base.withSymbolConfiguration(configuration) ?? base
     image.isTemplate = true
     image.size = NSSize(width: 18, height: 18)
+    return image
+  }
+
+  @MainActor
+  static func minimalImage(for metric: MenuMetric, state: MenuBarIconState) -> NSImage? {
+    let base = minimalSymbolCandidates(for: metric, state: state)
+      .lazy
+      .compactMap {
+        NSImage(systemSymbolName: $0, accessibilityDescription: metric.displayName)
+      }
+      .first
+
+    guard let base else { return nil }
+
+    let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+    let image = base.withSymbolConfiguration(configuration) ?? base
+    image.isTemplate = true
+
+    let targetHeight: CGFloat = 11
+    let sourceSize = image.size
+    let aspectRatio = sourceSize.height > 0 ? sourceSize.width / sourceSize.height : 1
+    let targetWidth = min(14, max(8, targetHeight * aspectRatio))
+    image.size = NSSize(width: targetWidth, height: targetHeight)
     return image
   }
 
