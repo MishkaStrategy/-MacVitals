@@ -6,11 +6,11 @@ struct MacVitalsApp: App {
 
   var body: some Scene {
     Settings {
-      PreferencesView()
+      ThemedPreferencesRootView()
         .environmentObject(appDelegate.coordinator)
         .environmentObject(appDelegate.settings)
         .environmentObject(appDelegate.fanControl)
-        .frame(minWidth: 860, minHeight: 620)
+        .frame(minWidth: 860, minHeight: 700)
     }
   }
 }
