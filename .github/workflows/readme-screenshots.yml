@@ -1,6 +1,6 @@
 name: README Screenshots
 
-# Agent-branch pushes regenerate documentation images without writing directly to main.
+# Agent-branch and pull-request updates regenerate documentation images without writing directly to main.
 on:
   workflow_dispatch:
   push:
@@ -10,9 +10,16 @@ on:
       - "MacVitals/MenuBar/StatusItemController.swift"
       - "MacVitalsUITests/MacVitalsUITests.swift"
       - ".github/workflows/readme-screenshots.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "MacVitals/MenuBar/StatusItemController.swift"
+      - "MacVitalsUITests/MacVitalsUITests.swift"
+      - ".github/workflows/readme-screenshots.yml"
 
 concurrency:
-  group: readme-screenshots-${{ github.ref }}
+  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,10 +29,12 @@ jobs:
   capture:
     runs-on: macos-15
     timeout-minutes: 15
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.TARGET_BRANCH }}
           persist-credentials: true
 
       - name: Materialize application icon
@@ -140,7 +149,7 @@ jobs:
 
       - name: Commit real application screenshots
         run: |
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+          if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ]; then
             echo "Refusing to auto-commit README screenshots directly to main"
             exit 1
           fi
@@ -152,7 +161,7 @@ jobs:
             exit 0
           fi
           git commit -m "docs: refresh Russian MacVitals screenshots"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
