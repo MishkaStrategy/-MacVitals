@@ -22,24 +22,26 @@ MacVitals — нативная и приватная утилита для ст�
 
 ## Интерфейс
 
-MacVitals работает в строке меню macOS. При открытии отображается обзор с кликабельными карточками метрик. В подробных окнах доступны история и дополнительные значения, а настройки разделены на вкладки общего поведения, уведомлений, строки меню, диагностики и приватности.
+MacVitals работает в строке меню macOS. При открытии отображается обзор с кликабельными карточками метрик. В подробных окнах доступны история и дополнительные значения, а настройки разделены на вкладки общего поведения, уведомлений, строки меню, мониторинга вентиляторов, диагностики и приватности.
 
 Интерфейс создан на нативных SwiftUI и AppKit и доступен на русском и английском языках.
 
-## Скриншоты
+## Реальные изображения программы
 
-Реальные скриншоты приложения пока не добавлены в репозиторий. Текущие артефакты CI и физической проверки содержат runtime-, Instruments- и диагностические данные, но не содержат достоверных снимков запущенного интерфейса.
+Эти снимки автоматически получены из настоящего приложения MacVitals, собранного и запущенного на GitHub-hosted runner с macOS 15 и архитектурой ARM64. Это прямые снимки окон XCTest, а не макеты и не концепт-рендеры. Аппаратно-зависимые значения относятся к CI-runner, поэтому недоступность батареи, адаптера или вентиляторов в этих кадрах ожидаема.
 
-Изображения будут добавлены в `docs/images/` только после съёмки настоящего приложения на физическом Mac с Apple Silicon. Концепт-рендеры намеренно не выдаются за реальные скриншоты программы.
+<table>
+  <tr>
+    <td width="50%"><strong>Основные настройки</strong><br><img src="docs/screenshots/preferences-general.png" alt="Основные настройки MacVitals" width="100%"></td>
+    <td width="50%"><strong>Настройка строки меню</strong><br><img src="docs/screenshots/preferences-menu-bar.png" alt="Настройка строки меню MacVitals" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>Вентиляторы и безопасность</strong><br><img src="docs/screenshots/preferences-fans.png" alt="Мониторинг вентиляторов и настройки безопасности MacVitals" width="100%"></td>
+    <td width="50%"><strong>Диагностика</strong><br><img src="docs/screenshots/preferences-diagnostics.png" alt="Экран диагностики MacVitals" width="100%"></td>
+  </tr>
+</table>
 
-Подготовленная структура:
-
-```text
-docs/images/macvitals-overview.png
-docs/images/macvitals-metric-detail.png
-docs/images/macvitals-preferences.png
-docs/images/macvitals-diagnostics.png
-```
+Воспроизводимый workflow захвата находится в [`.github/workflows/readme-screenshots.yml`](.github/workflows/readme-screenshots.yml).
 
 ## Поддерживаемая платформа
 
@@ -118,6 +120,7 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 - arm64-only unsigned ZIP и DMG;
 - иконку, локализации, контрольные суммы и provenance;
 - accessibility smoke настроек на русском и английском;
+- воспроизводимый захват реального интерфейса приложения;
 - реальные read-only данные оборотов вентиляторов;
 - физическую direct-session стабильность и сбор Instruments.
 
@@ -125,7 +128,7 @@ make collect-runtime RUNTIME_DURATION=900 RUNTIME_INTERVAL=2
 
 - Developer ID signing, notarization, stapling и Gatekeeper на чистом Mac;
 - финальная ручная проверка VoiceOver, клавиатуры и EN/RU-интерфейса;
-- реальные скриншоты на представительном Apple Silicon Mac;
+- снимки и визуальная проверка на представительном физическом Apple Silicon Mac;
 - независимая проверка физических и Instruments-артефактов;
 - отдельное явное разрешение перед merge, тегом и публичным релизом.
 
