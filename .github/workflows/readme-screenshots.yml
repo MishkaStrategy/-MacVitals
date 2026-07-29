@@ -29,20 +29,24 @@ jobs:
 
       - name: Capture real application screenshots
         run: |
-          screenshot_dir="/tmp/macvitals-readme-screenshots"
-          rm -rf "${screenshot_dir}"
-          mkdir -p "${screenshot_dir}"
+          result_bundle="${RUNNER_TEMP}/MacVitals-readme-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.xcresult"
+          screenshot_dir="${RUNNER_TEMP}/macvitals-readme-screenshots"
+          rm -rf "${result_bundle}" "${screenshot_dir}"
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            -resultBundlePath "${result_bundle}" \
             clean test \
             -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
+          xcrun xcresulttool export attachments \
+            --path "${result_bundle}" \
+            --output-path "${screenshot_dir}"
           test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: readme-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/macvitals-readme-screenshots/
+          path: ${{ runner.temp }}/macvitals-readme-screenshots/
           if-no-files-found: error
           retention-days: 30
