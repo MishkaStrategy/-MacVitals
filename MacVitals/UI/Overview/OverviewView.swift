@@ -7,6 +7,7 @@ nonisolated enum OverviewLayout {
 }
 
 struct OverviewView: View {
+  @Environment(\.appTheme) private var theme
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
   @EnvironmentObject private var fanControl: FanControlClient
@@ -53,37 +54,44 @@ struct OverviewView: View {
           title: "CPU",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.cpu.value?.total),
           symbol: "cpu.fill",
+          kind: .cpu,
           action: { selectedDetail = .cpu })
         MetricCard(
           title: "Memory",
           value: MetricNumberFormatter.percentage(coordinator.snapshot.memory.value?.usedPercent),
           symbol: "memorychip.fill",
+          kind: .memory,
           action: { selectedDetail = .memory })
         MetricCard(
           title: "GPU",
           value: gpuText,
           symbol: "rectangle.3.group.fill",
+          kind: .gpu,
           action: { selectedDetail = .gpu })
         MetricCard(
           title: "Battery",
           value: batteryText,
           symbol: batterySymbol,
+          kind: .battery,
           action: { selectedDetail = .battery })
         MetricCard(
           title: LocalizedStringKey(TemperatureL10n.string("Temperature")),
           value: temperatureText,
           symbol: "thermometer.high",
+          kind: .temperature,
           action: { selectedDetail = .temperature })
         MetricCard(
           title: "Fans",
           value: FanDisplayText.summary(coordinator.snapshot.fans),
           symbol: "fan.fill",
+          kind: .fans,
           action: { selectedDetail = .fans })
       }
 
       memorySummary
       gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot) { selectedDetail = .power }
+        .tint(theme.color(for: .systemPower))
       history
       Divider()
       HStack {
@@ -109,6 +117,7 @@ struct OverviewView: View {
           .environmentObject(coordinator)
           .environmentObject(settings)
           .environmentObject(fanControl)
+          .tint(theme.color(for: selectedDetail.themeMetricKind))
       }
     }
   }
@@ -116,7 +125,7 @@ struct OverviewView: View {
   private var memorySummary: some View {
     HStack(spacing: 8) {
       Image(systemName: memoryPressureSymbol)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(memoryPressureColor)
       Text(memorySummaryText)
         .font(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
@@ -130,7 +139,7 @@ struct OverviewView: View {
   private var gpuSummary: some View {
     HStack(spacing: 8) {
       Image(systemName: "display.2")
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.color(for: .gpu))
       Text(gpuSummaryText)
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -145,10 +154,12 @@ struct OverviewView: View {
     let cutoff = Date().addingTimeInterval(-30 * 60)
     let recent = coordinator.cpuHistory.filter { $0.timestamp >= cutoff }
     let points = HistoryChartSegmentation.points(from: recent)
+    let color = theme.color(for: .cpu)
     return VStack(alignment: .leading, spacing: 4) {
       HStack {
         Label("CPU history", systemImage: "chart.xyaxis.line")
           .font(.caption.bold())
+          .foregroundStyle(color)
         Spacer()
         Text(L10n.format("30 min · %g s", settings.samplingInterval))
           .font(.caption2)
@@ -161,14 +172,14 @@ struct OverviewView: View {
           series: .value("Sampling epoch", point.segment))
           .foregroundStyle(
             LinearGradient(
-              colors: [Color.accentColor.opacity(0.18), Color.accentColor.opacity(0.01)],
+              colors: [color.opacity(0.18), color.opacity(0.01)],
               startPoint: .top,
               endPoint: .bottom))
         LineMark(
           x: .value("Time", point.timestamp),
           y: .value("CPU", point.value),
           series: .value("Sampling epoch", point.segment))
-          .foregroundStyle(Color.accentColor)
+          .foregroundStyle(color)
       }
       .chartYScale(domain: 0...100)
       .chartXAxis {
@@ -209,6 +220,15 @@ struct OverviewView: View {
     case .warning: return "exclamationmark.triangle"
     case .normal: return "checkmark.circle.fill"
     default: return "questionmark.circle"
+    }
+  }
+
+  private var memoryPressureColor: Color {
+    switch coordinator.snapshot.memory.value?.pressureLevel {
+    case .critical: return .red
+    case .warning: return .orange
+    case .normal: return theme.color(for: .memory)
+    default: return theme.color(for: .neutral)
     }
   }
 
@@ -275,18 +295,24 @@ struct OverviewView: View {
 }
 
 private struct MetricCard: View {
+  @Environment(\.appTheme) private var theme
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
+
   let title: LocalizedStringKey
   let value: String
   let symbol: String
+  let kind: MetricKind
   let action: () -> Void
 
   var body: some View {
+    let color = theme.color(for: kind)
     Button(action: action) {
       HStack(spacing: 9) {
         Image(systemName: symbol)
           .font(.title3)
           .frame(width: 25)
-          .foregroundStyle(Color.accentColor)
+          .foregroundStyle(color)
         VStack(alignment: .leading, spacing: 2) {
           Text(title).font(.caption).foregroundStyle(.secondary)
           Text(value)
@@ -300,12 +326,20 @@ private struct MetricCard: View {
           .foregroundStyle(.tertiary)
       }
       .padding(10)
-      .background(.quaternary.opacity(0.42), in: RoundedRectangle(cornerRadius: 11))
+      .background(
+        reduceTransparency
+          ? Color(nsColor: .controlBackgroundColor)
+          : color.opacity(theme.style == .multicolor ? 0.08 : 0.055),
+        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
       .overlay(
-        RoundedRectangle(cornerRadius: 11)
-          .stroke(.quaternary.opacity(0.4), lineWidth: 1))
-      .contentShape(RoundedRectangle(cornerRadius: 11))
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+          .stroke(
+            contrast == .increased ? color.opacity(0.65) : Color.secondary.opacity(0.16),
+            lineWidth: contrast == .increased ? 1.5 : 1))
+      .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
     .buttonStyle(.plain)
+    .accessibilityElement(children: .combine)
+    .accessibilityValue(value)
   }
 }
