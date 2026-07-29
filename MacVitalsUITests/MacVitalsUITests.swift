@@ -173,11 +173,6 @@ final class MacVitalsUITests: XCTestCase {
     file: StaticString = #filePath,
     line: UInt = #line
   ) {
-    guard let outputPath = ProcessInfo.processInfo.environment["MACVITALS_SCREENSHOT_DIR"] else {
-      XCTFail("MACVITALS_SCREENSHOT_DIR is not configured", file: file, line: line)
-      return
-    }
-
     let window = app.windows.firstMatch
     guard window.waitForExistence(timeout: 3) else {
       XCTFail("Missing window for screenshot \(name)", file: file, line: line)
@@ -185,7 +180,9 @@ final class MacVitalsUITests: XCTestCase {
     }
 
     do {
-      let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+      let outputDirectory = URL(
+        fileURLWithPath: "/tmp/macvitals-readme-screenshots",
+        isDirectory: true)
       try FileManager.default.createDirectory(
         at: outputDirectory,
         withIntermediateDirectories: true)
