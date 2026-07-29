@@ -24,6 +24,11 @@ final class MacVitalsUITests: XCTestCase {
         fans: "Вентиляторы",
         diagnostics: "Диагностика",
         privacy: "Приватность"))
+
+    for appearance in ["Light", "Dark"] {
+      assertThemeLaunch(style: "duotone", appearance: appearance)
+      assertThemeLaunch(style: "multicolor", appearance: appearance)
+    }
   }
 
   private func assertPreferencesLaunch(
@@ -37,6 +42,7 @@ final class MacVitalsUITests: XCTestCase {
     app.launchArguments = [
       "-AppleLanguages", "(\(language))",
       "-AppleLocale", locale,
+      "-interfaceColorScheme", "duotone",
     ]
     app.launch()
     app.typeKey(",", modifierFlags: .command)
@@ -46,6 +52,10 @@ final class MacVitalsUITests: XCTestCase {
       "Preferences window did not open for \(language)",
       file: file,
       line: line)
+    assertElementExists("colorSchemePicker", in: app, file: file, line: line)
+    assertElementExists("themePreview.duotone", in: app, file: file, line: line)
+    assertElementExists("themePreview.multicolor", in: app, file: file, line: line)
+
     selectTab(labels.general, language: language, in: app, file: file, line: line)
     assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
@@ -72,6 +82,33 @@ final class MacVitalsUITests: XCTestCase {
     selectTab(labels.privacy, language: language, in: app, file: file, line: line)
     assertElementExists("privacyLocalOnlySummary", in: app, file: file, line: line)
     assertElementExists("privacySupportBundleSummary", in: app, file: file, line: line)
+
+    app.terminate()
+  }
+
+  private func assertThemeLaunch(
+    style: String,
+    appearance: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "-AppleLanguages", "(en)",
+      "-AppleLocale", "en_US",
+      "-AppleInterfaceStyle", appearance,
+      "-interfaceColorScheme", style,
+    ]
+    app.launch()
+    app.typeKey(",", modifierFlags: .command)
+
+    XCTAssertTrue(
+      app.windows.firstMatch.waitForExistence(timeout: 5),
+      "Preferences did not open for \(style) in \(appearance)",
+      file: file,
+      line: line)
+    assertElementExists("colorSchemePicker", in: app, file: file, line: line)
+    assertElementExists("themePreview.\(style)", in: app, file: file, line: line)
 
     app.terminate()
   }
