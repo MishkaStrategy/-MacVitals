@@ -166,6 +166,14 @@ final class SettingsStore: ObservableObject {
   @Published var notificationsEnabled: Bool {
     didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
   }
+  @Published var memoryAlertsEnabled: Bool {
+    didSet { UserDefaults.standard.set(memoryAlertsEnabled, forKey: Keys.memoryAlertsEnabled) }
+  }
+  @Published var lowBatteryAlertsEnabled: Bool {
+    didSet {
+      UserDefaults.standard.set(lowBatteryAlertsEnabled, forKey: Keys.lowBatteryAlertsEnabled)
+    }
+  }
   @Published var memoryAlertThreshold: Double {
     didSet {
       let normalized = SettingsNumericPolicy.memoryAlertThreshold(memoryAlertThreshold)
@@ -206,6 +214,12 @@ final class SettingsStore: ObservableObject {
       defaults.double(forKey: Keys.samplingInterval))
     showInDock = defaults.bool(forKey: Keys.showInDock)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
+    memoryAlertsEnabled = defaults.object(forKey: Keys.memoryAlertsEnabled) == nil
+      ? true
+      : defaults.bool(forKey: Keys.memoryAlertsEnabled)
+    lowBatteryAlertsEnabled = defaults.object(forKey: Keys.lowBatteryAlertsEnabled) == nil
+      ? true
+      : defaults.bool(forKey: Keys.lowBatteryAlertsEnabled)
     memoryAlertThreshold = SettingsNumericPolicy.memoryAlertThreshold(
       defaults.double(forKey: Keys.memoryAlertThreshold))
     lowBatteryAlertThreshold = SettingsNumericPolicy.lowBatteryAlertThreshold(
@@ -294,6 +308,8 @@ final class SettingsStore: ObservableObject {
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
     static let notificationsEnabled = "notificationsEnabled"
+    static let memoryAlertsEnabled = "memoryAlertsEnabled"
+    static let lowBatteryAlertsEnabled = "lowBatteryAlertsEnabled"
     static let memoryAlertThreshold = "memoryAlertThreshold"
     static let lowBatteryAlertThreshold = "lowBatteryAlertThreshold"
   }
