@@ -20,21 +20,28 @@ final class StatusItemController: NSObject {
     self.settings = settings
     self.fanControl = fanControl
     super.init()
-    let root = OverviewView()
-      .environmentObject(coordinator)
-      .environmentObject(settings)
-      .environmentObject(fanControl)
+
+    let root = ThemedOverviewRoot {
+      OverviewView()
+        .environmentObject(coordinator)
+        .environmentObject(settings)
+        .environmentObject(fanControl)
+    }
     popover.contentViewController = NSHostingController(rootView: root)
     popover.behavior = .transient
     popover.contentSize = NSSize(
       width: OverviewLayout.width,
       height: OverviewLayout.height)
+
     if let button = statusItem.button {
       button.target = self
       button.action = #selector(togglePopover)
       button.sendAction(on: [.leftMouseUp, .rightMouseUp])
       button.toolTip = "MacVitals"
+      button.imagePosition = .imageLeading
+      button.imageHugsTitle = true
     }
+
     coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
       .receive(on: RunLoop.main)
       .sink { [weak self] snapshot, metrics in
@@ -96,7 +103,17 @@ final class StatusItemController: NSObject {
   }
 
   private func render(snapshot: SystemSnapshot, metrics: [MenuMetric]) {
-    statusItem.button?.title = MenuBarRenderer.render(snapshot: snapshot, metrics: metrics)
+    let normalized = MenuLayoutRules.normalized(metrics)
+    let iconMetric = normalized.first ?? .cpu
+    let iconState = MenuBarIconCatalog.state(for: iconMetric, snapshot: snapshot)
+
+    if let button = statusItem.button {
+      button.image = MenuBarIconCatalog.image(for: iconMetric, state: iconState)
+      button.image?.isTemplate = true
+      button.title = MenuBarRenderer.render(snapshot: snapshot, metrics: normalized)
+      button.setAccessibilityLabel("MacVitals, \(iconMetric.displayName)")
+      button.setAccessibilityValue(button.title)
+    }
     statusItem.length = NSStatusItem.variableLength
   }
 }

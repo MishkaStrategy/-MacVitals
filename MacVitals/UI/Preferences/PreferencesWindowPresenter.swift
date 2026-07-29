@@ -18,11 +18,11 @@ final class PreferencesWindowPresenter {
       return
     }
 
-    let rootView = PreferencesView()
+    let rootView = ThemedPreferencesRootView()
       .environmentObject(coordinator)
       .environmentObject(settings)
       .environmentObject(fanControl)
-      .frame(minWidth: 860, minHeight: 620)
+      .frame(minWidth: 860, minHeight: 700)
 
     let hostingController = NSHostingController(rootView: rootView)
     let window = NSWindow(contentViewController: hostingController)
@@ -31,8 +31,8 @@ final class PreferencesWindowPresenter {
     window.titlebarAppearsTransparent = true
     window.toolbarStyle = .unifiedCompact
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-    window.setContentSize(NSSize(width: 920, height: 680))
-    window.minSize = NSSize(width: 860, height: 620)
+    window.setContentSize(NSSize(width: 920, height: 760))
+    window.minSize = NSSize(width: 860, height: 700)
     window.isReleasedWhenClosed = false
     window.center()
 
