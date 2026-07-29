@@ -115,7 +115,7 @@ final class StatusItemController: NSObject {
       button.imagePosition = .imageOnly
       button.imageScaling = .scaleNone
       button.contentTintColor = nil
-      button.image = MenuBarStatusTitleRenderer.templateImage(
+      button.image = MenuBarStatusTitleRenderer.lightImage(
         snapshot: snapshot,
         metrics: normalized)
       button.setAccessibilityLabel("MacVitals")
