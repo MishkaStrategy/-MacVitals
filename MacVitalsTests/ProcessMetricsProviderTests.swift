@@ -113,6 +113,19 @@ final class ProcessMetricsProviderTests: XCTestCase {
     XCTAssertEqual(indexed[42], bundled)
   }
 
+  func testLiveSamplingReadsRUsageWithoutCorruptingStack() async throws {
+    let provider = ProcessMetricsProvider()
+
+    let first = await provider.sample(runningApplications: [])
+    try await Task.sleep(for: .milliseconds(100))
+    let second = await provider.sample(runningApplications: [])
+
+    XCTAssertGreaterThan(first.sampledProcessCount, 0)
+    XCTAssertGreaterThan(second.sampledProcessCount, 0)
+    XCTAssertFalse(first.applications.isEmpty)
+    XCTAssertFalse(second.applications.isEmpty)
+  }
+
   private func sample(
     pid: pid_t = 42,
     cpu: UInt64,
