@@ -310,8 +310,10 @@ actor ProcessMetricsProvider {
   private func readProcess(pid: pid_t) -> ProcessCounterSample? {
     var usage = rusage_info_v6()
     let usageResult: Int32 = withUnsafeMutablePointer(to: &usage) { pointer in
-      var rawPointer: rusage_info_t? = UnsafeMutableRawPointer(pointer)
-      return proc_pid_rusage(pid, RUSAGE_INFO_V6, &rawPointer)
+      proc_pid_rusage(
+        pid,
+        RUSAGE_INFO_V6,
+        UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: rusage_info_t.self))
     }
 
     var taskInfo = proc_taskinfo()
