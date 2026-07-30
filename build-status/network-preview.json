@@ -1,0 +1,9 @@
+{
+  "architecture": "arm64",
+  "diagnostics": "2026-07-31 06:02:31.931 appintentsmetadataprocessor[47059:9617016] warning: Metadata extraction skipped. No AppIntents.framework dependency found.\n** BUILD SUCCEEDED **\n",
+  "localArtifact": "~/Downloads/MacVitals-network-preview-a762d11fbba6.zip",
+  "result": "success",
+  "schemaVersion": 1,
+  "sourceSha": "a762d11fbba6d79ac63ba08ff3d90c1f56ae95f2",
+  "testsRun": false
+}
