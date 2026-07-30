@@ -5,7 +5,6 @@ on:
     branches: [feature/network-traffic-speed-preview]
     paths-ignore:
       - build-status/**
-  workflow_dispatch:
 
 concurrency:
   group: network-preview-build
@@ -18,41 +17,43 @@ jobs:
   build-only:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout exact candidate
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: true
-          clean: true
-
-      - name: Resolve developer tools
+      - name: Build unsigned ARM64 preview without tests
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          source_dir="${GITHUB_WORKSPACE}/network-preview-source"
+          rm -rf -- "${source_dir}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+
           developer_dir="$(xcode-select -p)"
           [[ -x "${developer_dir}/usr/bin/xcodebuild" ]]
-          echo "DEVELOPER_DIR=${developer_dir}" >> "${GITHUB_ENV}"
+          export DEVELOPER_DIR="${developer_dir}"
+          xcodegen_path=""
           for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
             if [[ -n "${candidate}" && -x "${candidate}" ]]; then
-              echo "$(dirname "${candidate}")" >> "${GITHUB_PATH}"
-              exit 0
+              xcodegen_path="${candidate}"
+              break
             fi
           done
-          echo "xcodegen is unavailable" >&2
-          exit 1
+          [[ -n "${xcodegen_path}" ]] || { echo "xcodegen is unavailable" >&2; exit 1; }
 
-      - name: Build unsigned ARM64 app only
-        id: build
-        shell: bash
-        env:
-          CODE_SIGNING_ALLOWED: NO
-        run: |
-          set -Eeuo pipefail
           rm -rf -- build/network-preview dist/network-preview
           mkdir -p build/network-preview dist/network-preview build-status
           python3 scripts/materialize_app_icon.py
-          xcodegen generate
+          "${xcodegen_path}" generate
 
           set +e
           xcodebuild \
@@ -127,6 +128,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add build-status/network-preview.json
           git commit -m "ci: record network preview build result [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
 
           exit ${status}
