@@ -51,7 +51,7 @@ jobs:
           xcodegen generate
           xcodebuild \
             -project MacVitals.xcodeproj \
-            -target MacVitals \
+            -scheme MacVitals \
             -configuration Release \
             -derivedDataPath build/network-preview \
             ARCHS=arm64 \
