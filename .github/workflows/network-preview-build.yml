@@ -3,6 +3,8 @@ name: Network Preview Build
 on:
   push:
     branches: [feature/network-traffic-speed-preview]
+    paths-ignore:
+      - build-status/**
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-only:
@@ -21,7 +23,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.sha }}
-          persist-credentials: false
+          persist-credentials: true
           clean: true
 
       - name: Resolve developer tools
@@ -40,15 +42,19 @@ jobs:
           echo "xcodegen is unavailable" >&2
           exit 1
 
-      - name: Build unsigned ARM64 app
+      - name: Build unsigned ARM64 app only
+        id: build
         shell: bash
         env:
           CODE_SIGNING_ALLOWED: NO
         run: |
           set -Eeuo pipefail
           rm -rf -- build/network-preview dist/network-preview
+          mkdir -p build/network-preview dist/network-preview build-status
           python3 scripts/materialize_app_icon.py
           xcodegen generate
+
+          set +e
           xcodebuild \
             -project MacVitals.xcodeproj \
             -scheme MacVitals \
@@ -57,20 +63,70 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
-            build
-          app="build/network-preview/Build/Products/Release/MacVitals.app"
-          executable="${app}/Contents/MacOS/MacVitals"
-          [[ -d "${app}" && -x "${executable}" ]]
-          [[ "$(lipo -archs "${executable}")" == "arm64" ]]
-          mkdir -p dist/network-preview
-          ditto -c -k --sequesterRsrc --keepParent \
-            "${app}" \
-            "dist/network-preview/MacVitals-network-preview-${GITHUB_SHA}.zip"
+            build > build/network-preview/xcodebuild.log 2>&1
+          status=$?
+          set -e
 
-      - name: Upload unsigned preview build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: MacVitals-network-preview-${{ github.sha }}
-          path: dist/network-preview/*.zip
-          if-no-files-found: error
-          retention-days: 14
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' \
+            build/network-preview/xcodebuild.log | tail -n 200 \
+            > build/network-preview/diagnostics.txt || true
+          cat build/network-preview/diagnostics.txt
+
+          result="failure"
+          architecture="unknown"
+          artifact=""
+          if [[ ${status} -eq 0 ]]; then
+            app="build/network-preview/Build/Products/Release/MacVitals.app"
+            executable="${app}/Contents/MacOS/MacVitals"
+            [[ -d "${app}" && -x "${executable}" ]]
+            architecture="$(lipo -archs "${executable}")"
+            [[ "${architecture}" == "arm64" ]]
+
+            short_sha="${GITHUB_SHA:0:12}"
+            archive_name="MacVitals-network-preview-${short_sha}.zip"
+            workspace_archive="dist/network-preview/${archive_name}"
+            ditto -c -k --sequesterRsrc --keepParent "${app}" "${workspace_archive}"
+
+            account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+            [[ -n "${account_home}" && -d "${account_home}" ]]
+            mkdir -p "${account_home}/Downloads"
+            cp -f "${workspace_archive}" "${account_home}/Downloads/${archive_name}"
+            chmod 0644 "${account_home}/Downloads/${archive_name}"
+            artifact="~/Downloads/${archive_name}"
+            result="success"
+          fi
+
+          RESULT="${result}" \
+          SOURCE_SHA="${GITHUB_SHA}" \
+          ARCHITECTURE="${architecture}" \
+          ARTIFACT="${artifact}" \
+          DIAGNOSTICS="build/network-preview/diagnostics.txt" \
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          diagnostics_path = Path(os.environ["DIAGNOSTICS"])
+          diagnostics = diagnostics_path.read_text(encoding="utf-8", errors="replace") if diagnostics_path.exists() else ""
+          payload = {
+              "schemaVersion": 1,
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "result": os.environ["RESULT"],
+              "architecture": os.environ["ARCHITECTURE"],
+              "localArtifact": os.environ["ARTIFACT"] or None,
+              "testsRun": False,
+              "diagnostics": diagnostics[-12000:],
+          }
+          Path("build-status/network-preview.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/network-preview.json
+          git commit -m "ci: record network preview build result [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          exit ${status}
