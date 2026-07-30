@@ -120,7 +120,6 @@ jobs:
           if-no-files-found: error
 
       - name: Run manual metric tile diagnostic
-        if: steps.recent_crash.outputs.status != '0'
         id: diagnostic
         shell: bash
         env:
@@ -174,7 +173,7 @@ jobs:
           echo "crash_status=${crash_status}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload metric tile crash evidence
-        if: always() && steps.recent_crash.outputs.status != '0'
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: metric-tile-${{ env.CANDIDATE_SHA }}
@@ -185,7 +184,7 @@ jobs:
           if-no-files-found: error
 
       - name: Enforce manual metric tile result
-        if: always() && steps.recent_crash.outputs.status != '0'
+        if: always()
         shell: bash
         run: |
           set -Eeuo pipefail
