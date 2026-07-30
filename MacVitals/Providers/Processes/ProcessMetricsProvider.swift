@@ -313,7 +313,7 @@ actor ProcessMetricsProvider {
       proc_pid_rusage(
         pid,
         RUSAGE_INFO_V6,
-        UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: rusage_info_t.self))
+        UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: rusage_info_t?.self))
     }
 
     var taskInfo = proc_taskinfo()
