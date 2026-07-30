@@ -106,7 +106,7 @@ jobs:
           HOME="${account_home}" python3 scripts/collect_recent_crash_report.py \
             --repository "${PWD}" \
             --output recent-crash-evidence \
-            --since-minutes 240
+            --since-minutes 1440
           status=$?
           set -e
           echo "status=${status}" >> "${GITHUB_OUTPUT}"
