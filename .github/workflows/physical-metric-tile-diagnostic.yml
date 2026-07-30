@@ -29,7 +29,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           workspace_parent="$(dirname "${GITHUB_WORKSPACE}")"
-          for value in "${HOME:-}" "${USER:-}" "$(id -un)" "$(hostname)" "${RUNNER_NAME:-}" "${GITHUB_WORKSPACE}" "${workspace_parent}"; do
+          account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+          for value in "${HOME:-}" "${account_home}" "${USER:-}" "$(id -un)" "$(hostname)" "${RUNNER_NAME:-}" "${GITHUB_WORKSPACE}" "${workspace_parent}"; do
             if [[ -n "${value}" && ${#value} -ge 3 ]]; then echo "::add-mask::${value}"; fi
           done
 
@@ -99,8 +100,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           rm -rf -- recent-crash-evidence
+          account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+          [[ -n "${account_home}" && -d "${account_home}" ]] || { echo "Could not resolve console user home" >&2; exit 1; }
           set +e
-          python3 scripts/collect_recent_crash_report.py \
+          HOME="${account_home}" python3 scripts/collect_recent_crash_report.py \
             --repository "${PWD}" \
             --output recent-crash-evidence \
             --since-minutes 240
@@ -117,6 +120,7 @@ jobs:
           if-no-files-found: error
 
       - name: Run manual metric tile diagnostic
+        if: steps.recent_crash.outputs.status != '0'
         id: diagnostic
         shell: bash
         env:
@@ -158,8 +162,9 @@ jobs:
           set -e
           cat metric-tile-run.log
           sleep 5
+          account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
           set +e
-          python3 scripts/collect_recent_crash_report.py \
+          HOME="${account_home}" python3 scripts/collect_recent_crash_report.py \
             --repository "${PWD}" \
             --output metric-tile-crash-evidence \
             --since-marker metric-tile-start.marker
@@ -169,7 +174,7 @@ jobs:
           echo "crash_status=${crash_status}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload metric tile crash evidence
-        if: always()
+        if: always() && steps.recent_crash.outputs.status != '0'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: metric-tile-${{ env.CANDIDATE_SHA }}
@@ -180,7 +185,7 @@ jobs:
           if-no-files-found: error
 
       - name: Enforce manual metric tile result
-        if: always()
+        if: always() && steps.recent_crash.outputs.status != '0'
         shell: bash
         run: |
           set -Eeuo pipefail
