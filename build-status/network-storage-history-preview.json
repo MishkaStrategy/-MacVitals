@@ -1,9 +1,9 @@
 {
-  "architecture": "unknown",
-  "diagnostics": "/Users/mihailcernysov/GitHubActionsRunners/org__MishkaStrategy__default__47798ba870/mac-MacBook-Pro-MishkaStrategy-02/_work/-MacVitals/-MacVitals/network-storage-history-preview-source/MacVitals/UI/Overview/SupplementalMetricDetailView.swift:465:5: error: 'ContentUnavailableView' is only available in macOS 14.0 or newer\n/Users/mihailcernysov/GitHubActionsRunners/org__MishkaStrategy__default__47798ba870/mac-MacBook-Pro-MishkaStrategy-02/_work/-MacVitals/-MacVitals/network-storage-history-preview-source/MacVitals/UI/Overview/SupplementalMetricDetailView.swift:465:5: error: 'init(_:systemImage:description:)' is only available in macOS 14.0 or newer\n** BUILD FAILED **\n",
-  "localArtifact": null,
-  "result": "failure",
+  "architecture": "arm64",
+  "diagnostics": "2026-08-01 21:57:12.405 appintentsmetadataprocessor[35993:3344444] warning: Metadata extraction skipped. No AppIntents.framework dependency found.\n** BUILD SUCCEEDED **\n",
+  "localArtifact": "~/Downloads/MacVitals-network-storage-history-0cd37dab2f30.zip",
+  "result": "success",
   "schemaVersion": 1,
-  "sourceSha": "0924acee892783cc216d7fe78d8c4b9ca073b709",
+  "sourceSha": "0cd37dab2f3074193c9e44ed7c19240fc62ad11a",
   "testsRun": false
 }
