@@ -1,6 +1,6 @@
 {
   "architecture": "arm64",
-  "detail": "MacVitals is visible in the active menu-bar session",
+  "detail": "visible review completed without a new crash report",
   "launch": {
     "asuserExecutableExitCode": -1,
     "asuserOpenExitCode": -1,
@@ -8,18 +8,18 @@
     "method": "direct-open"
   },
   "newCrashReportCount": 0,
-  "observedDurationSeconds": 0,
+  "observedDurationSeconds": 915,
   "physicalGuiRun": true,
   "pid": 61916,
   "productSourceSha": "01a6a8d7e0531616e77156aad50dab8e2a2c6d36",
   "requestedDurationSeconds": 900,
-  "result": null,
-  "sampleCount": 0,
+  "result": "success",
+  "sampleCount": 450,
   "schemaVersion": 1,
   "sourceSha": "84c70c0bcdea6aa3995c9564ed45e4f15f928944",
   "startedAt": "2026-08-01T14:26:59Z",
-  "state": "running",
-  "updatedAt": "2026-08-01T14:26:59.797742+00:00",
+  "state": "finished",
+  "updatedAt": "2026-08-01T14:42:17.087931+00:00",
   "visibleApp": "~/Downloads/MacVitals-storage-visible-84c70c0bcdea.app",
   "xctestRun": false
 }
