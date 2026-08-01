@@ -462,9 +462,17 @@ struct SupplementalMetricDetailView: View {
   }
 
   private func unavailableChart(_ message: String) -> some View {
-    ContentUnavailableView(
-      message,
-      systemImage: "chart.xyaxis.line",
-      description: Text(L10n.string("Collecting data")))
+    VStack(spacing: 10) {
+      Image(systemName: "chart.xyaxis.line")
+        .font(.system(size: 34, weight: .medium))
+        .foregroundStyle(.secondary)
+      Text(message)
+        .font(.headline)
+      Text(L10n.string("Collecting data"))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
   }
 }
