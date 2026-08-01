@@ -1,0 +1,9 @@
+{
+  "architecture": "unknown",
+  "diagnostics": "/Users/mihailcernysov/GitHubActionsRunners/org__MishkaStrategy__default__47798ba870/mac-MacBook-Pro-MishkaStrategy-02/_work/-MacVitals/-MacVitals/network-storage-history-preview-source/MacVitals/UI/Overview/SupplementalMetricDetailView.swift:465:5: error: 'ContentUnavailableView' is only available in macOS 14.0 or newer\n/Users/mihailcernysov/GitHubActionsRunners/org__MishkaStrategy__default__47798ba870/mac-MacBook-Pro-MishkaStrategy-02/_work/-MacVitals/-MacVitals/network-storage-history-preview-source/MacVitals/UI/Overview/SupplementalMetricDetailView.swift:465:5: error: 'init(_:systemImage:description:)' is only available in macOS 14.0 or newer\n** BUILD FAILED **\n",
+  "localArtifact": null,
+  "result": "failure",
+  "schemaVersion": 1,
+  "sourceSha": "0924acee892783cc216d7fe78d8c4b9ca073b709",
+  "testsRun": false
+}
