@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 
 struct HistoricalConsumptionLeadersView: View {
+  @EnvironmentObject private var settings: SettingsStore
   @ObservedObject private var center: HistoricalConsumptionCenter
   @State private var selectedRange: HistoricalConsumptionRange = .oneHour
   @State private var leaders: [HistoricalConsumptionLeader] = []
@@ -52,7 +53,10 @@ struct HistoricalConsumptionLeadersView: View {
     .onReceive(
       center.$revision
         .removeDuplicates()
-        .throttle(for: .seconds(30), scheduler: RunLoop.main, latest: true)
+        .throttle(
+          for: .seconds(max(1, settings.samplingInterval)),
+          scheduler: RunLoop.main,
+          latest: true)
     ) { _ in
       Task { await reload() }
     }
