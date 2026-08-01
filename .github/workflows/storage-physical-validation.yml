@@ -1,0 +1,436 @@
+name: Storage Physical Validation
+
+on:
+  push:
+    branches: [validation/storage-usage-physical]
+    paths-ignore:
+      - build-status/**
+
+concurrency:
+  group: storage-physical-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  physical-storage-validation:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PRODUCT_SOURCE_SHA: 01a6a8d7e0531616e77156aad50dab8e2a2c6d36
+      PHYSICAL_DURATION_SECONDS: "300"
+
+    steps:
+      - name: Prepare exact candidate
+        id: prepare
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          workspace_parent="$(dirname "${GITHUB_WORKSPACE}")"
+          for value in "${HOME:-}" "${USER:-}" "$(id -un)" "$(hostname)" "${RUNNER_NAME:-}" "${GITHUB_WORKSPACE}" "${workspace_parent}"; do
+            if [[ -n "${value}" && ${#value} -ge 3 ]]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+
+          source_dir="${GITHUB_WORKSPACE}/storage-physical-source"
+          rm -rf -- "${source_dir}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          printf '%s' "${auth_header}" > "${GITHUB_WORKSPACE}/storage-auth-header"
+          chmod 0600 "${GITHUB_WORKSPACE}/storage-auth-header"
+
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=2 origin "${GITHUB_SHA}"
+          git checkout -q --detach FETCH_HEAD
+
+          [[ "$(uname -s)" == "Darwin" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+          [[ "$(git rev-parse HEAD^)" == "${PRODUCT_SOURCE_SHA}" ]]
+          [[ -f MacVitals/UI/Overview/StorageUsageView.swift ]]
+          grep -Fq 'StorageUsageView()' MacVitals/UI/Overview/OverviewView.swift
+          grep -Fq 'FileManager.default.attributesOfFileSystem' MacVitals/UI/Overview/StorageUsageView.swift
+
+      - name: Build exact unsigned ARM64 candidate
+        id: build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${GITHUB_WORKSPACE}/storage-physical-source"
+          cd "${source_dir}"
+
+          developer_dir="$(xcode-select -p)"
+          [[ -x "${developer_dir}/usr/bin/xcodebuild" ]]
+          export DEVELOPER_DIR="${developer_dir}"
+
+          xcodegen_path=""
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              xcodegen_path="${candidate}"
+              break
+            fi
+          done
+          [[ -n "${xcodegen_path}" ]] || { echo "xcodegen is unavailable" >&2; exit 1; }
+
+          rm -rf -- build/storage-physical dist/storage-physical physical-storage-evidence
+          mkdir -p build/storage-physical dist/storage-physical physical-storage-evidence
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/storage-physical \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build > build/storage-physical/xcodebuild.log 2>&1
+
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' \
+            build/storage-physical/xcodebuild.log | tail -n 200 \
+            > build/storage-physical/diagnostics.txt || true
+          cat build/storage-physical/diagnostics.txt
+
+          app="build/storage-physical/Build/Products/Release/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -d "${app}" && -x "${executable}" ]]
+          architecture="$(lipo -archs "${executable}")"
+          [[ "${architecture}" == "arm64" ]]
+          [[ -f "${app}/Contents/Resources/en.lproj/Storage.strings" ]]
+          [[ -f "${app}/Contents/Resources/ru.lproj/Storage.strings" ]]
+
+          short_sha="${GITHUB_SHA:0:12}"
+          archive_name="MacVitals-storage-physical-${short_sha}.zip"
+          workspace_archive="dist/storage-physical/${archive_name}"
+          ditto -c -k --sequesterRsrc --keepParent "${app}" "${workspace_archive}"
+          printf '%s\n' "${architecture}" > physical-storage-evidence/architecture.txt
+          printf '%s\n' "${archive_name}" > physical-storage-evidence/archive-name.txt
+
+      - name: Validate physical storage counters
+        id: storage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${GITHUB_WORKSPACE}/storage-physical-source"
+          cd "${source_dir}"
+          export DEVELOPER_DIR="$(xcode-select -p)"
+
+          cat > build/storage-physical/storage_probe.swift <<'SWIFT'
+          import Foundation
+
+          struct Payload: Codable {
+            let totalBytes: UInt64
+            let usedBytes: UInt64
+            let availableBytes: UInt64
+            let usedFraction: Double
+            let volumeNamePresent: Bool
+          }
+
+          let homePath = NSHomeDirectory()
+          let attributes = try FileManager.default.attributesOfFileSystem(forPath: homePath)
+          guard let totalNumber = attributes[.systemSize] as? NSNumber,
+                let freeNumber = attributes[.systemFreeSize] as? NSNumber else {
+            throw NSError(domain: "StoragePhysicalProbe", code: 1)
+          }
+          let total = totalNumber.uint64Value
+          guard total > 0 else { throw NSError(domain: "StoragePhysicalProbe", code: 2) }
+          let available = min(total, freeNumber.uint64Value)
+          let used = total - available
+          let fraction = min(1, max(0, Double(used) / Double(total)))
+          let values = try URL(fileURLWithPath: homePath, isDirectory: true)
+            .resourceValues(forKeys: [.volumeNameKey])
+          let hasVolumeName = !(values.volumeName ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          let payload = Payload(
+            totalBytes: total,
+            usedBytes: used,
+            availableBytes: available,
+            usedFraction: fraction,
+            volumeNamePresent: hasVolumeName)
+          let data = try JSONEncoder().encode(payload)
+          FileHandle.standardOutput.write(data)
+          FileHandle.standardOutput.write(Data("\n".utf8))
+          SWIFT
+
+          xcrun swiftc build/storage-physical/storage_probe.swift \
+            -o build/storage-physical/storage-probe
+          build/storage-physical/storage-probe \
+            > physical-storage-evidence/storage-api.json
+          df -Pk "${HOME}" > physical-storage-evidence/storage-df.txt
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          api = json.loads(Path("physical-storage-evidence/storage-api.json").read_text())
+          lines = [line for line in Path("physical-storage-evidence/storage-df.txt").read_text().splitlines() if line.strip()]
+          if len(lines) < 2:
+              raise SystemExit("df did not return a filesystem row")
+          fields = lines[-1].split()
+          if len(fields) < 6:
+              raise SystemExit("df filesystem row is incomplete")
+
+          df_total = int(fields[1]) * 1024
+          df_available = int(fields[3]) * 1024
+          total = int(api["totalBytes"])
+          available = int(api["availableBytes"])
+          used = int(api["usedBytes"])
+          fraction = float(api["usedFraction"])
+
+          if total <= 0 or available < 0 or available > total:
+              raise SystemExit("Foundation storage counters are outside valid bounds")
+          if used != total - available:
+              raise SystemExit("Foundation used storage does not equal total minus available")
+          if not (0.0 <= fraction <= 1.0):
+              raise SystemExit("Storage fraction is outside 0...1")
+          if not bool(api["volumeNamePresent"]):
+              raise SystemExit("The physical volume name is unavailable")
+
+          total_tolerance = max(64 * 1024 * 1024, int(total * 0.01))
+          available_tolerance = max(20 * 1024**3, int(total * 0.10))
+          total_delta = abs(total - df_total)
+          available_delta = abs(available - df_available)
+          if total_delta > total_tolerance:
+              raise SystemExit("Foundation and df disagree on total volume capacity")
+          if available_delta > available_tolerance:
+              raise SystemExit("Foundation and df disagree materially on available capacity")
+
+          summary = {
+              "volumeNamePresent": True,
+              "totalGiB": round(total / 1024**3, 2),
+              "usedGiB": round(used / 1024**3, 2),
+              "availableGiB": round(available / 1024**3, 2),
+              "usedPercent": round(fraction * 100, 2),
+              "dfTotalDeltaMiB": round(total_delta / 1024**2, 2),
+              "dfAvailableDeltaMiB": round(available_delta / 1024**2, 2),
+          }
+          Path("physical-storage-evidence/storage-validation.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, sort_keys=True))
+          PY
+
+      - name: Run five-minute physical app lifetime diagnostic
+        id: lifetime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${GITHUB_WORKSPACE}/storage-physical-source"
+          cd "${source_dir}"
+
+          python3 -m py_compile scripts/diagnose_app_lifetime.py
+          python3 scripts/diagnose_app_lifetime.py --self-test
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path.home() / "Library" / "Logs" / "DiagnosticReports"
+          reports = {}
+          if root.is_dir():
+              for path in root.glob("MacVitals*.ips"):
+                  try:
+                      reports[path.name] = path.stat().st_mtime_ns
+                  except OSError:
+                      pass
+          Path("physical-storage-evidence/crash-reports-before.json").write_text(
+              json.dumps(reports, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+          rm -rf -- physical-storage-evidence/lifetime
+          shim_root="$(mktemp -d /private/tmp/macvitals-storage-launchctl.XXXXXX)"
+          trap 'rm -rf "${shim_root}"' EXIT
+          cat > "${shim_root}/launchctl" <<'SHIM'
+          #!/bin/bash
+          set -Eeuo pipefail
+          if [[ "${1:-}" == "asuser" ]]; then
+            [[ $# -ge 3 ]] || exit 64
+            requested_uid="$2"
+            shift 2
+            [[ "${requested_uid}" == "$(id -u)" ]] || exit 77
+            exec "$@"
+          fi
+          exec /bin/launchctl "$@"
+          SHIM
+          chmod 0700 "${shim_root}/launchctl"
+
+          PATH="${shim_root}:${PATH}" launchctl asuser "$(id -u)" caffeinate -ims \
+            python3 scripts/diagnose_app_lifetime.py \
+              --repository "${PWD}" \
+              --app build/storage-physical/Build/Products/Release/MacVitals.app \
+              --duration "${PHYSICAL_DURATION_SECONDS}" \
+              --interval 1 \
+              --output physical-storage-evidence/lifetime \
+              > physical-storage-evidence/lifetime-run.log 2>&1
+          cat physical-storage-evidence/lifetime-run.log
+
+          sleep 5
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          before = json.loads(Path("physical-storage-evidence/crash-reports-before.json").read_text())
+          root = Path.home() / "Library" / "Logs" / "DiagnosticReports"
+          new_reports = []
+          if root.is_dir():
+              for path in root.glob("MacVitals*.ips"):
+                  try:
+                      stamp = path.stat().st_mtime_ns
+                  except OSError:
+                      continue
+                  if before.get(path.name) != stamp:
+                      new_reports.append(path.name)
+          Path("physical-storage-evidence/crash-validation.json").write_text(
+              json.dumps({"newCrashReportCount": len(new_reports)}, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if new_reports:
+              raise SystemExit("A new MacVitals crash report appeared during physical validation")
+          PY
+
+      - name: Record physical validation result
+        if: always()
+        shell: bash
+        env:
+          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          STORAGE_OUTCOME: ${{ steps.storage.outcome }}
+          LIFETIME_OUTCOME: ${{ steps.lifetime.outcome }}
+        run: |
+          set -Eeuo pipefail
+          source_dir="${GITHUB_WORKSPACE}/storage-physical-source"
+          cd "${source_dir}"
+
+          result="failure"
+          if [[ "${PREPARE_OUTCOME}" == "success" && \
+                "${BUILD_OUTCOME}" == "success" && \
+                "${STORAGE_OUTCOME}" == "success" && \
+                "${LIFETIME_OUTCOME}" == "success" ]]; then
+            result="success"
+          fi
+
+          architecture="unknown"
+          if [[ -f physical-storage-evidence/architecture.txt ]]; then
+            architecture="$(tr -d '\r\n' < physical-storage-evidence/architecture.txt)"
+          fi
+
+          local_artifact=""
+          if [[ "${result}" == "success" && -f physical-storage-evidence/archive-name.txt ]]; then
+            archive_name="$(tr -d '\r\n' < physical-storage-evidence/archive-name.txt)"
+            account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+            if [[ -n "${account_home}" && -d "${account_home}" ]]; then
+              mkdir -p "${account_home}/Downloads"
+              cp -f "dist/storage-physical/${archive_name}" "${account_home}/Downloads/${archive_name}"
+              chmod 0644 "${account_home}/Downloads/${archive_name}"
+              local_artifact="~/Downloads/${archive_name}"
+            fi
+          fi
+
+          RESULT="${result}" \
+          ARCHITECTURE="${architecture}" \
+          LOCAL_ARTIFACT="${local_artifact}" \
+          PREPARE_OUTCOME="${PREPARE_OUTCOME}" \
+          BUILD_OUTCOME="${BUILD_OUTCOME}" \
+          STORAGE_OUTCOME="${STORAGE_OUTCOME}" \
+          LIFETIME_OUTCOME="${LIFETIME_OUTCOME}" \
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import socket
+          from pathlib import Path
+
+          evidence = Path("physical-storage-evidence")
+          storage = {}
+          lifetime = {}
+          crash = {"newCrashReportCount": None}
+          if (evidence / "storage-validation.json").exists():
+              storage = json.loads((evidence / "storage-validation.json").read_text())
+          if (evidence / "lifetime" / "summary.json").exists():
+              lifetime = json.loads((evidence / "lifetime" / "summary.json").read_text())
+          if (evidence / "crash-validation.json").exists():
+              crash = json.loads((evidence / "crash-validation.json").read_text())
+
+          diagnostics_parts = []
+          for path in (
+              Path("build/storage-physical/diagnostics.txt"),
+              evidence / "lifetime-run.log",
+          ):
+              if path.exists():
+                  diagnostics_parts.append(path.read_text(encoding="utf-8", errors="replace"))
+          diagnostics = "\n".join(diagnostics_parts)
+          replacements = [
+              str(Path.home()),
+              str(Path.cwd()),
+              os.environ.get("GITHUB_WORKSPACE", ""),
+              os.environ.get("RUNNER_NAME", ""),
+              os.environ.get("USER", ""),
+              socket.gethostname(),
+          ]
+          for value in sorted({v for v in replacements if len(v) >= 3}, key=len, reverse=True):
+              diagnostics = diagnostics.replace(value, "<REDACTED>")
+          diagnostics = re.sub(
+              r"/(?:Users|home)/[^/\s]+|/(?:private/)?(?:tmp|var/tmp)/[^\s]+|/(?:private/)?var/folders/[^\s]+",
+              "<REDACTED_PATH>",
+              diagnostics,
+          )[-12000:]
+
+          observed = lifetime.get("observed", {})
+          process = lifetime.get("process", {})
+          termination = process.get("termination", {})
+          payload = {
+              "schemaVersion": 1,
+              "sourceSha": os.environ["GITHUB_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SOURCE_SHA"],
+              "result": os.environ["RESULT"],
+              "architecture": os.environ["ARCHITECTURE"],
+              "localArtifact": os.environ["LOCAL_ARTIFACT"] or None,
+              "physicalTestRun": True,
+              "xctestRun": False,
+              "durationSeconds": int(os.environ["PHYSICAL_DURATION_SECONDS"]),
+              "outcomes": {
+                  "prepare": os.environ["PREPARE_OUTCOME"],
+                  "build": os.environ["BUILD_OUTCOME"],
+                  "storageCounters": os.environ["STORAGE_OUTCOME"],
+                  "appLifetime": os.environ["LIFETIME_OUTCOME"],
+              },
+              "storage": storage,
+              "lifetime": {
+                  "observedDurationSeconds": observed.get("durationSeconds"),
+                  "sampleCount": observed.get("sampleCount"),
+                  "completedRequestedDuration": observed.get("completedRequestedDuration"),
+                  "identityStable": process.get("identityStable"),
+                  "aliveUntilHarnessTermination": process.get("aliveUntilHarnessTermination"),
+                  "terminationKind": termination.get("kind"),
+                  "terminationSignal": termination.get("signalName"),
+                  "terminationInitiatedByHarness": termination.get("initiatedByHarness"),
+              },
+              "newCrashReportCount": crash.get("newCrashReportCount"),
+              "diagnostics": diagnostics,
+          }
+          Path("build-status").mkdir(exist_ok=True)
+          Path("build-status/storage-physical.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          auth_header="$(cat "${GITHUB_WORKSPACE}/storage-auth-header")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/storage-physical.json
+          git commit -m "ci: record storage physical validation [skip ci]"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
+
+          [[ "${result}" == "success" ]]
