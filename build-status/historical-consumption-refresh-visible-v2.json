@@ -1,0 +1,15 @@
+{
+  "architecture": "arm64",
+  "consoleSessionActive": true,
+  "physicalGuiRun": true,
+  "pid": 64460,
+  "productSourceSha": "9a80c9c95c64fcfae0da07bf22565711c5b1ff2b",
+  "requestedDurationSeconds": 900,
+  "result": null,
+  "schemaVersion": 1,
+  "sourceSha": "507f5e61733fa77ab8a61ba12e00713fc421136d",
+  "startedAt": "2026-08-01T16:07:51.641479+00:00",
+  "state": "running",
+  "visibleApp": "~/Downloads/MacVitals-consumption-refresh-visible-9a80c9c95c64.app",
+  "xctestRun": false
+}
