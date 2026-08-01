@@ -1,0 +1,167 @@
+name: Historical Consumption Refresh Visible V2
+
+on:
+  push:
+    branches: [validation/historical-consumption-refresh-visible-v2]
+    paths-ignore:
+      - build-status/**
+
+concurrency:
+  group: historical-consumption-refresh-visible-v2
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  visible-review:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PRODUCT_SHA: 9a80c9c95c64fcfae0da07bf22565711c5b1ff2b
+      REVIEW_DURATION_SECONDS: "900"
+    steps:
+      - name: Build and launch visible ARM64 preview
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${GITHUB_WORKSPACE}/consumption-refresh-v2-source"
+          rm -rf -- "${source_dir}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" fetch --no-tags --depth=1 origin "${PRODUCT_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${PRODUCT_SHA}" ]]
+          [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]
+
+          console_user="$(stat -f '%Su' /dev/console)"
+          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]]
+          [[ "${console_user}" == "$(id -un)" ]]
+
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          xcodegen_path=""
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then xcodegen_path="${candidate}"; break; fi
+          done
+          [[ -n "${xcodegen_path}" ]]
+
+          rm -rf build/consumption-refresh-v2
+          mkdir -p build/consumption-refresh-v2
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/consumption-refresh-v2 \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build > build/consumption-refresh-v2/xcodebuild.log 2>&1
+
+          app="build/consumption-refresh-v2/Build/Products/Release/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -x "${executable}" && "$(lipo -archs "${executable}")" == "arm64" ]]
+
+          pkill -TERM -x MacVitals 2>/dev/null || true
+          sleep 2
+          short_sha="${PRODUCT_SHA:0:12}"
+          visible_app="${HOME}/Downloads/MacVitals-consumption-refresh-visible-${short_sha}.app"
+          rm -rf -- "${visible_app}"
+          ditto "${app}" "${visible_app}"
+          visible_executable="${visible_app}/Contents/MacOS/MacVitals"
+          before_crashes="$(find "${HOME}/Library/Logs/DiagnosticReports" -maxdepth 1 -type f -name 'MacVitals*.ips' -print 2>/dev/null | wc -l | tr -d ' ')"
+          /usr/bin/open -n "${visible_app}" --args -notificationsEnabled NO -showInDock NO
+
+          app_pid=""
+          for _ in $(seq 1 60); do
+            while IFS= read -r candidate_pid; do
+              [[ "${candidate_pid}" =~ ^[0-9]+$ ]] || continue
+              command_path="$(ps -p "${candidate_pid}" -o command= | sed 's/[[:space:]]*$//')"
+              if [[ "${command_path}" == "${visible_executable}" || "${command_path}" == "${visible_executable} "* ]]; then app_pid="${candidate_pid}"; break; fi
+            done < <(pgrep -x MacVitals || true)
+            [[ -n "${app_pid}" ]] && break
+            sleep 1
+          done
+          [[ -n "${app_pid}" ]]
+
+          status_repo="${GITHUB_WORKSPACE}/consumption-refresh-v2-status"
+          rm -rf -- "${status_repo}"
+          git clone -q --depth=1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${status_repo}"
+          cd "${status_repo}"
+          mkdir -p build-status
+          PRODUCT_SHA="${PRODUCT_SHA}" WORKFLOW_SHA="${GITHUB_SHA}" PID="${app_pid}" APP="~/Downloads/MacVitals-consumption-refresh-visible-${short_sha}.app" python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          payload = {
+              "schemaVersion": 1,
+              "state": "running",
+              "result": None,
+              "physicalGuiRun": True,
+              "consoleSessionActive": True,
+              "architecture": "arm64",
+              "sourceSha": os.environ["WORKFLOW_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "pid": int(os.environ["PID"]),
+              "requestedDurationSeconds": 900,
+              "startedAt": datetime.now(timezone.utc).isoformat(),
+              "visibleApp": os.environ["APP"],
+              "xctestRun": False,
+          }
+          Path("build-status/historical-consumption-refresh-visible-v2.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/historical-consumption-refresh-visible-v2.json
+          git commit -m "ci: mark synchronized consumption preview running [skip ci]"
+          git push -q origin "HEAD:${GITHUB_REF_NAME}"
+
+          started_epoch="$(date +%s)"
+          completed=true
+          samples=0
+          for _ in $(seq 1 $((REVIEW_DURATION_SECONDS / 2))); do
+            if ! kill -0 "${app_pid}" 2>/dev/null; then completed=false; break; fi
+            samples=$((samples + 1))
+            sleep 2
+          done
+          elapsed="$(( $(date +%s) - started_epoch ))"
+          if kill -0 "${app_pid}" 2>/dev/null; then kill -TERM "${app_pid}" || true; fi
+          after_crashes="$(find "${HOME}/Library/Logs/DiagnosticReports" -maxdepth 1 -type f -name 'MacVitals*.ips' -print 2>/dev/null | wc -l | tr -d ' ')"
+          new_crashes=$((after_crashes - before_crashes))
+          result=failure
+          if [[ "${completed}" == true && "${elapsed}" -ge 896 && "${new_crashes}" -eq 0 ]]; then result=success; fi
+
+          git fetch -q origin "${GITHUB_REF_NAME}"
+          git reset -q --hard FETCH_HEAD
+          RESULT="${result}" PRODUCT_SHA="${PRODUCT_SHA}" WORKFLOW_SHA="${GITHUB_SHA}" ELAPSED="${elapsed}" SAMPLES="${samples}" CRASHES="${new_crashes}" APP="~/Downloads/MacVitals-consumption-refresh-visible-${short_sha}.app" python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          payload = {
+              "schemaVersion": 1,
+              "state": "finished",
+              "result": os.environ["RESULT"],
+              "physicalGuiRun": True,
+              "architecture": "arm64",
+              "sourceSha": os.environ["WORKFLOW_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "requestedDurationSeconds": 900,
+              "observedDurationSeconds": int(os.environ["ELAPSED"]),
+              "sampleCount": int(os.environ["SAMPLES"]),
+              "newCrashReportCount": int(os.environ["CRASHES"]),
+              "finishedAt": datetime.now(timezone.utc).isoformat(),
+              "visibleApp": os.environ["APP"],
+              "xctestRun": False,
+          }
+          Path("build-status/historical-consumption-refresh-visible-v2.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+          git add build-status/historical-consumption-refresh-visible-v2.json
+          git commit -m "ci: record synchronized consumption preview [skip ci]"
+          git push -q origin "HEAD:${GITHUB_REF_NAME}"
+          [[ "${result}" == success ]]
