@@ -1,0 +1,9 @@
+{
+  "architecture": "arm64",
+  "diagnostics": "2026-08-01 15:47:56.547 appintentsmetadataprocessor[37033:1616895] warning: Metadata extraction skipped. No AppIntents.framework dependency found.\n** BUILD SUCCEEDED **\n",
+  "localArtifact": "~/Downloads/MacVitals-storage-preview-01a6a8d7e053.zip",
+  "result": "success",
+  "schemaVersion": 1,
+  "sourceSha": "01a6a8d7e0531616e77156aad50dab8e2a2c6d36",
+  "testsRun": false
+}
