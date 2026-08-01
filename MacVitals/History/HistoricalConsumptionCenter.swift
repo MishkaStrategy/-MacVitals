@@ -14,7 +14,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
   private let store = HistoricalConsumptionArchiveStore()
   private var samplingTask: Task<Void, Never>?
   private var lastSnapshotAt: Date?
-  private var currentInterval: TimeInterval = 5
+  private var currentInterval: TimeInterval = 1
 
   private init() {}
 
@@ -74,7 +74,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
   }
 
   private func normalizedInterval(_ interval: TimeInterval) -> TimeInterval {
-    min(30, max(5, interval.isFinite ? interval : 5))
+    min(30, max(1, interval.isFinite ? interval : 5))
   }
 
   private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
