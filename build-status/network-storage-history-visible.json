@@ -1,0 +1,16 @@
+{
+  "architecture": "arm64",
+  "consoleSessionActive": true,
+  "detail": "Network and storage history preview is visible in the active menu-bar session",
+  "physicalGuiRun": true,
+  "pid": 42964,
+  "productSourceSha": "0cd37dab2f3074193c9e44ed7c19240fc62ad11a",
+  "requestedDurationSeconds": 900,
+  "result": null,
+  "schemaVersion": 1,
+  "sourceSha": "b6bab97e93e52d1b07c60c54f61166e015d9b248",
+  "startedAt": "2026-08-01T15:00:17.346440+00:00",
+  "state": "running",
+  "visibleApp": "~/Downloads/MacVitals-network-storage-history-visible-b6bab97e93e5.app",
+  "xctestRun": false
+}
