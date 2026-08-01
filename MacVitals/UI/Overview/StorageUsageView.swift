@@ -136,7 +136,7 @@ struct StorageUsageView: View {
     let color = theme.color(for: .memory)
     Button {
       action()
-      SupplementalMetricDetailWindowPresenter.shared.show(
+      SupplementalMetricTabbedWindowPresenter.shared.show(
         kind: .storage,
         settings: settings,
         networkMonitor: .shared,
