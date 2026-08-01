@@ -204,7 +204,7 @@ struct NetworkTrafficView: View {
     let color = theme.color(for: .fans)
     Button {
       action()
-      SupplementalMetricDetailWindowPresenter.shared.show(
+      SupplementalMetricTabbedWindowPresenter.shared.show(
         kind: .network,
         settings: settings,
         networkMonitor: monitor,
