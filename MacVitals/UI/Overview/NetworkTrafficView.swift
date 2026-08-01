@@ -71,6 +71,8 @@ nonisolated enum NetworkInterfaceReader {
 
 @MainActor
 final class NetworkTrafficMonitor: ObservableObject {
+  static let shared = NetworkTrafficMonitor()
+
   private struct Baseline {
     let counters: NetworkInterfaceCounters
     let timestamp: Date
@@ -191,7 +193,7 @@ struct NetworkTrafficView: View {
   private let action: () -> Void
 
   init(
-    monitor: NetworkTrafficMonitor = NetworkTrafficMonitor(),
+    monitor: NetworkTrafficMonitor = .shared,
     action: @escaping () -> Void = {}
   ) {
     _monitor = ObservedObject(wrappedValue: monitor)
@@ -200,7 +202,14 @@ struct NetworkTrafficView: View {
 
   var body: some View {
     let color = theme.color(for: .fans)
-    Button(action: action) {
+    Button {
+      action()
+      SupplementalMetricDetailWindowPresenter.shared.show(
+        kind: .network,
+        settings: settings,
+        networkMonitor: monitor,
+        storageMonitor: .shared)
+    } label: {
       VStack(alignment: .leading, spacing: 9) {
         HStack {
           Label(NetworkL10n.string("Network"), systemImage: "network")
