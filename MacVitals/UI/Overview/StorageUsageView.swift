@@ -51,6 +51,8 @@ nonisolated enum StorageUsageReader {
 
 @MainActor
 final class StorageUsageMonitor: ObservableObject {
+  static let shared = StorageUsageMonitor()
+
   @Published private(set) var snapshot: StorageUsageSnapshot?
   @Published private(set) var history: [StorageUsageHistorySample] = []
   @Published private(set) var isAvailable = true
@@ -123,7 +125,7 @@ struct StorageUsageView: View {
   private let action: () -> Void
 
   init(
-    monitor: StorageUsageMonitor = StorageUsageMonitor(),
+    monitor: StorageUsageMonitor = .shared,
     action: @escaping () -> Void = {}
   ) {
     _monitor = ObservedObject(wrappedValue: monitor)
@@ -132,7 +134,14 @@ struct StorageUsageView: View {
 
   var body: some View {
     let color = theme.color(for: .memory)
-    Button(action: action) {
+    Button {
+      action()
+      SupplementalMetricDetailWindowPresenter.shared.show(
+        kind: .storage,
+        settings: settings,
+        networkMonitor: .shared,
+        storageMonitor: monitor)
+    } label: {
       VStack(alignment: .leading, spacing: 8) {
         HStack {
           Label(StorageL10n.string("Storage"), systemImage: "internaldrive.fill")
