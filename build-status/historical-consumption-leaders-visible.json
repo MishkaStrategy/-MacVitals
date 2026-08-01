@@ -1,0 +1,15 @@
+{
+  "architecture": "arm64",
+  "consoleSessionActive": true,
+  "physicalGuiRun": true,
+  "pid": 97047,
+  "productSourceSha": "9159d2be14b9017153783e929f5988621e467fbc",
+  "requestedDurationSeconds": 900,
+  "result": null,
+  "schemaVersion": 1,
+  "sourceSha": "283b8423e37b4ebff128dedd1f5e3b5d5555823f",
+  "startedAt": "2026-08-01T15:25:52.511411+00:00",
+  "state": "running",
+  "visibleApp": "~/Downloads/MacVitals-consumption-leaders-visible-9159d2be14b9.app",
+  "xctestRun": false
+}
