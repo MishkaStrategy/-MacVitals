@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      PRODUCT_SHA: 9159d2be14b9017153783e929f5988621e467fbc
+      PRODUCT_SHA: fd62873f2cd55497393835a37040599dcf9c1e3a
       REVIEW_DURATION_SECONDS: "900"
     steps:
       - name: Build and launch visible unsigned ARM64 candidate
