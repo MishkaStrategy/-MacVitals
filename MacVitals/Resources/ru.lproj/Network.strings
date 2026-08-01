@@ -4,3 +4,10 @@
 "Received" = "Получено";
 "Sent" = "Отправлено";
 "Network data unavailable" = "Данные сети недоступны";
+"Open traffic history" = "Открыть историю трафика";
+"Current speed" = "Текущая скорость";
+"Received this session" = "Получено за сеанс";
+"Sent this session" = "Отправлено за сеанс";
+"Current session" = "Текущий сеанс";
+"Interface totals" = "Счётчики интерфейса";
+"Traffic history" = "История трафика";
