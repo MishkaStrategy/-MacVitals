@@ -1,0 +1,38 @@
+{
+  "architecture": "arm64",
+  "diagnostics": "2026-08-01 20:51:33.152 appintentsmetadataprocessor[77193:2875340] warning: Metadata extraction skipped. No AppIntents.framework dependency found.\n** BUILD SUCCEEDED **\n\nMacVitals lifetime diagnostic: completed=True, samples=301, termination=signal, returnCode=-15\n",
+  "durationSeconds": 300,
+  "lifetime": {
+    "aliveUntilHarnessTermination": true,
+    "completedRequestedDuration": true,
+    "identityStable": true,
+    "observedDurationSeconds": 300.0230997500039,
+    "sampleCount": 301,
+    "terminationInitiatedByHarness": true,
+    "terminationKind": "signal",
+    "terminationSignal": "SIGTERM"
+  },
+  "localArtifact": "~/Downloads/MacVitals-storage-physical-0eea267e53c7.zip",
+  "newCrashReportCount": 0,
+  "outcomes": {
+    "appLifetime": "success",
+    "build": "success",
+    "prepare": "success",
+    "storageCounters": "success"
+  },
+  "physicalTestRun": true,
+  "productSourceSha": "01a6a8d7e0531616e77156aad50dab8e2a2c6d36",
+  "result": "success",
+  "schemaVersion": 1,
+  "sourceSha": "0eea267e53c7ef07acbaa17fd76c6ad2959a1f31",
+  "storage": {
+    "availableGiB": 227.93,
+    "dfAvailableDeltaMiB": 0.08,
+    "dfTotalDeltaMiB": 0.0,
+    "totalGiB": 460.43,
+    "usedGiB": 232.5,
+    "usedPercent": 50.5,
+    "volumeNamePresent": true
+  },
+  "xctestRun": false
+}
