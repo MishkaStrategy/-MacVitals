@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let coordinator = MetricsCoordinator()
   let fanControl = FanControlClient()
   private let notificationCoordinator = NotificationCoordinator()
+  private let consumptionHistory = HistoricalConsumptionCenter.shared
   private var statusController: StatusItemController?
   private var cancellables = Set<AnyCancellable>()
 
@@ -37,12 +38,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       .store(in: &cancellables)
 
+    settings.$samplingInterval
+      .removeDuplicates()
+      .dropFirst()
+      .sink { [weak self] interval in
+        self?.consumptionHistory.restart(interval: interval)
+      }
+      .store(in: &cancellables)
+
     coordinator.onSnapshot = { [weak self] snapshot in
       self?.notificationCoordinator.process(snapshot: snapshot)
     }
 
     fanControl.refreshStatus()
     coordinator.start()
+    consumptionHistory.start(interval: settings.samplingInterval)
     LifecycleMonitor.shared.start(coordinator: coordinator)
     Logger.lifecycle.info("MacVitals started")
   }
@@ -58,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     fanControl.setAllAutomatic()
     fanControl.invalidateConnection()
+    consumptionHistory.stop()
     coordinator.stop()
     coordinator.onSnapshot = nil
     notificationCoordinator.onAuthorizationStateChange = nil
