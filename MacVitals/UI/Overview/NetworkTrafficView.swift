@@ -6,8 +6,17 @@ nonisolated struct NetworkTrafficSnapshot: Sendable, Equatable {
   let interfaceName: String
   let receivedBytes: UInt64
   let sentBytes: UInt64
+  let sessionReceivedBytes: UInt64
+  let sessionSentBytes: UInt64
   let downloadBytesPerSecond: Double?
   let uploadBytesPerSecond: Double?
+}
+
+nonisolated struct NetworkTrafficHistorySample: Sendable, Equatable, Identifiable {
+  let id: UUID
+  let timestamp: Date
+  let downloadBytesPerSecond: Double
+  let uploadBytesPerSecond: Double
 }
 
 nonisolated struct NetworkInterfaceCounters: Sendable, Equatable {
@@ -68,32 +77,52 @@ final class NetworkTrafficMonitor: ObservableObject {
   }
 
   @Published private(set) var snapshot: NetworkTrafficSnapshot?
+  @Published private(set) var history: [NetworkTrafficHistorySample] = []
   @Published private(set) var isAvailable = true
 
   private var baseline: Baseline?
+  private var sessionBaseline: NetworkInterfaceCounters?
   private var samplingTask: Task<Void, Never>?
+  private var activeConsumers = 0
+  private var currentInterval: TimeInterval = 5
 
   func start(interval: TimeInterval) {
+    activeConsumers += 1
+    currentInterval = normalized(interval)
     guard samplingTask == nil else { return }
-    let normalizedInterval = max(1, interval.isFinite ? interval : 5)
-    samplingTask = Task { [weak self] in
-      while !Task.isCancelled {
-        guard let self else { return }
-        sample(now: Date())
-        try? await Task.sleep(nanoseconds: UInt64(normalizedInterval * 1_000_000_000))
-      }
-    }
+    runSamplingTask()
   }
 
   func restart(interval: TimeInterval) {
-    stop()
-    start(interval: interval)
+    currentInterval = normalized(interval)
+    guard activeConsumers > 0 else { return }
+    samplingTask?.cancel()
+    samplingTask = nil
+    runSamplingTask()
   }
 
   func stop() {
+    activeConsumers = max(0, activeConsumers - 1)
+    guard activeConsumers == 0 else { return }
     samplingTask?.cancel()
     samplingTask = nil
     baseline = nil
+  }
+
+  private func normalized(_ interval: TimeInterval) -> TimeInterval {
+    max(1, interval.isFinite ? interval : 5)
+  }
+
+  private func runSamplingTask() {
+    sample(now: Date())
+    let interval = currentInterval
+    samplingTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        guard !Task.isCancelled, let self else { return }
+        sample(now: Date())
+      }
+    }
   }
 
   private func sample(now: Date) {
@@ -101,7 +130,15 @@ final class NetworkTrafficMonitor: ObservableObject {
       isAvailable = false
       snapshot = nil
       baseline = nil
+      sessionBaseline = nil
       return
+    }
+
+    if sessionBaseline?.name != counters.name
+      || counters.receivedBytes < (sessionBaseline?.receivedBytes ?? 0)
+      || counters.sentBytes < (sessionBaseline?.sentBytes ?? 0)
+    {
+      sessionBaseline = counters
     }
 
     var downloadRate: Double?
@@ -118,69 +155,106 @@ final class NetworkTrafficMonitor: ObservableObject {
       }
     }
 
+    let sessionReceived = counters.receivedBytes - (sessionBaseline?.receivedBytes ?? counters.receivedBytes)
+    let sessionSent = counters.sentBytes - (sessionBaseline?.sentBytes ?? counters.sentBytes)
+
     isAvailable = true
     snapshot = NetworkTrafficSnapshot(
       interfaceName: counters.name,
       receivedBytes: counters.receivedBytes,
       sentBytes: counters.sentBytes,
+      sessionReceivedBytes: sessionReceived,
+      sessionSentBytes: sessionSent,
       downloadBytesPerSecond: downloadRate,
       uploadBytesPerSecond: uploadRate)
     baseline = Baseline(counters: counters, timestamp: now)
+
+    if downloadRate != nil || uploadRate != nil {
+      history.append(
+        NetworkTrafficHistorySample(
+          id: UUID(),
+          timestamp: now,
+          downloadBytesPerSecond: max(0, downloadRate ?? 0),
+          uploadBytesPerSecond: max(0, uploadRate ?? 0)))
+      let cutoff = now.addingTimeInterval(-60 * 60)
+      history.removeAll { $0.timestamp < cutoff }
+    }
   }
 }
 
+@MainActor
 struct NetworkTrafficView: View {
   @Environment(\.appTheme) private var theme
   @EnvironmentObject private var settings: SettingsStore
-  @StateObject private var monitor = NetworkTrafficMonitor()
+  @ObservedObject private var monitor: NetworkTrafficMonitor
+
+  private let action: () -> Void
+
+  init(
+    monitor: NetworkTrafficMonitor = NetworkTrafficMonitor(),
+    action: @escaping () -> Void = {}
+  ) {
+    _monitor = ObservedObject(wrappedValue: monitor)
+    self.action = action
+  }
 
   var body: some View {
     let color = theme.color(for: .fans)
-    VStack(alignment: .leading, spacing: 9) {
-      HStack {
-        Label(NetworkL10n.string("Network"), systemImage: "network")
-          .font(.caption.bold())
-          .foregroundStyle(color)
-        Spacer()
-        Text(monitor.snapshot?.interfaceName ?? "—")
-          .font(.caption2.monospaced())
-          .foregroundStyle(.secondary)
-      }
-
-      if let snapshot = monitor.snapshot {
-        HStack(spacing: 12) {
-          speedValue(
-            title: NetworkL10n.string("Download"),
-            symbol: "arrow.down",
-            value: snapshot.downloadBytesPerSecond,
-            color: color)
-          Divider().frame(height: 31)
-          speedValue(
-            title: NetworkL10n.string("Upload"),
-            symbol: "arrow.up",
-            value: snapshot.uploadBytesPerSecond,
-            color: color)
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 9) {
+        HStack {
+          Label(NetworkL10n.string("Network"), systemImage: "network")
+            .font(.caption.bold())
+            .foregroundStyle(color)
+          Spacer()
+          Text(monitor.snapshot?.interfaceName ?? "—")
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+          Image(systemName: "chevron.right")
+            .font(.caption.bold())
+            .foregroundStyle(.tertiary)
         }
-        Text(
-          "\(NetworkL10n.string("Received")) \(NetworkByteFormatter.bytes(snapshot.receivedBytes)) · "
-            + "\(NetworkL10n.string("Sent")) \(NetworkByteFormatter.bytes(snapshot.sentBytes))"
-        )
-        .font(.caption2.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-      } else {
-        Text(NetworkL10n.string("Network data unavailable"))
-          .font(.caption)
+
+        if let snapshot = monitor.snapshot {
+          HStack(spacing: 12) {
+            speedValue(
+              title: NetworkL10n.string("Download"),
+              symbol: "arrow.down",
+              value: snapshot.downloadBytesPerSecond,
+              color: color)
+            Divider().frame(height: 31)
+            speedValue(
+              title: NetworkL10n.string("Upload"),
+              symbol: "arrow.up",
+              value: snapshot.uploadBytesPerSecond,
+              color: color)
+          }
+          Text(
+            "\(NetworkL10n.string("Received")) \(NetworkByteFormatter.bytes(snapshot.receivedBytes)) · "
+              + "\(NetworkL10n.string("Sent")) \(NetworkByteFormatter.bytes(snapshot.sentBytes))"
+          )
+          .font(.caption2.monospacedDigit())
           .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+          .lineLimit(1)
+        } else {
+          Text(NetworkL10n.string("Network data unavailable"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+        }
       }
+      .padding(10)
+      .background(
+        color.opacity(theme.style == .multicolor ? 0.08 : 0.055),
+        in: RoundedRectangle(cornerRadius: 11))
+      .overlay(
+        RoundedRectangle(cornerRadius: 11)
+          .stroke(Color.secondary.opacity(0.16), lineWidth: 1))
+      .contentShape(RoundedRectangle(cornerRadius: 11))
     }
-    .padding(10)
-    .background(color.opacity(theme.style == .multicolor ? 0.08 : 0.055), in: RoundedRectangle(cornerRadius: 11))
-    .overlay(
-      RoundedRectangle(cornerRadius: 11)
-        .stroke(Color.secondary.opacity(0.16), lineWidth: 1))
+    .buttonStyle(.plain)
     .accessibilityElement(children: .combine)
+    .accessibilityHint(NetworkL10n.string("Open traffic history"))
     .onAppear { monitor.start(interval: settings.samplingInterval) }
     .onDisappear { monitor.stop() }
     .onChange(of: settings.samplingInterval) { interval in
