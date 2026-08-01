@@ -1,0 +1,19 @@
+{
+  "architecture": "arm64",
+  "detail": "runner accepted visible GUI review",
+  "newCrashReportCount": 0,
+  "observedDurationSeconds": 0,
+  "physicalGuiRun": true,
+  "pid": null,
+  "productSourceSha": "01a6a8d7e0531616e77156aad50dab8e2a2c6d36",
+  "requestedDurationSeconds": 600,
+  "result": null,
+  "sampleCount": 0,
+  "schemaVersion": 1,
+  "sourceSha": "e6db53997264b907951faff71500826785cbe43f",
+  "startedAt": null,
+  "state": "preparing",
+  "updatedAt": "2026-08-01T14:20:40.980939+00:00",
+  "visibleApp": null,
+  "xctestRun": false
+}
