@@ -14,7 +14,7 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
     fanControl: FanControlClient
   ) {
     let rootView = ThemedMetricDetailRoot(metric: kind.themeMetricKind) {
-      MetricDetailView(kind: kind)
+      MetricDetailTabbedContainer(kind: kind)
         .environmentObject(coordinator)
         .environmentObject(settings)
         .environmentObject(fanControl)
@@ -36,7 +36,7 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
     window.title = kind.title
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
     window.setContentSize(size)
-    window.minSize = NSSize(width: 620, height: 500)
+    window.minSize = NSSize(width: 660, height: 560)
     window.isReleasedWhenClosed = false
     window.collectionBehavior = [.moveToActiveSpace]
     window.delegate = self
@@ -58,11 +58,11 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
 
   private func preferredSize(for kind: MetricDetailKind) -> NSSize {
     switch kind {
-    case .fans: return NSSize(width: 660, height: 690)
-    case .temperature: return NSSize(width: 660, height: 700)
-    case .power: return NSSize(width: 660, height: 560)
-    case .battery: return NSSize(width: 720, height: 820)
-    case .cpu, .memory, .gpu: return NSSize(width: 720, height: 650)
+    case .fans: return NSSize(width: 700, height: 750)
+    case .temperature: return NSSize(width: 700, height: 760)
+    case .power: return NSSize(width: 700, height: 620)
+    case .battery: return NSSize(width: 760, height: 900)
+    case .cpu, .memory, .gpu: return NSSize(width: 760, height: 730)
     }
   }
 }
