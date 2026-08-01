@@ -1,15 +1,18 @@
 {
   "architecture": "arm64",
-  "consoleSessionActive": true,
+  "completedRequestedDuration": true,
+  "finishedAt": "2026-08-01T15:41:03.282290+00:00",
+  "newCrashReportCount": 0,
+  "observedDurationSeconds": 908,
   "physicalGuiRun": true,
-  "pid": 97047,
   "productSourceSha": "9159d2be14b9017153783e929f5988621e467fbc",
   "requestedDurationSeconds": 900,
-  "result": null,
+  "result": "success",
+  "sampleCount": 450,
   "schemaVersion": 1,
   "sourceSha": "283b8423e37b4ebff128dedd1f5e3b5d5555823f",
-  "startedAt": "2026-08-01T15:25:52.511411+00:00",
-  "state": "running",
+  "state": "finished",
+  "terminationInitiatedByHarness": true,
   "visibleApp": "~/Downloads/MacVitals-consumption-leaders-visible-9159d2be14b9.app",
   "xctestRun": false
 }
