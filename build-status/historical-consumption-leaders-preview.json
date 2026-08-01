@@ -1,0 +1,9 @@
+{
+  "architecture": "arm64",
+  "diagnostics": "2026-08-01 22:21:37.856 appintentsmetadataprocessor[89403:3494642] warning: Metadata extraction skipped. No AppIntents.framework dependency found.\n** BUILD SUCCEEDED **\n",
+  "localArtifact": "~/Downloads/MacVitals-consumption-leaders-9159d2be14b9.zip",
+  "result": "success",
+  "schemaVersion": 1,
+  "sourceSha": "9159d2be14b9017153783e929f5988621e467fbc",
+  "testsRun": false
+}
