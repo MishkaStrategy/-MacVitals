@@ -1,0 +1,134 @@
+name: Network Storage History Preview Build
+
+on:
+  push:
+    branches: [feature/network-storage-history-preview]
+    paths-ignore:
+      - build-status/**
+
+concurrency:
+  group: network-storage-history-preview-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-only:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Build unsigned ARM64 history preview without tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          source_dir="${GITHUB_WORKSPACE}/network-storage-history-preview-source"
+          rm -rf -- "${source_dir}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+
+          developer_dir="$(xcode-select -p)"
+          [[ -x "${developer_dir}/usr/bin/xcodebuild" ]]
+          export DEVELOPER_DIR="${developer_dir}"
+          xcodegen_path=""
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              xcodegen_path="${candidate}"
+              break
+            fi
+          done
+          [[ -n "${xcodegen_path}" ]] || { echo "xcodegen is unavailable" >&2; exit 1; }
+
+          rm -rf -- build/network-storage-history-preview dist/network-storage-history-preview
+          mkdir -p build/network-storage-history-preview dist/network-storage-history-preview build-status
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+
+          set +e
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/network-storage-history-preview \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build > build/network-storage-history-preview/xcodebuild.log 2>&1
+          status=$?
+          set -e
+
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' \
+            build/network-storage-history-preview/xcodebuild.log | tail -n 240 \
+            > build/network-storage-history-preview/diagnostics.txt || true
+          cat build/network-storage-history-preview/diagnostics.txt
+
+          result="failure"
+          architecture="unknown"
+          artifact=""
+          if [[ ${status} -eq 0 ]]; then
+            app="build/network-storage-history-preview/Build/Products/Release/MacVitals.app"
+            executable="${app}/Contents/MacOS/MacVitals"
+            [[ -d "${app}" && -x "${executable}" ]]
+            architecture="$(lipo -archs "${executable}")"
+            [[ "${architecture}" == "arm64" ]]
+
+            short_sha="${GITHUB_SHA:0:12}"
+            archive_name="MacVitals-network-storage-history-${short_sha}.zip"
+            workspace_archive="dist/network-storage-history-preview/${archive_name}"
+            ditto -c -k --sequesterRsrc --keepParent "${app}" "${workspace_archive}"
+
+            account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+            [[ -n "${account_home}" && -d "${account_home}" ]]
+            mkdir -p "${account_home}/Downloads"
+            cp -f "${workspace_archive}" "${account_home}/Downloads/${archive_name}"
+            chmod 0644 "${account_home}/Downloads/${archive_name}"
+            artifact="~/Downloads/${archive_name}"
+            result="success"
+          fi
+
+          RESULT="${result}" \
+          SOURCE_SHA="${GITHUB_SHA}" \
+          ARCHITECTURE="${architecture}" \
+          ARTIFACT="${artifact}" \
+          DIAGNOSTICS="build/network-storage-history-preview/diagnostics.txt" \
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          diagnostics_path = Path(os.environ["DIAGNOSTICS"])
+          diagnostics = diagnostics_path.read_text(encoding="utf-8", errors="replace") if diagnostics_path.exists() else ""
+          payload = {
+              "schemaVersion": 1,
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "result": os.environ["RESULT"],
+              "architecture": os.environ["ARCHITECTURE"],
+              "localArtifact": os.environ["ARTIFACT"] or None,
+              "testsRun": False,
+              "diagnostics": diagnostics[-16000:],
+          }
+          Path("build-status/network-storage-history-preview.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/network-storage-history-preview.json
+          git commit -m "ci: record network storage history preview build [skip ci]"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
+
+          exit ${status}
