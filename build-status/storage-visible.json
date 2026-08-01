@@ -1,19 +1,25 @@
 {
   "architecture": "arm64",
-  "detail": "failed during launch",
+  "detail": "runner accepted visible GUI review",
+  "launch": {
+    "asuserExecutableExitCode": -1,
+    "asuserOpenExitCode": -1,
+    "directOpenExitCode": -1,
+    "method": null
+  },
   "newCrashReportCount": 0,
   "observedDurationSeconds": 0,
   "physicalGuiRun": true,
   "pid": null,
   "productSourceSha": "01a6a8d7e0531616e77156aad50dab8e2a2c6d36",
-  "requestedDurationSeconds": 600,
-  "result": "failure",
+  "requestedDurationSeconds": 900,
+  "result": null,
   "sampleCount": 0,
   "schemaVersion": 1,
-  "sourceSha": "e6db53997264b907951faff71500826785cbe43f",
+  "sourceSha": "84c70c0bcdea6aa3995c9564ed45e4f15f928944",
   "startedAt": null,
-  "state": "finished",
-  "updatedAt": "2026-08-01T14:21:13.217165+00:00",
-  "visibleApp": "~/Downloads/MacVitals-storage-visible-e6db53997264.app",
+  "state": "preparing",
+  "updatedAt": "2026-08-01T14:26:29.338811+00:00",
+  "visibleApp": null,
   "xctestRun": false
 }
