@@ -1,0 +1,243 @@
+name: Storage Visible Physical Review
+
+on:
+  push:
+    branches: [validation/storage-usage-visible]
+    paths-ignore:
+      - build-status/**
+
+concurrency:
+  group: storage-visible-physical-review
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  visible-review:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REVIEW_DURATION_SECONDS: "900"
+
+    steps:
+      - name: Build and launch visible unsigned ARM64 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          source_dir="${GITHUB_WORKSPACE}/storage-visible-source"
+          rm -rf -- "${source_dir}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+          [[ "$(uname -s)" == "Darwin" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+
+          console_user="$(stat -f '%Su' /dev/console)"
+          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]]
+          console_uid="$(id -u "${console_user}")"
+          [[ "${console_uid}" == "$(id -u)" ]]
+          [[ "${console_user}" == "$(id -un)" ]]
+
+          developer_dir="$(xcode-select -p)"
+          [[ -x "${developer_dir}/usr/bin/xcodebuild" ]]
+          export DEVELOPER_DIR="${developer_dir}"
+
+          xcodegen_path=""
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              xcodegen_path="${candidate}"
+              break
+            fi
+          done
+          [[ -n "${xcodegen_path}" ]] || { echo "xcodegen is unavailable" >&2; exit 1; }
+
+          rm -rf -- build/storage-visible build-status/storage-visible.json
+          mkdir -p build/storage-visible build-status
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/storage-visible \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build > build/storage-visible/xcodebuild.log 2>&1
+
+          app="build/storage-visible/Build/Products/Release/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -d "${app}" && -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == "arm64" ]]
+
+          if pgrep -x MacVitals >/dev/null 2>&1; then
+            echo "A MacVitals process is already running; refusing to start a duplicate visible review." >&2
+            exit 1
+          fi
+
+          short_sha="${GITHUB_SHA:0:12}"
+          visible_app="${HOME}/Downloads/MacVitals-storage-visible-${short_sha}.app"
+          rm -rf -- "${visible_app}"
+          ditto "${app}" "${visible_app}"
+          visible_executable="${visible_app}/Contents/MacOS/MacVitals"
+          [[ -x "${visible_executable}" ]]
+
+          before_crashes="$(find "${HOME}/Library/Logs/DiagnosticReports" -maxdepth 1 -type f -name 'MacVitals*.ips' -print 2>/dev/null | wc -l | tr -d ' ')"
+
+          /bin/launchctl asuser "${console_uid}" /usr/bin/open -n "${visible_app}" --args \
+            -notificationsEnabled NO \
+            -showInDock NO
+
+          app_pid=""
+          for _ in $(seq 1 60); do
+            while IFS= read -r candidate_pid; do
+              [[ "${candidate_pid}" =~ ^[0-9]+$ ]] || continue
+              command_path="$(ps -p "${candidate_pid}" -o command= | sed 's/[[:space:]]*$//')"
+              if [[ "${command_path}" == "${visible_executable}" || "${command_path}" == "${visible_executable} "* ]]; then
+                app_pid="${candidate_pid}"
+                break
+              fi
+            done < <(pgrep -x MacVitals || true)
+            [[ -n "${app_pid}" ]] && break
+            sleep 1
+          done
+          [[ -n "${app_pid}" ]]
+
+          initial_start="$(ps -p "${app_pid}" -o lstart= | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          [[ -n "${initial_start}" ]]
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          STATE="running" \
+          SOURCE_SHA="${GITHUB_SHA}" \
+          PRODUCT_SHA="01a6a8d7e0531616e77156aad50dab8e2a2c6d36" \
+          APP_PID="${app_pid}" \
+          DURATION="${REVIEW_DURATION_SECONDS}" \
+          APP_PATH="~/Downloads/MacVitals-storage-visible-${short_sha}.app" \
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          payload = {
+              "schemaVersion": 1,
+              "state": os.environ["STATE"],
+              "physicalGuiRun": True,
+              "consoleSessionActive": True,
+              "architecture": "arm64",
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "pid": int(os.environ["APP_PID"]),
+              "reviewDurationSeconds": int(os.environ["DURATION"]),
+              "visibleApp": os.environ["APP_PATH"],
+              "startedAt": datetime.now(timezone.utc).isoformat(),
+              "xctestRun": False,
+          }
+          Path("build-status/storage-visible.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          git add build-status/storage-visible.json
+          git commit -m "ci: mark visible storage review running [skip ci]"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
+
+          started_epoch="$(date +%s)"
+          completed=true
+          samples=0
+          for _ in $(seq 1 $((REVIEW_DURATION_SECONDS / 2))); do
+            if ! kill -0 "${app_pid}" 2>/dev/null; then
+              completed=false
+              break
+            fi
+            current_start="$(ps -p "${app_pid}" -o lstart= | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ "${current_start}" != "${initial_start}" ]]; then
+              completed=false
+              break
+            fi
+            samples=$((samples + 1))
+            sleep 2
+          done
+
+          elapsed="$(( $(date +%s) - started_epoch ))"
+          harness_terminated=false
+          if kill -0 "${app_pid}" 2>/dev/null; then
+            harness_terminated=true
+            kill -TERM "${app_pid}" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              kill -0 "${app_pid}" 2>/dev/null || break
+              sleep 0.25
+            done
+            kill -KILL "${app_pid}" 2>/dev/null || true
+          fi
+
+          after_crashes="$(find "${HOME}/Library/Logs/DiagnosticReports" -maxdepth 1 -type f -name 'MacVitals*.ips' -print 2>/dev/null | wc -l | tr -d ' ')"
+          new_crashes=$((after_crashes - before_crashes))
+          result="failure"
+          if [[ "${completed}" == "true" && "${elapsed}" -ge $((REVIEW_DURATION_SECONDS - 4)) && "${new_crashes}" -eq 0 ]]; then
+            result="success"
+          fi
+
+          STATE="finished" \
+          RESULT="${result}" \
+          SOURCE_SHA="${GITHUB_SHA}" \
+          PRODUCT_SHA="01a6a8d7e0531616e77156aad50dab8e2a2c6d36" \
+          DURATION="${REVIEW_DURATION_SECONDS}" \
+          ELAPSED="${elapsed}" \
+          SAMPLES="${samples}" \
+          COMPLETED="${completed}" \
+          HARNESS_TERMINATED="${harness_terminated}" \
+          NEW_CRASHES="${new_crashes}" \
+          APP_PATH="~/Downloads/MacVitals-storage-visible-${short_sha}.app" \
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          payload = {
+              "schemaVersion": 1,
+              "state": os.environ["STATE"],
+              "result": os.environ["RESULT"],
+              "physicalGuiRun": True,
+              "consoleSessionActive": True,
+              "architecture": "arm64",
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "requestedDurationSeconds": int(os.environ["DURATION"]),
+              "observedDurationSeconds": int(os.environ["ELAPSED"]),
+              "sampleCount": int(os.environ["SAMPLES"]),
+              "completedRequestedDuration": os.environ["COMPLETED"] == "true",
+              "terminationInitiatedByHarness": os.environ["HARNESS_TERMINATED"] == "true",
+              "newCrashReportCount": int(os.environ["NEW_CRASHES"]),
+              "visibleApp": os.environ["APP_PATH"],
+              "finishedAt": datetime.now(timezone.utc).isoformat(),
+              "xctestRun": False,
+          }
+          Path("build-status/storage-visible.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          git add build-status/storage-visible.json
+          git commit -m "ci: record visible storage review result [skip ci]"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
+
+          [[ "${result}" == "success" ]]
