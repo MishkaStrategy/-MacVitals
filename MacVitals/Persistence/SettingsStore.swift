@@ -235,7 +235,7 @@ final class SettingsStore: ObservableObject {
     showAroundStatusBar = defaults.bool(forKey: Keys.showAroundStatusBar)
     notchHUDConfiguration = defaults.data(forKey: Keys.notchHUDConfiguration)
       .flatMap { NotchHUDConfigurationPersistence.decode($0) }
-      ?? .balanced
+      ?? .minimal
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
     memoryAlertsEnabled = defaults.object(forKey: Keys.memoryAlertsEnabled) == nil
       ? true
@@ -317,7 +317,7 @@ final class SettingsStore: ObservableObject {
   }
 
   func resetNotchHUDConfiguration() {
-    notchHUDConfiguration = .balanced
+    notchHUDConfiguration = .minimal
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {
