@@ -56,3 +56,7 @@
 "%d of %d configured sensors visible" = "Показано датчиков: %d из %d";
 "Move earlier" = "Переместить раньше";
 "Move later" = "Переместить позже";
+"Keep Mac awake" = "Не давать Mac уснуть";
+"Allow Mac to sleep" = "Разрешить Mac переходить в сон";
+"Awake mode is on" = "Режим бодрствования включён";
+"Awake mode is off" = "Режим бодрствования выключен";
