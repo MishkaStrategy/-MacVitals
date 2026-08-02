@@ -9,6 +9,13 @@ nonisolated enum L10n {
       value: missingSentinel,
       table: "UXV2")
     if modern != missingSentinel { return modern }
+
+    let notchHUD = Bundle.main.localizedString(
+      forKey: key,
+      value: missingSentinel,
+      table: "NotchHUD")
+    if notchHUD != missingSentinel { return notchHUD }
+
     return NSLocalizedString(key, bundle: .main, comment: comment)
   }
 
