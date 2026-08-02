@@ -1,0 +1,64 @@
+name: Physical Test Notch Indicator V3
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-notch-indicator-diagnostics
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  physical-notch-indicator-v3:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-test-notch-indicator'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    env:
+      APP_ARTIFACT_ID: '8834411613'
+      APP_ARTIFACT_DIGEST: 'c0e20c958f24ac098824b2eb176dbd88008509844cca595d0c99a7c477efcd38'
+      FEATURE_HEAD_SHA: '10d2766b7bc8f4427043ccc3574a4f2d89eed753'
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Materialize physical validation script
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/physical-test-notch-indicator-v2.yml').read_text(encoding='utf-8').splitlines()
+          step = next(i for i, line in enumerate(source) if line.strip() == '- name: Validate one physical notch overlay')
+          run_line = next(i for i in range(step + 1, len(source)) if source[i].strip() == 'run: |')
+          end = next(i for i in range(run_line + 1, len(source)) if source[i].strip() == '- name: Upload physical evidence')
+          body = [line[10:] if line.startswith('          ') else line for line in source[run_line + 1:end]]
+          Path('/tmp/run-physical-notch-indicator.sh').write_text('\n'.join(body) + '\n', encoding='utf-8')
+          PY
+          bash -n /tmp/run-physical-notch-indicator.sh
+
+      - name: Validate one physical notch overlay
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash /tmp/run-physical-notch-indicator.sh
+
+      - name: Upload physical evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-notch-indicator-evidence-v3
+          path: physical-evidence/
+          if-no-files-found: error
+          retention-days: 30
