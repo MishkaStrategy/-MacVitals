@@ -56,3 +56,7 @@
 "%d of %d configured sensors visible" = "%d of %d configured sensors visible";
 "Move earlier" = "Move earlier";
 "Move later" = "Move later";
+"Keep Mac awake" = "Keep Mac awake";
+"Allow Mac to sleep" = "Allow Mac to sleep";
+"Awake mode is on" = "Awake mode is on";
+"Awake mode is off" = "Awake mode is off";
