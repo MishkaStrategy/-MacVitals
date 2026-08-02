@@ -38,17 +38,52 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertEqual(reading.level, .unavailable)
   }
 
-  func testPersistenceRoundTripKeepsIndicatorAppearance() throws {
+  func testSingleIndicatorKeepsFullContourProgress() {
+    let segment = NotchHUDIndicatorSegments.primary(progress: 0.72, count: .one)
+
+    XCTAssertEqual(segment.from, 0, accuracy: 0.0001)
+    XCTAssertEqual(segment.to, 0.72, accuracy: 0.0001)
+    XCTAssertEqual(
+      NotchHUDIndicatorSegments.primaryTrack(count: .one),
+      NotchHUDIndicatorSegmentRange(from: 0, to: 1))
+  }
+
+  func testTwoIndicatorsUseIndependentNonOverlappingHalves() {
+    let left = NotchHUDIndicatorSegments.primary(progress: 0.72, count: .two)
+    let right = NotchHUDIndicatorSegments.secondary(progress: 0.84)
+    let leftTrack = NotchHUDIndicatorSegments.primaryTrack(count: .two)
+    let rightTrack = NotchHUDIndicatorSegments.secondaryTrack
+
+    XCTAssertLessThan(left.from, left.to)
+    XCTAssertLessThan(left.to, 0.5)
+    XCTAssertGreaterThan(right.to, right.from)
+    XCTAssertGreaterThan(right.from, 0.5)
+    XCTAssertLessThan(leftTrack.to, rightTrack.from)
+    XCTAssertGreaterThan(left.to - left.from, 0.34)
+    XCTAssertGreaterThan(right.to - right.from, 0.40)
+  }
+
+  func testPersistenceRoundTripKeepsTwoIndicatorsAndLabelsSetting() throws {
     var configuration = NotchHUDConfiguration.configuration(for: .battery)
+    configuration = NotchHUDConfigurationPolicy.settingIndicatorCount(.two, in: configuration)
+    configuration = NotchHUDConfigurationPolicy.settingSecondaryMetric(
+      .temperature,
+      in: configuration)
     configuration.colorMode = .custom
     configuration.accent = .mint
     configuration.lineThickness = 4
     configuration.horizontalExtension = 120
+    configuration.showValueText = false
+    configuration.secondaryWarningThreshold = 78
+    configuration.secondaryCriticalThreshold = 92
 
     let data = try XCTUnwrap(NotchHUDConfigurationPersistence.encode(configuration))
     let restored = try XCTUnwrap(NotchHUDConfigurationPersistence.decode(data))
 
-    XCTAssertEqual(restored, configuration)
+    XCTAssertEqual(restored, NotchHUDConfigurationPolicy.normalized(configuration))
+    XCTAssertEqual(restored.indicatorCount, .two)
+    XCTAssertEqual(restored.secondaryMetric, .temperature)
+    XCTAssertFalse(restored.showValueText)
   }
 
   func testBatteryThresholdOrderIsNormalizedForLowerIsWorse() {
@@ -59,5 +94,16 @@ final class NotchHUDIndicatorTests: XCTestCase {
     let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
     XCTAssertEqual(normalized.warningThreshold, 25)
     XCTAssertEqual(normalized.criticalThreshold, 10)
+  }
+
+  func testSecondaryBatteryThresholdOrderIsNormalizedIndependently() {
+    var configuration = NotchHUDConfiguration.configuration(for: .cpu)
+    configuration.secondaryMetric = .battery
+    configuration.secondaryWarningThreshold = 10
+    configuration.secondaryCriticalThreshold = 25
+
+    let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
+    XCTAssertEqual(normalized.secondaryWarningThreshold, 25)
+    XCTAssertEqual(normalized.secondaryCriticalThreshold, 10)
   }
 }
