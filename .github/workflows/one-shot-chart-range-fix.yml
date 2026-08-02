@@ -1,0 +1,107 @@
+name: Apply Fixed Chart Time Domains
+
+on:
+  push:
+    branches: [feature/historical-consumption-leaders-preview]
+    paths:
+      - .github/workflows/one-shot-chart-range-fix.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-chart-range-fix
+  cancel-in-progress: true
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Patch chart X domains and commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workdir="${RUNNER_TEMP}/macvitals-chart-range-fix"
+          rm -rf -- "${workdir}"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "${workdir}"
+          cd "${workdir}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          metric_path = Path("MacVitals/UI/Overview/MetricDetailView.swift")
+          supplemental_path = Path("MacVitals/UI/Overview/SupplementalMetricDetailView.swift")
+          workflow_path = Path(".github/workflows/one-shot-chart-range-fix.yml")
+
+          metric = metric_path.read_text()
+          metric_replacements = {
+              "      .chartYScale(domain: yDomain)\n":
+                  "      .chartXScale(domain: chartXDomain)\n      .chartYScale(domain: yDomain)\n",
+              "      .chartYScale(domain: powerYDomain)\n":
+                  "      .chartXScale(domain: chartXDomain)\n      .chartYScale(domain: powerYDomain)\n",
+              "      .chartYScale(domain: fanYDomain)\n":
+                  "      .chartXScale(domain: chartXDomain)\n      .chartYScale(domain: fanYDomain)\n",
+          }
+          for old, new in metric_replacements.items():
+              count = metric.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected one MetricDetailView occurrence for {old!r}, found {count}")
+              metric = metric.replace(old, new, 1)
+
+          metric_anchor = "  @AxisContentBuilder\n  private var chartXAxis: some AxisContent {\n"
+          metric_domain = (
+              "  private var chartXDomain: ClosedRange<Date> {\n"
+              "    let end = Date()\n"
+              "    return end.addingTimeInterval(-selectedRange.duration)...end\n"
+              "  }\n\n"
+          )
+          if metric.count(metric_anchor) != 1:
+              raise SystemExit("MetricDetailView chartXAxis anchor not found exactly once")
+          metric = metric.replace(metric_anchor, metric_domain + metric_anchor, 1)
+          metric_path.write_text(metric)
+
+          supplemental = supplemental_path.read_text()
+          supplemental_replacements = {
+              "      .chartYScale(domain: 0...networkYMaximum)\n":
+                  "      .chartXScale(domain: chartXDomain)\n      .chartYScale(domain: 0...networkYMaximum)\n",
+              "      .chartYScale(domain: 0...storageYMaximum)\n":
+                  "      .chartXScale(domain: chartXDomain)\n      .chartYScale(domain: 0...storageYMaximum)\n",
+          }
+          for old, new in supplemental_replacements.items():
+              count = supplemental.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected one SupplementalMetricDetailView occurrence for {old!r}, found {count}")
+              supplemental = supplemental.replace(old, new, 1)
+
+          supplemental_anchor = "  private var chartXAxis: some AxisContent {\n"
+          supplemental_domain = (
+              "  private var chartXDomain: ClosedRange<Date> {\n"
+              "    let end = Date()\n"
+              "    return end.addingTimeInterval(-selectedRange.duration)...end\n"
+              "  }\n\n"
+          )
+          if supplemental.count(supplemental_anchor) != 1:
+              raise SystemExit("SupplementalMetricDetailView chartXAxis anchor not found exactly once")
+          supplemental = supplemental.replace(
+              supplemental_anchor,
+              supplemental_domain + supplemental_anchor,
+              1,
+          )
+          supplemental_path.write_text(supplemental)
+
+          workflow_path.unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            MacVitals/UI/Overview/MetricDetailView.swift \
+            MacVitals/UI/Overview/SupplementalMetricDetailView.swift \
+            .github/workflows/one-shot-chart-range-fix.yml
+          git commit -m "fix: make chart history ranges visually distinct"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
