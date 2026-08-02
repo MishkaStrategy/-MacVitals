@@ -336,20 +336,29 @@ struct PreferencesView: View {
             title: L10n.string("Live preview"),
             subtitle: L10n.string("This is how the selected metrics appear in the menu bar."),
             symbol: "menubar.rectangle") {
-              HStack {
-                Image(systemName: "apple.logo")
-                  .foregroundStyle(.secondary)
-                Text(MenuBarRenderer.render(
-                  snapshot: coordinator.snapshot,
-                  metrics: settings.enabledMetrics,
-                  maximumCharacters: 120))
-                  .font(.system(.body, design: .rounded).monospacedDigit())
-                  .lineLimit(1)
-                  .minimumScaleFactor(0.65)
-                Spacer()
+              ScrollView(.horizontal, showsIndicators: false) {
+                Image(
+                  nsImage: MenuBarStatusTitleRenderer.lightImage(
+                    snapshot: coordinator.snapshot,
+                    metrics: settings.enabledMetrics))
+                  .interpolation(.high)
+                  .fixedSize()
+                  .accessibilityHidden(true)
               }
-              .padding(11)
-              .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 13)
+              .padding(.vertical, 12)
+              .background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 10))
+              .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                  .stroke(Color.white.opacity(0.12), lineWidth: 1))
+              .accessibilityElement(children: .ignore)
+              .accessibilityLabel(L10n.string("Live preview"))
+              .accessibilityValue(
+                MenuBarStatusTitleRenderer.compactText(
+                  snapshot: coordinator.snapshot,
+                  metrics: settings.enabledMetrics))
+              .accessibilityIdentifier("menuBarLivePreview")
             }
 
           SettingsCard(
