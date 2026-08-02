@@ -95,6 +95,15 @@ final class StatusItemController: NSObject {
       withTitle: L10n.string("HUD Settings…"),
       action: #selector(openNotchHUDSettings), keyEquivalent: "")
 
+    let caffeinateItem = menu.addItem(
+      withTitle: L10n.string(
+        notchHUD.isCaffeinateActive ? "Allow Mac to sleep" : "Keep Mac awake"),
+      action: #selector(toggleCaffeinate), keyEquivalent: "")
+    caffeinateItem.state = notchHUD.isCaffeinateActive ? .on : .off
+    caffeinateItem.image = NSImage(
+      systemSymbolName: "cup.and.saucer.fill",
+      accessibilityDescription: L10n.string("Keep Mac awake"))
+
     menu.addItem(.separator())
     menu.addItem(
       withTitle: NSLocalizedString("Quit MacVitals", comment: ""),
@@ -126,6 +135,10 @@ final class StatusItemController: NSObject {
       configuration: settings.notchHUDConfiguration)
   }
 
+  @objc private func toggleCaffeinate() {
+    notchHUD.toggleCaffeinate()
+  }
+
   @objc private func openNotchHUDSettings() {
     let controller: NotchHUDSettingsWindowController
     if let existing = hudSettingsWindowController {
@@ -145,7 +158,7 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func quit() {
-    notchHUD.hide()
+    notchHUD.shutdown()
     NSApp.terminate(nil)
   }
 
