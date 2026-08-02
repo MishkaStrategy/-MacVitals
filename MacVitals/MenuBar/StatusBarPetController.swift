@@ -83,17 +83,17 @@ final class StatusBarPetController {
   }
 
   private func layoutPanel(on screen: NSScreen) {
-    let safeAreaTop = screen.safeAreaInsets.top
+    let safeAreaTop = Double(screen.safeAreaInsets.top)
     let petSize = state.configuration.size
     let width = StatusBarPetMotionRules.panelWidth(for: petSize)
     let height = StatusBarPetMotionRules.panelHeight(
       safeAreaTop: safeAreaTop,
       size: petSize)
     let frame = NSRect(
-      x: screen.frame.midX - width / 2,
-      y: screen.frame.maxY - height,
-      width: width,
-      height: height)
+      x: screen.frame.midX - CGFloat(width / 2),
+      y: screen.frame.maxY - CGFloat(height),
+      width: CGFloat(width),
+      height: CGFloat(height))
 
     panel?.setFrame(frame, display: true)
     state.panelWidth = CGFloat(width)
@@ -113,16 +113,17 @@ final class StatusBarPetController {
   private func seedPositionIfNeeded() {
     guard let panel else { return }
     let configuration = state.configuration
+    let panelWidth = Double(panel.frame.width)
     let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: panel.frame.width,
+      panelWidth: panelWidth,
       petWidth: configuration.size.width)
 
     guard state.petX <= 0 || !bounds.contains(Double(state.petX)) else { return }
     state.petX = CGFloat(bounds.lowerBound + (bounds.upperBound - bounds.lowerBound) * 0.18)
     state.petY = CGFloat(StatusBarPetMotionRules.petY(
       x: Double(state.petX),
-      panelWidth: panel.frame.width,
-      safeAreaTop: state.safeAreaTop,
+      panelWidth: panelWidth,
+      safeAreaTop: Double(state.safeAreaTop),
       petHeight: configuration.size.height))
     targetX = Double(state.petX)
   }
@@ -151,12 +152,14 @@ final class StatusBarPetController {
     lastTick = now
 
     let configuration = state.configuration
+    let panelWidth = Double(panel.frame.width)
+    let safeAreaTop = Double(screen.safeAreaInsets.top)
     let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: panel.frame.width,
+      panelWidth: panelWidth,
       petWidth: configuration.size.width)
     let mouse = NSEvent.mouseLocation
-    let cursorX = mouse.x - panel.frame.minX
-    let cursorY = panel.frame.maxY - mouse.y
+    let cursorX = Double(mouse.x - panel.frame.minX)
+    let cursorY = Double(panel.frame.maxY - mouse.y)
     let prefersReducedMotion = configuration.respectReducedMotion
       && NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
@@ -165,23 +168,22 @@ final class StatusBarPetController {
         petX: Double(state.petX),
         cursorX: cursorX,
         cursorY: cursorY,
-        panelWidth: panel.frame.width,
-        safeAreaTop: screen.safeAreaInsets.top,
+        panelWidth: panelWidth,
+        safeAreaTop: safeAreaTop,
         interactionEnabled: configuration.cursorInteractionEnabled)
 
     if isPlaying {
       let offset = cursorX >= Double(state.petX) ? -12.0 : 12.0
       targetX = StatusBarPetMotionRules.clamped(cursorX + offset, to: bounds)
       state.cursorPoint = CGPoint(
-        x: cursorX,
-        y: min(max(cursorY, 0), panel.frame.height))
+        x: CGFloat(cursorX),
+        y: CGFloat(min(max(cursorY, 0), Double(panel.frame.height))))
       state.cursorVisible = true
       state.activity = .playing
     } else {
       state.cursorVisible = false
       if prefersReducedMotion || !configuration.roamEnabled {
-        let center = (bounds.lowerBound + bounds.upperBound) / 2
-        targetX = center
+        targetX = (bounds.lowerBound + bounds.upperBound) / 2
         state.activity = .idle
       } else if targetX == nil || now >= nextRoamDecision {
         targetX = Double.random(in: bounds)
@@ -217,8 +219,8 @@ final class StatusBarPetController {
     state.petX = CGFloat(nextX)
     state.petY = CGFloat(StatusBarPetMotionRules.petY(
       x: nextX,
-      panelWidth: panel.frame.width,
-      safeAreaTop: screen.safeAreaInsets.top,
+      panelWidth: panelWidth,
+      safeAreaTop: safeAreaTop,
       petHeight: configuration.size.height))
   }
 }
