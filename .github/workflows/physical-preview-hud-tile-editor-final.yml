@@ -1,0 +1,11 @@
+name: Physical Preview HUD Tile Editor Final
+
+on:
+  workflow_dispatch:
+
+jobs:
+  completed:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Physical preview capture completed; workflow retained only as historical evidence.'

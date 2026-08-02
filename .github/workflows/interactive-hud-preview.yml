@@ -1,0 +1,223 @@
+name: Interactive HUD Preview
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: interactive-hud-preview
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  launch:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-preview-hud-tile-editor'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 40
+    env:
+      FEATURE_HEAD_SHA: 54e7cbfc8fcaf9a6ea81d13b347543ec1e375436
+      EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      ARTIFACT_ID: '8832785557'
+      ARTIFACT_SHA256: 29a18647946cded72104a8af3dcacc28f6cdc796d084b837ea95efe296ae5572
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Launch exact interactive preview
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin ]]
+          [[ "$(uname -m)" == arm64 ]]
+          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "${EXPECTED_BASE_SHA}" == "${FEATURE_HEAD_SHA}" ]]
+
+          rm -rf interactive-artifact interactive-preview interactive-home interactive-evidence interactive-tools
+          mkdir -p interactive-artifact interactive-preview interactive-home interactive-evidence interactive-tools
+
+          outer="interactive-artifact/workflow-artifact.zip"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "${outer}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip"
+          [[ "$(shasum -a 256 "${outer}" | awk '{print $1}')" == "${ARTIFACT_SHA256}" ]]
+          ditto -x -k "${outer}" interactive-artifact/content
+          inner="$(find interactive-artifact/content -type f -name 'MacVitals-*.zip' -print -quit)"
+          [[ -n "${inner}" ]]
+          python3 scripts/validate_app_zip.py "${inner}"
+          ditto -x -k "${inner}" interactive-preview
+
+          app="${PWD}/interactive-preview/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == arm64 ]]
+
+          cat > interactive-tools/RightClick.swift <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+
+          guard CommandLine.arguments.count == 3,
+                let x = Double(CommandLine.arguments[1]),
+                let y = Double(CommandLine.arguments[2]) else { exit(2) }
+          let point = CGPoint(x: x, y: y)
+          let source = CGEventSource(stateID: .hidSystemState)
+          CGEvent(mouseEventSource: source, mouseType: .rightMouseDown, mouseCursorPosition: point, mouseButton: .right)?.post(tap: .cghidEventTap)
+          usleep(90_000)
+          CGEvent(mouseEventSource: source, mouseType: .rightMouseUp, mouseCursorPosition: point, mouseButton: .right)?.post(tap: .cghidEventTap)
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework CoreGraphics \
+            interactive-tools/RightClick.swift -o interactive-tools/right-click
+
+          cat > interactive-tools/WindowProbe.swift <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+
+          guard CommandLine.arguments.count == 2, let targetPID = Int32(CommandLine.arguments[1]) else { exit(2) }
+          let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+          for info in windows {
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == targetPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
+            if width >= 700 && height >= 600 {
+              print(info[kCGWindowName as String] as? String ?? "HUD Settings")
+              exit(0)
+            }
+          }
+          exit(1)
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework CoreGraphics \
+            interactive-tools/WindowProbe.swift -o interactive-tools/window-probe
+
+          HOME="${PWD}/interactive-home" \
+          "${executable}" \
+            -experimentalNotchHUDEnabled YES \
+            -AppleLanguages '(ru)' \
+            -AppleLocale ru_RU \
+            -ApplePersistenceIgnoreState YES \
+            > interactive-evidence/app.stdout.log \
+            2> interactive-evidence/app.stderr.log &
+          preview_pid=$!
+
+          for _ in {1..100}; do
+            kill -0 "${preview_pid}" 2>/dev/null || {
+              cat interactive-evidence/app.stderr.log >&2 || true
+              exit 1
+            }
+            center="$(TARGET_PID="${preview_pid}" osascript <<'APPLESCRIPT' 2>/dev/null || true
+          set targetPID to (system attribute "TARGET_PID") as integer
+          tell application "System Events"
+            try
+              set targetProcess to first process whose unix id is targetPID
+              tell targetProcess
+                set statusItem to menu bar item 1 of menu bar 2
+                set itemPosition to position of statusItem
+                set itemSize to size of statusItem
+                return ((item 1 of itemPosition) + ((item 1 of itemSize) / 2) as integer) & "," & ((item 2 of itemPosition) + ((item 2 of itemSize) / 2) as integer)
+              end tell
+            end try
+          end tell
+          APPLESCRIPT
+          )"
+            [[ "${center}" == *,* ]] && break
+            sleep 0.2
+          done
+          [[ "${center:-}" == *,* ]]
+
+          interactive-tools/right-click "${center%,*}" "${center#*,}"
+          TARGET_PID="${preview_pid}" osascript <<'APPLESCRIPT'
+          set targetPID to (system attribute "TARGET_PID") as integer
+          tell application "System Events"
+            set targetProcess to first process whose unix id is targetPID
+            repeat 50 times
+              tell targetProcess
+                try
+                  set statusItem to menu bar item 1 of menu bar 2
+                  set hudItem to first menu item of menu 1 of statusItem whose name contains "HUD"
+                  click hudItem
+                  return
+                end try
+              end tell
+              delay 0.1
+            end repeat
+            error "HUD Settings menu item did not become available"
+          end tell
+          APPLESCRIPT
+
+          for _ in {1..100}; do
+            kill -0 "${preview_pid}" 2>/dev/null || exit 1
+            if interactive-tools/window-probe "${preview_pid}" \
+              > interactive-evidence/window-title.txt 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          interactive-tools/window-probe "${preview_pid}" \
+            > interactive-evidence/window-title.txt
+
+          printf 'PREVIEW_PID=%s\n' "${preview_pid}" >> "${GITHUB_ENV}"
+          printf 'PREVIEW_HOME=%s\n' "${PWD}/interactive-home" >> "${GITHUB_ENV}"
+          printf 'PREVIEW_APP=%s\n' "${app}" >> "${GITHUB_ENV}"
+
+          PREVIEW_PID="${preview_pid}" FEATURE_HEAD_SHA="${FEATURE_HEAD_SHA}" python3 - <<'PY' \
+            > interactive-evidence/ready.json
+          import json, os
+          print(json.dumps({
+            'ready': True,
+            'featureHead': os.environ['FEATURE_HEAD_SHA'],
+            'pid': int(os.environ['PREVIEW_PID']),
+            'mode': 'interactive exact artifact',
+            'settingsIsolation': 'temporary HOME',
+            'mainModified': False,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload readiness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: interactive-hud-preview-ready
+          path: interactive-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Keep preview open for inspection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "MacVitals HUD Preview is ready: PID ${PREVIEW_PID}"
+          for _ in {1..1800}; do
+            kill -0 "${PREVIEW_PID}" 2>/dev/null || exit 0
+            sleep 1
+          done
+
+      - name: Stop preview and clean temporary state
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -n "${PREVIEW_PID:-}" ]]; then
+            kill -TERM "${PREVIEW_PID}" 2>/dev/null || true
+            for _ in {1..50}; do
+              kill -0 "${PREVIEW_PID}" 2>/dev/null || break
+              sleep 0.1
+            done
+            kill -KILL "${PREVIEW_PID}" 2>/dev/null || true
+          fi
+          rm -rf "${PREVIEW_HOME:-}" "${PREVIEW_APP:-}"
