@@ -5,26 +5,17 @@ import SwiftUI
 final class NotchHUDController {
   static let defaultsKey = "experimentalNotchHUDEnabled"
 
-  private let state: NotchHUDState
-  private let railPanel: NSPanel
-  private let detailPanel: NSPanel
+  private let state = NotchHUDState()
+  private var railPanel: NSPanel?
+  private var detailPanel: NSPanel?
   private var activeScreenNumber: NSNumber?
-
-  init() {
-    let state = NotchHUDState()
-    self.state = state
-
-    railPanel = Self.makePanel(ignoresMouseEvents: true)
-    detailPanel = Self.makePanel(ignoresMouseEvents: true)
-
-    railPanel.contentViewController = NSHostingController(
-      rootView: NotchHUDRailView(state: state))
-    detailPanel.contentViewController = NSHostingController(
-      rootView: NotchHUDDetailView(state: state))
-  }
 
   var isEnabled: Bool {
     UserDefaults.standard.bool(forKey: Self.defaultsKey)
+  }
+
+  var hasAllocatedPanelsForTesting: Bool {
+    railPanel != nil || detailPanel != nil
   }
 
   func toggle(preferredScreen: NSScreen?) {
@@ -37,13 +28,18 @@ final class NotchHUDController {
     snapshot: SystemSnapshot,
     preferredScreen: NSScreen?
   ) {
+    guard isEnabled else {
+      hide()
+      return
+    }
+
     state.snapshot = snapshot
     applyVisibility(preferredScreen: preferredScreen)
   }
 
   func hide() {
-    railPanel.orderOut(nil)
-    detailPanel.orderOut(nil)
+    railPanel?.orderOut(nil)
+    detailPanel?.orderOut(nil)
     activeScreenNumber = nil
   }
 
@@ -58,20 +54,36 @@ final class NotchHUDController {
       return
     }
 
+    ensurePanels()
+    guard let railPanel, let detailPanel else { return }
+
     let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
       as? NSNumber
-    if activeScreenNumber != screenNumber || !railPanel.isVisible || !detailPanel.isVisible {
-      activeScreenNumber = screenNumber
-      layout(on: screen)
-    } else {
-      layout(on: screen)
-    }
+    activeScreenNumber = screenNumber
+    layout(railPanel: railPanel, detailPanel: detailPanel, on: screen)
 
     railPanel.orderFrontRegardless()
     detailPanel.orderFrontRegardless()
   }
 
-  private func layout(on screen: NSScreen) {
+  private func ensurePanels() {
+    guard railPanel == nil, detailPanel == nil else { return }
+
+    let rail = Self.makePanel()
+    let detail = Self.makePanel()
+    rail.contentViewController = NSHostingController(
+      rootView: NotchHUDRailView(state: state))
+    detail.contentViewController = NSHostingController(
+      rootView: NotchHUDDetailView(state: state))
+    railPanel = rail
+    detailPanel = detail
+  }
+
+  private func layout(
+    railPanel: NSPanel,
+    detailPanel: NSPanel,
+    on screen: NSScreen
+  ) {
     let railFrame = NotchHUDLayout.railFrame(
       for: screen.frame,
       safeAreaTop: screen.safeAreaInsets.top)
@@ -83,7 +95,7 @@ final class NotchHUDController {
     detailPanel.setFrame(detailFrame, display: true)
   }
 
-  private static func makePanel(ignoresMouseEvents: Bool) -> NSPanel {
+  private static func makePanel() -> NSPanel {
     let panel = NSPanel(
       contentRect: .zero,
       styleMask: [.borderless, .nonactivatingPanel],
@@ -101,7 +113,7 @@ final class NotchHUDController {
       .stationary,
     ]
     panel.animationBehavior = .utilityWindow
-    panel.ignoresMouseEvents = ignoresMouseEvents
+    panel.ignoresMouseEvents = true
     panel.isMovable = false
     panel.isMovableByWindowBackground = false
     panel.titleVisibility = .hidden
