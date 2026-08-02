@@ -290,7 +290,7 @@ struct NotchHUDIndicatorContentView: View {
             .frame(width: max(proxy.size.width - 44, 160))
             .position(
               x: proxy.size.width / 2,
-              y: geometry.bottomY + 16)
+              y: geometry.bottomY + 12)
           } else {
             indicatorLabel(
               reading: primaryReading,
@@ -298,7 +298,7 @@ struct NotchHUDIndicatorContentView: View {
               showSensorName: normalized.showSensorName)
               .position(
                 x: proxy.size.width / 2,
-                y: geometry.bottomY + 16)
+                y: geometry.bottomY + 12)
           }
         }
       }
@@ -389,24 +389,26 @@ private struct NotchHUDContourShape: Shape {
   let geometry: NotchHUDContourGeometry
 
   func path(in rect: CGRect) -> Path {
-    let leftShoulderStart = geometry.notchLeftX - geometry.shoulderRadius
-    let leftBottomEnd = geometry.notchLeftX + geometry.shoulderRadius
-    let rightBottomStart = geometry.notchRightX - geometry.shoulderRadius
-    let rightShoulderEnd = geometry.notchRightX + geometry.shoulderRadius
+    let leftX = min(max(geometry.notchLeftX, rect.minX), rect.maxX)
+    let rightX = min(max(geometry.notchRightX, leftX), rect.maxX)
+    let topY = min(max(geometry.topY, rect.minY), rect.maxY)
+    let bottomY = min(max(geometry.bottomY, topY), rect.maxY)
+    let radius = min(
+      geometry.shoulderRadius,
+      max(0, (rightX - leftX) / 2),
+      max(0, bottomY - topY))
 
     var path = Path()
-    path.move(to: CGPoint(x: rect.minX, y: geometry.topY))
-    path.addLine(to: CGPoint(x: leftShoulderStart, y: geometry.topY))
-    path.addCurve(
-      to: CGPoint(x: leftBottomEnd, y: geometry.bottomY),
-      control1: CGPoint(x: geometry.notchLeftX, y: geometry.topY),
-      control2: CGPoint(x: geometry.notchLeftX, y: geometry.bottomY))
-    path.addLine(to: CGPoint(x: rightBottomStart, y: geometry.bottomY))
-    path.addCurve(
-      to: CGPoint(x: rightShoulderEnd, y: geometry.topY),
-      control1: CGPoint(x: geometry.notchRightX, y: geometry.bottomY),
-      control2: CGPoint(x: geometry.notchRightX, y: geometry.topY))
-    path.addLine(to: CGPoint(x: rect.maxX, y: geometry.topY))
+    path.move(to: CGPoint(x: leftX, y: topY))
+    path.addLine(to: CGPoint(x: leftX, y: bottomY - radius))
+    path.addQuadCurve(
+      to: CGPoint(x: leftX + radius, y: bottomY),
+      control: CGPoint(x: leftX, y: bottomY))
+    path.addLine(to: CGPoint(x: rightX - radius, y: bottomY))
+    path.addQuadCurve(
+      to: CGPoint(x: rightX, y: bottomY - radius),
+      control: CGPoint(x: rightX, y: bottomY))
+    path.addLine(to: CGPoint(x: rightX, y: topY))
     return path
   }
 }
