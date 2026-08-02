@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Materialize CoreGraphics capture script
+      - name: Materialize safe CoreGraphics capture script
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -76,6 +76,35 @@ jobs:
           script = script.replace('/usr/sbin/screencapture -x -l "${settings}" preview-evidence/hud-tile-editor.png', 'preview-tools/capture-window "${settings}" preview-evidence/hud-tile-editor.png')
           script = script.replace('/usr/sbin/screencapture -x -l "${hud1}" preview-evidence/hud-panel-1.png', 'preview-tools/capture-window "${hud1}" preview-evidence/hud-panel-1.png')
           script = script.replace('/usr/sbin/screencapture -x -l "${hud2}" preview-evidence/hud-panel-2.png', 'preview-tools/capture-window "${hud2}" preview-evidence/hud-panel-2.png')
+
+          original_guard = '''existing="$(pgrep -x MacVitals || true)"
+          if [[ -n "${existing}" ]]; then
+            echo "A MacVitals process is already running; refusing to disturb the user's instance: ${existing}" >&2
+            exit 1
+          fi'''
+          safe_guard = r'''existing="$(pgrep -x MacVitals || true)"
+          user_processes=""
+          for existing_pid in ${existing}; do
+            existing_command="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
+            if [[ "${existing_command}" == *"GitHubActionsRunners/"*"/preview-app/MacVitals.app/Contents/MacOS/MacVitals"* ]]; then
+              echo "Cleaning orphaned preview process ${existing_pid}"
+              kill -TERM "${existing_pid}" 2>/dev/null || true
+              for _ in {1..50}; do
+                kill -0 "${existing_pid}" 2>/dev/null || break
+                sleep 0.1
+              done
+              kill -KILL "${existing_pid}" 2>/dev/null || true
+            else
+              user_processes="${user_processes} ${existing_pid}"
+            fi
+          done
+          if [[ -n "${user_processes// /}" ]]; then
+            echo "A non-preview MacVitals process is running; refusing to disturb it:${user_processes}" >&2
+            exit 1
+          fi'''
+          if original_guard not in script:
+              raise SystemExit('existing-process guard not found')
+          script = script.replace(original_guard, safe_guard, 1)
           Path('/tmp/run-physical-hud-preview.sh').write_text(script, encoding='utf-8')
           PY
           bash -n /tmp/run-physical-hud-preview.sh
