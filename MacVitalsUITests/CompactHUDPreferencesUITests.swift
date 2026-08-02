@@ -2,12 +2,12 @@ import XCTest
 
 @MainActor
 final class CompactHUDPreferencesUITests: XCTestCase {
-  func testCompactHUDPreferencesAreIntegrated() {
-    assertIntegratedHUD(language: "en", locale: "en_US", tabLabel: "Around Status Bar")
-    assertIntegratedHUD(language: "ru", locale: "ru_RU", tabLabel: "Вокруг строки меню")
+  func testNotchIndicatorPreferencesAreIntegrated() {
+    assertIntegratedIndicator(language: "en", locale: "en_US", tabLabel: "Notch Indicator")
+    assertIntegratedIndicator(language: "ru", locale: "ru_RU", tabLabel: "Индикатор выреза")
   }
 
-  private func assertIntegratedHUD(
+  private func assertIntegratedIndicator(
     language: String,
     locale: String,
     tabLabel: String,
@@ -36,7 +36,7 @@ final class CompactHUDPreferencesUITests: XCTestCase {
       app.descendants(matching: .any).matching(predicate).firstMatch,
     ]
     guard let tab = candidates.first(where: { $0.waitForExistence(timeout: 1) }) else {
-      XCTFail("Missing HUD tab for \(language): \(tabLabel)", file: file, line: line)
+      XCTFail("Missing notch indicator tab for \(language): \(tabLabel)", file: file, line: line)
       app.terminate()
       return
     }
@@ -46,15 +46,16 @@ final class CompactHUDPreferencesUITests: XCTestCase {
       "notchHUDIntegratedSettings",
       "notchHUDEnabledToggle",
       "notchHUDLivePreview",
-      "notchHUDPresetPicker",
-      "notchHUDTileSelector.cpu",
-      "notchHUDVisibleCount.left",
-      "notchHUDVisibleCount.right",
+      "notchIndicatorMetricPicker",
+      "notchIndicatorShowValueToggle",
+      "notchIndicatorLineThicknessSlider",
+      "notchIndicatorWarningField",
+      "notchIndicatorCriticalField",
     ] {
       let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
       XCTAssertTrue(
         element.waitForExistence(timeout: 3),
-        "Missing compact HUD element for \(language): \(identifier)",
+        "Missing notch indicator element for \(language): \(identifier)",
         file: file,
         line: line)
     }
