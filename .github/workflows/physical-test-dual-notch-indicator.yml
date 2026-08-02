@@ -124,13 +124,10 @@ jobs:
             CFPreferencesSetAppValue(enabledKey, true as CFBoolean, bundle)
             CFPreferencesSetAppValue(configurationKey, data as CFData, bundle)
             synchronize(bundle)
-
             guard let storedEnabled = CFPreferencesCopyAppValue(enabledKey, bundle) as? Bool,
                   storedEnabled,
                   let storedData = CFPreferencesCopyAppValue(configurationKey, bundle) as? Data,
-                  storedData == data else {
-              exit(21)
-            }
+                  storedData == data else { exit(21) }
           }
 
           func restore(bundle: CFString, path: String) throws {
@@ -189,6 +186,7 @@ jobs:
             local diagnostics="${PWD}/physical-evidence/profiles/${profile}-controller.json"
             local validation="${PWD}/physical-evidence/profiles/${profile}-validation.json"
 
+            echo "Testing profile: ${profile}"
             physical-tools/preferences apply "${bundle_id}" "${profile}"
             rm -f "${diagnostics}"
             launchctl setenv MACVITALS_NOTCH_DIAGNOSTICS_PATH "${diagnostics}"
@@ -223,7 +221,8 @@ jobs:
           assert 0 <= d['primaryProgress'] <= 1, d
           assert 0 <= d['secondaryProgress'] <= 1, d
 
-          expected_height = min(max(d['safeAreaTop'], 30), 44) + 30
+          resolved_safe_area = min(max(d['safeAreaTop'], 30), 44)
+          expected_height = resolved_safe_area + (30 if expected_labels else 8)
           assert abs(d['frameWidth'] - 356) <= 3, d
           assert abs(d['frameHeight'] - expected_height) <= 3, d
           expected_x = d['screenX'] + (d['screenWidth'] - d['frameWidth']) / 2
