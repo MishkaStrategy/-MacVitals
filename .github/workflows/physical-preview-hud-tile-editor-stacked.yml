@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Materialize capture script
+      - name: Materialize CoreGraphics capture script
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -47,7 +47,36 @@ jobs:
           body = []
           for line in source[run_line + 1:end]:
               body.append(line[10:] if line.startswith('          ') else line)
-          Path('/tmp/run-physical-hud-preview.sh').write_text('\n'.join(body) + '\n', encoding='utf-8')
+          script = '\n'.join(body) + '\n'
+
+          helper = r'''cat > preview-tools/CaptureWindow.swift <<'SWIFT'
+          import AppKit
+          import CoreGraphics
+          import Foundation
+
+          guard CommandLine.arguments.count == 3,
+                let rawID = UInt32(CommandLine.arguments[1]) else { exit(2) }
+          let output = URL(fileURLWithPath: CommandLine.arguments[2])
+          guard let image = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            CGWindowID(rawID),
+            [.boundsIgnoreFraming, .bestResolution]) else { exit(3) }
+          let representation = NSBitmapImageRep(cgImage: image)
+          guard let data = representation.representation(using: .png, properties: [:]) else { exit(4) }
+          try data.write(to: output, options: .atomic)
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework CoreGraphics \
+            preview-tools/CaptureWindow.swift -o preview-tools/capture-window
+          '''
+          marker = '"${executable}" -experimentalNotchHUDEnabled YES -ApplePersistenceIgnoreState YES'
+          if marker not in script:
+              raise SystemExit('application launch marker not found')
+          script = script.replace(marker, helper + '\n' + marker, 1)
+          script = script.replace('/usr/sbin/screencapture -x -l "${settings}" preview-evidence/hud-tile-editor.png', 'preview-tools/capture-window "${settings}" preview-evidence/hud-tile-editor.png')
+          script = script.replace('/usr/sbin/screencapture -x -l "${hud1}" preview-evidence/hud-panel-1.png', 'preview-tools/capture-window "${hud1}" preview-evidence/hud-panel-1.png')
+          script = script.replace('/usr/sbin/screencapture -x -l "${hud2}" preview-evidence/hud-panel-2.png', 'preview-tools/capture-window "${hud2}" preview-evidence/hud-panel-2.png')
+          Path('/tmp/run-physical-hud-preview.sh').write_text(script, encoding='utf-8')
           PY
           bash -n /tmp/run-physical-hud-preview.sh
 
