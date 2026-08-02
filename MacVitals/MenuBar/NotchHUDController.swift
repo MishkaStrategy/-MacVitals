@@ -6,12 +6,14 @@ final class NotchHUDController {
   nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
 
   private let state = NotchHUDState()
+  private let caffeinate = CaffeinateController()
   private var leftPanel: NSPanel?
   private var rightPanel: NSPanel?
   private var enabled = false
   private var activeScreenNumber: NSNumber?
 
   var isEnabled: Bool { enabled }
+  var isCaffeinateActive: Bool { caffeinate.isActive }
 
   var hasAllocatedPanelsForTesting: Bool {
     leftPanel != nil || rightPanel != nil
@@ -33,6 +35,19 @@ final class NotchHUDController {
     state.snapshot = snapshot
     state.configuration = NotchHUDConfigurationPolicy.normalized(configuration)
     applyVisibility(preferredScreen: preferredScreen)
+  }
+
+  func toggleCaffeinate() {
+    caffeinate.toggle()
+  }
+
+  func stopCaffeinate() {
+    caffeinate.stop()
+  }
+
+  func shutdown() {
+    stopCaffeinate()
+    hide()
   }
 
   func hide() {
@@ -95,9 +110,15 @@ final class NotchHUDController {
     let left = Self.makePanel()
     let right = Self.makePanel()
     left.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .left))
+      rootView: NotchHUDSideView(
+        state: state,
+        caffeinate: caffeinate,
+        side: .left))
     right.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .right))
+      rootView: NotchHUDSideView(
+        state: state,
+        caffeinate: caffeinate,
+        side: .right))
     leftPanel = left
     rightPanel = right
   }
@@ -120,7 +141,8 @@ final class NotchHUDController {
       .stationary,
     ]
     panel.animationBehavior = .utilityWindow
-    panel.ignoresMouseEvents = true
+    panel.ignoresMouseEvents = false
+    panel.becomesKeyOnlyIfNeeded = true
     panel.isMovable = false
     panel.isMovableByWindowBackground = false
     panel.titleVisibility = .hidden
