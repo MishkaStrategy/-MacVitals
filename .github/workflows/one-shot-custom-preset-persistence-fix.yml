@@ -1,0 +1,269 @@
+name: Apply Custom Preset Persistence Fix
+
+on:
+  push:
+    branches: [feature/historical-consumption-leaders-preview]
+    paths:
+      - .github/workflows/one-shot-custom-preset-persistence-fix.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-custom-preset-persistence-fix
+  cancel-in-progress: true
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Patch custom preset persistence and tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workdir="${RUNNER_TEMP}/macvitals-custom-preset-fix"
+          rm -rf -- "${workdir}"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "${workdir}"
+          cd "${workdir}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          settings_path = Path("MacVitals/Persistence/SettingsStore.swift")
+          tests_path = Path("MacVitalsTests/MenuLayoutRulesTests.swift")
+          workflow_path = Path(".github/workflows/one-shot-custom-preset-persistence-fix.yml")
+
+          settings = settings_path.read_text()
+
+          enum_anchor = "nonisolated enum MenuConfigurationPersistence {\n"
+          enum_insert = '''nonisolated enum MenuPresetApplication {
+            static func metrics(
+              for preset: MenuPreset,
+              customMetrics: [MenuMetric]
+            ) -> [MenuMetric] {
+              preset == .custom
+                ? MenuLayoutRules.normalized(customMetrics)
+                : preset.metrics
+            }
+
+            static func initialCustomMetrics(
+              storedCustomMetrics: [MenuMetric]?,
+              storedPreset: MenuPreset,
+              resolvedPreset: MenuPreset,
+              activeMetrics: [MenuMetric]
+            ) -> [MenuMetric] {
+              let normalizedActive = MenuLayoutRules.normalized(activeMetrics)
+              if resolvedPreset == .custom, storedPreset != .custom {
+                return normalizedActive
+              }
+              return MenuLayoutRules.normalized(storedCustomMetrics ?? normalizedActive)
+            }
+          }
+
+          '''
+          if settings.count(enum_anchor) != 1:
+              raise SystemExit("MenuConfigurationPersistence anchor not found exactly once")
+          settings = settings.replace(enum_anchor, enum_insert + enum_anchor, 1)
+
+          storage_anchor = "  private let launchAtLoginManager: any LaunchAtLoginManaging\n"
+          storage_insert = '''  private let launchAtLoginManager: any LaunchAtLoginManaging
+            private var customMetrics: [MenuMetric] = []
+            private var hasSavedCustomMetrics = false
+          '''
+          if settings.count(storage_anchor) != 1:
+              raise SystemExit("launchAtLoginManager anchor not found exactly once")
+          settings = settings.replace(storage_anchor, storage_insert, 1)
+
+          old_init = '''    let storedConfigurationData = defaults.data(forKey: Keys.menuConfiguration)
+            let storedMetrics: [MenuMetric]? =
+              storedConfigurationData.flatMap { MenuConfigurationPersistence.decode($0) }
+            let initialMetrics =
+              storedMetrics
+              ?? (storedPreset == .custom ? MenuPreset.performance.metrics : storedPreset.metrics)
+            let initialPreset = MenuPresetResolution.resolve(
+              storedPreset: storedPreset,
+              metrics: initialMetrics,
+              preserveExplicitCustom: storedMetrics != nil)
+
+            selectedPreset = initialPreset
+            enabledMetrics = initialMetrics
+          '''
+          new_init = '''    let storedConfigurationData = defaults.data(forKey: Keys.menuConfiguration)
+            let storedMetrics: [MenuMetric]? =
+              storedConfigurationData.flatMap { MenuConfigurationPersistence.decode($0) }
+            let initialActiveMetrics =
+              storedMetrics
+              ?? (storedPreset == .custom ? MenuPreset.performance.metrics : storedPreset.metrics)
+            let initialPreset = MenuPresetResolution.resolve(
+              storedPreset: storedPreset,
+              metrics: initialActiveMetrics,
+              preserveExplicitCustom: storedMetrics != nil)
+
+            let storedCustomMetrics = defaults.data(forKey: Keys.customMenuConfiguration)
+              .flatMap { MenuConfigurationPersistence.decode($0) }
+            let resolvedCustomMetrics = MenuPresetApplication.initialCustomMetrics(
+              storedCustomMetrics: storedCustomMetrics,
+              storedPreset: storedPreset,
+              resolvedPreset: initialPreset,
+              activeMetrics: initialActiveMetrics)
+            let shouldPersistCustomRecovery =
+              initialPreset == .custom
+              && storedCustomMetrics != Optional(resolvedCustomMetrics)
+
+            customMetrics = resolvedCustomMetrics
+            hasSavedCustomMetrics = storedCustomMetrics != nil || initialPreset == .custom
+            selectedPreset = initialPreset
+            enabledMetrics =
+              initialPreset == .custom ? resolvedCustomMetrics : initialActiveMetrics
+
+            if shouldPersistCustomRecovery,
+              let data = MenuConfigurationPersistence.encode(resolvedCustomMetrics)
+            {
+              defaults.set(data, forKey: Keys.customMenuConfiguration)
+            }
+          '''
+          if settings.count(old_init) != 1:
+              raise SystemExit("SettingsStore init persistence block not found exactly once")
+          settings = settings.replace(old_init, new_init, 1)
+
+          old_apply = '''  func applyPreset(_ preset: MenuPreset) {
+            guard preset != .custom else { return }
+            enabledMetrics = preset.metrics
+          }
+          '''
+          new_apply = '''  func applyPreset(_ preset: MenuPreset) {
+            if preset == .custom {
+              if !hasSavedCustomMetrics {
+                saveCustomMetrics(enabledMetrics)
+              }
+              enabledMetrics = MenuPresetApplication.metrics(
+                for: preset,
+                customMetrics: customMetrics)
+              return
+            }
+            enabledMetrics = preset.metrics
+          }
+          '''
+          if settings.count(old_apply) != 1:
+              raise SystemExit("applyPreset block not found exactly once")
+          settings = settings.replace(old_apply, new_apply, 1)
+
+          old_set = '''  func setMetric(_ metric: MenuMetric, enabled: Bool) {
+            enabledMetrics = MenuLayoutRules.setting(metric, enabled: enabled, in: enabledMetrics)
+            selectedPreset = .custom
+          }
+          '''
+          new_set = '''  func setMetric(_ metric: MenuMetric, enabled: Bool) {
+            let updated = MenuLayoutRules.setting(
+              metric,
+              enabled: enabled,
+              in: enabledMetrics)
+            saveCustomMetrics(updated)
+            selectedPreset = .custom
+          }
+          '''
+          if settings.count(old_set) != 1:
+              raise SystemExit("setMetric block not found exactly once")
+          settings = settings.replace(old_set, new_set, 1)
+
+          old_move = '''  func move(from source: IndexSet, to destination: Int) {
+            enabledMetrics.move(fromOffsets: source, toOffset: destination)
+            enabledMetrics = MenuLayoutRules.normalized(enabledMetrics)
+            selectedPreset = .custom
+          }
+          '''
+          new_move = '''  func move(from source: IndexSet, to destination: Int) {
+            var updated = enabledMetrics
+            updated.move(fromOffsets: source, toOffset: destination)
+            saveCustomMetrics(updated)
+            selectedPreset = .custom
+          }
+          '''
+          if settings.count(old_move) != 1:
+              raise SystemExit("move block not found exactly once")
+          settings = settings.replace(old_move, new_move, 1)
+
+          persist_anchor = "  private func persistMenuConfiguration() {\n"
+          persist_insert = '''  private func saveCustomMetrics(_ metrics: [MenuMetric]) {
+            customMetrics = MenuLayoutRules.normalized(metrics)
+            hasSavedCustomMetrics = true
+            if let data = MenuConfigurationPersistence.encode(customMetrics) {
+              UserDefaults.standard.set(data, forKey: Keys.customMenuConfiguration)
+            }
+          }
+
+          '''
+          if settings.count(persist_anchor) != 1:
+              raise SystemExit("persistMenuConfiguration anchor not found exactly once")
+          settings = settings.replace(persist_anchor, persist_insert + persist_anchor, 1)
+
+          key_anchor = '    static let menuConfiguration = "menuConfiguration.v1"\n'
+          key_replace = key_anchor + '    static let customMenuConfiguration = "customMenuConfiguration.v1"\n'
+          if settings.count(key_anchor) != 1:
+              raise SystemExit("menuConfiguration key anchor not found exactly once")
+          settings = settings.replace(key_anchor, key_replace, 1)
+          settings_path.write_text(settings)
+
+          tests = tests_path.read_text()
+          tests_anchor = "  func testMenuConfigurationRoundTripNormalizesMetrics() throws {\n"
+          tests_insert = '''  func testCustomPresetRestoresItsSavedLayout() {
+            let custom: [MenuMetric] = [.battery, .cpu, .temperature]
+            XCTAssertEqual(
+              MenuPresetApplication.metrics(for: .custom, customMetrics: custom),
+              custom)
+          }
+
+            func testNamedPresetDoesNotOverwriteSavedCustomLayout() {
+              let custom: [MenuMetric] = [.battery, .cpu]
+              XCTAssertEqual(
+                MenuPresetApplication.metrics(for: .power, customMetrics: custom),
+                MenuPreset.power.metrics)
+              XCTAssertEqual(
+                MenuPresetApplication.metrics(for: .custom, customMetrics: custom),
+                custom)
+            }
+
+            func testInterruptedCustomSelectionPromotesActiveLayout() {
+              let active: [MenuMetric] = [.memory, .battery, .cpu]
+              XCTAssertEqual(
+                MenuPresetApplication.initialCustomMetrics(
+                  storedCustomMetrics: [.cpu],
+                  storedPreset: .performance,
+                  resolvedPreset: .custom,
+                  activeMetrics: active),
+                active)
+            }
+
+            func testExplicitCustomPresetUsesStoredCustomLayout() {
+              let saved: [MenuMetric] = [.temperature, .fans, .battery]
+              XCTAssertEqual(
+                MenuPresetApplication.initialCustomMetrics(
+                  storedCustomMetrics: saved,
+                  storedPreset: .custom,
+                  resolvedPreset: .custom,
+                  activeMetrics: MenuPreset.performance.metrics),
+                saved)
+            }
+
+          '''
+          if tests.count(tests_anchor) != 1:
+              raise SystemExit("MenuLayoutRulesTests insertion anchor not found exactly once")
+          tests = tests.replace(tests_anchor, tests_insert + tests_anchor, 1)
+          tests_path.write_text(tests)
+
+          workflow_path.unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            MacVitals/Persistence/SettingsStore.swift \
+            MacVitalsTests/MenuLayoutRulesTests.swift \
+            .github/workflows/one-shot-custom-preset-persistence-fix.yml
+          git commit -m "fix: persist and restore custom menu preset"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
