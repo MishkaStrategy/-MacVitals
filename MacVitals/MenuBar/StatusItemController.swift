@@ -8,7 +8,6 @@ final class StatusItemController: NSObject {
   private let popover = NSPopover()
   private let notchHUD = NotchHUDController()
   private let caffeinate = CaffeinateController()
-  private var hudSettingsWindowController: NotchHUDSettingsWindowController?
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
@@ -129,16 +128,10 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func openNotchHUDSettings() {
-    let controller: NotchHUDSettingsWindowController
-    if let existing = hudSettingsWindowController {
-      controller = existing
-    } else {
-      controller = NotchHUDSettingsWindowController(
-        coordinator: coordinator,
-        settings: settings)
-      hudSettingsWindowController = controller
+    openPreferences()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      NotificationCenter.default.post(name: .openStatusBarHUDPreferences, object: nil)
     }
-    controller.present()
   }
 
   @objc private func openPreferences() {
