@@ -108,6 +108,39 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
   var showSeparators: Bool
   var hideUnavailableMetrics: Bool
   var showOnDisplaysWithoutNotch: Bool
+  var tileConfigurations: [MenuMetric: NotchHUDTileConfiguration]
+
+  init(
+    leftMetrics: [MenuMetric],
+    rightMetrics: [MenuMetric],
+    leftVisibleCount: Int,
+    rightVisibleCount: Int,
+    showLeftPanel: Bool,
+    showRightPanel: Bool,
+    density: NotchHUDDensity,
+    textSize: NotchHUDTextSize,
+    backgroundOpacity: Double,
+    showLabels: Bool,
+    showSeparators: Bool,
+    hideUnavailableMetrics: Bool,
+    showOnDisplaysWithoutNotch: Bool,
+    tileConfigurations: [MenuMetric: NotchHUDTileConfiguration] = Self.defaultTiles
+  ) {
+    self.leftMetrics = leftMetrics
+    self.rightMetrics = rightMetrics
+    self.leftVisibleCount = leftVisibleCount
+    self.rightVisibleCount = rightVisibleCount
+    self.showLeftPanel = showLeftPanel
+    self.showRightPanel = showRightPanel
+    self.density = density
+    self.textSize = textSize
+    self.backgroundOpacity = backgroundOpacity
+    self.showLabels = showLabels
+    self.showSeparators = showSeparators
+    self.hideUnavailableMetrics = hideUnavailableMetrics
+    self.showOnDisplaysWithoutNotch = showOnDisplaysWithoutNotch
+    self.tileConfigurations = tileConfigurations
+  }
 
   static let balanced = NotchHUDConfiguration(
     leftMetrics: [.cpu, .gpu, .memory],
@@ -154,6 +187,12 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
     hideUnavailableMetrics: false,
     showOnDisplaysWithoutNotch: true)
 
+  static var defaultTiles: [MenuMetric: NotchHUDTileConfiguration] {
+    Dictionary(uniqueKeysWithValues: MenuMetric.allCases.map {
+      ($0, NotchHUDTileConfiguration.defaultConfiguration(for: $0))
+    })
+  }
+
   func metrics(for side: NotchHUDSide) -> [MenuMetric] {
     switch side {
     case .left:
@@ -169,6 +208,10 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
     if leftMetrics.contains(metric) { return .left }
     if rightMetrics.contains(metric) { return .right }
     return nil
+  }
+
+  func tileConfiguration(for metric: MenuMetric) -> NotchHUDTileConfiguration {
+    tileConfigurations[metric] ?? .defaultConfiguration(for: metric)
   }
 }
 
@@ -219,6 +262,14 @@ nonisolated enum NotchHUDConfigurationPolicy {
       result.rightVisibleCount,
       available: result.rightMetrics.count)
     result.backgroundOpacity = min(max(result.backgroundOpacity, 0.2), 0.95)
+
+    var normalizedTiles: [MenuMetric: NotchHUDTileConfiguration] = [:]
+    for metric in MenuMetric.allCases {
+      normalizedTiles[metric] = NotchHUDTileConfigurationPolicy.normalized(
+        result.tileConfiguration(for: metric),
+        for: metric)
+    }
+    result.tileConfigurations = normalizedTiles
     return result
   }
 
@@ -269,6 +320,25 @@ nonisolated enum NotchHUDConfigurationPolicy {
     return normalized(result)
   }
 
+  static func settingTile(
+    _ tile: NotchHUDTileConfiguration,
+    for metric: MenuMetric,
+    in configuration: NotchHUDConfiguration
+  ) -> NotchHUDConfiguration {
+    var result = configuration
+    result.tileConfigurations[metric] = NotchHUDTileConfigurationPolicy.normalized(tile, for: metric)
+    return normalized(result)
+  }
+
+  static func resettingTile(
+    _ metric: MenuMetric,
+    in configuration: NotchHUDConfiguration
+  ) -> NotchHUDConfiguration {
+    var result = configuration
+    result.tileConfigurations[metric] = .defaultConfiguration(for: metric)
+    return normalized(result)
+  }
+
   static func resolvedPreset(for configuration: NotchHUDConfiguration) -> NotchHUDPreset {
     let normalizedConfiguration = normalized(configuration)
     for preset in [NotchHUDPreset.minimal, .balanced, .detailed]
@@ -290,11 +360,53 @@ nonisolated enum NotchHUDConfigurationPolicy {
 }
 
 nonisolated enum NotchHUDConfigurationPersistence {
-  static let currentSchemaVersion = 1
+  static let currentSchemaVersion = 2
+
+  private struct VersionEnvelope: Decodable {
+    let schemaVersion: Int
+  }
 
   private struct StoredConfiguration: Codable {
     let schemaVersion: Int
     let configuration: NotchHUDConfiguration
+  }
+
+  private struct LegacyStoredConfiguration: Decodable {
+    let schemaVersion: Int
+    let configuration: LegacyConfiguration
+  }
+
+  private struct LegacyConfiguration: Decodable {
+    let leftMetrics: [MenuMetric]
+    let rightMetrics: [MenuMetric]
+    let leftVisibleCount: Int
+    let rightVisibleCount: Int
+    let showLeftPanel: Bool
+    let showRightPanel: Bool
+    let density: NotchHUDDensity
+    let textSize: NotchHUDTextSize
+    let backgroundOpacity: Double
+    let showLabels: Bool
+    let showSeparators: Bool
+    let hideUnavailableMetrics: Bool
+    let showOnDisplaysWithoutNotch: Bool
+
+    var migrated: NotchHUDConfiguration {
+      NotchHUDConfiguration(
+        leftMetrics: leftMetrics,
+        rightMetrics: rightMetrics,
+        leftVisibleCount: leftVisibleCount,
+        rightVisibleCount: rightVisibleCount,
+        showLeftPanel: showLeftPanel,
+        showRightPanel: showRightPanel,
+        density: density,
+        textSize: textSize,
+        backgroundOpacity: backgroundOpacity,
+        showLabels: showLabels,
+        showSeparators: showSeparators,
+        hideUnavailableMetrics: hideUnavailableMetrics,
+        showOnDisplaysWithoutNotch: showOnDisplaysWithoutNotch)
+    }
   }
 
   static func encode(_ configuration: NotchHUDConfiguration) -> Data? {
@@ -305,9 +417,23 @@ nonisolated enum NotchHUDConfigurationPersistence {
   }
 
   static func decode(_ data: Data) -> NotchHUDConfiguration? {
-    guard let stored = try? JSONDecoder().decode(StoredConfiguration.self, from: data),
-      stored.schemaVersion == currentSchemaVersion
-    else { return nil }
-    return NotchHUDConfigurationPolicy.normalized(stored.configuration)
+    guard let envelope = try? JSONDecoder().decode(VersionEnvelope.self, from: data) else {
+      return nil
+    }
+
+    switch envelope.schemaVersion {
+    case currentSchemaVersion:
+      guard let stored = try? JSONDecoder().decode(StoredConfiguration.self, from: data) else {
+        return nil
+      }
+      return NotchHUDConfigurationPolicy.normalized(stored.configuration)
+    case 1:
+      guard let stored = try? JSONDecoder().decode(LegacyStoredConfiguration.self, from: data) else {
+        return nil
+      }
+      return NotchHUDConfigurationPolicy.normalized(stored.configuration.migrated)
+    default:
+      return nil
+    }
   }
 }
