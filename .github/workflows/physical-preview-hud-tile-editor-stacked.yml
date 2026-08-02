@@ -11,7 +11,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   preview:
@@ -21,10 +20,8 @@ jobs:
       github.actor == 'mishkacher' &&
       github.event.pull_request.head.ref == 'agent/physical-preview-hud-tile-editor'
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
-      ARTIFACT_ID: '8832785557'
-      ARTIFACT_SHA256: 29a18647946cded72104a8af3dcacc28f6cdc796d084b837ea95efe296ae5572
       FEATURE_HEAD_SHA: 54e7cbfc8fcaf9a6ea81d13b347543ec1e375436
 
     steps:
@@ -33,30 +30,135 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Materialize safe CoreGraphics capture script
+      - name: Build and capture physical HUD editor
         shell: bash
         run: |
           set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin ]]
+          [[ "$(uname -m)" == arm64 ]]
+          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
+          launchctl print "gui/$(id -u)" >/dev/null
+
+          rm -rf preview-derived preview-evidence preview-tools
+          mkdir -p preview-evidence preview-tools
+
           python3 - <<'PY'
           from pathlib import Path
 
-          source = Path('.github/workflows/physical-preview-hud-tile-editor.yml').read_text(encoding='utf-8').splitlines()
-          capture_step = next(i for i, line in enumerate(source) if line.strip() == '- name: Capture exact physical preview')
-          run_line = next(i for i in range(capture_step + 1, len(source)) if source[i].strip() == 'run: |')
-          end = next(i for i in range(run_line + 1, len(source)) if source[i].strip() == '- name: Upload physical preview')
-          body = []
-          for line in source[run_line + 1:end]:
-              body.append(line[10:] if line.startswith('          ') else line)
-          script = '\n'.join(body) + '\n'
+          status_path = Path('MacVitals/MenuBar/StatusItemController.swift')
+          status = status_path.read_text(encoding='utf-8')
+          status_needle = '''      .store(in: &cancellables)
+            }
 
-          helper = r'''cat > preview-tools/CaptureWindow.swift <<'SWIFT'
+            @objc private func togglePopover()'''
+          status_replacement = '''      .store(in: &cancellables)
+
+              if ProcessInfo.processInfo.environment["MACVITALS_PHYSICAL_PREVIEW_HUD_EDITOR"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                  self?.openNotchHUDSettings()
+                }
+              }
+            }
+
+            @objc private func togglePopover()'''
+          if status_needle not in status:
+              raise SystemExit('StatusItemController preview insertion point not found')
+          status_path.write_text(status.replace(status_needle, status_replacement, 1), encoding='utf-8')
+
+          settings_path = Path('MacVitals/UI/Preferences/NotchHUDSettingsView.swift')
+          settings = settings_path.read_text(encoding='utf-8')
+          settings_needle = '''  func present() {
+              showWindow(nil)
+              window?.makeKeyAndOrderFront(nil)
+              NSApp.activate(ignoringOtherApps: true)
+            }'''
+          settings_replacement = '''  func present() {
+              showWindow(nil)
+              window?.makeKeyAndOrderFront(nil)
+              NSApp.activate(ignoringOtherApps: true)
+
+              guard let outputPath = ProcessInfo.processInfo.environment["MACVITALS_PHYSICAL_PREVIEW_OUTPUT"] else {
+                return
+              }
+              DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let view = self?.window?.contentView else { return }
+                let bounds = view.bounds
+                guard !bounds.isEmpty,
+                  let representation = view.bitmapImageRepForCachingDisplay(in: bounds)
+                else { return }
+                view.cacheDisplay(in: bounds, to: representation)
+                guard let data = representation.representation(using: .png, properties: [:]) else {
+                  return
+                }
+                try? data.write(
+                  to: URL(fileURLWithPath: outputPath),
+                  options: .atomic)
+              }
+            }'''
+          if settings_needle not in settings:
+              raise SystemExit('HUD settings preview insertion point not found')
+          settings_path.write_text(settings.replace(settings_needle, settings_replacement, 1), encoding='utf-8')
+          PY
+
+          python3 scripts/materialize_app_icon.py
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate
+
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${PWD}/preview-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            clean build > preview-evidence/build.log 2>&1
+          build_status=$?
+          set -e
+          if [[ ${build_status} -ne 0 ]]; then
+            tail -n 300 preview-evidence/build.log
+            exit ${build_status}
+          fi
+
+          app="${PWD}/preview-derived/Build/Products/Debug/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == arm64 ]]
+
+          cat > preview-tools/WindowTools.swift <<'SWIFT'
           import AppKit
           import CoreGraphics
           import Foundation
 
-          guard CommandLine.arguments.count == 3,
-                let rawID = UInt32(CommandLine.arguments[1]) else { exit(2) }
-          let output = URL(fileURLWithPath: CommandLine.arguments[2])
+          guard CommandLine.arguments.count >= 3 else { exit(2) }
+          let command = CommandLine.arguments[1]
+          guard let targetPID = Int32(CommandLine.arguments[2]) else { exit(2) }
+          let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+          var windows: [[String: Any]] = []
+          for info in raw {
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == targetPID,
+                  let number = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
+            windows.append([
+              "id": number,
+              "name": info[kCGWindowName as String] as? String ?? "",
+              "width": width,
+              "height": height,
+              "layer": (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1,
+            ])
+          }
+
+          if command == "list" {
+            let data = try JSONSerialization.data(withJSONObject: windows, options: [.prettyPrinted, .sortedKeys])
+            FileHandle.standardOutput.write(data)
+            exit(0)
+          }
+
+          guard command == "capture", CommandLine.arguments.count == 5,
+                let rawID = UInt32(CommandLine.arguments[3]) else { exit(2) }
+          let output = URL(fileURLWithPath: CommandLine.arguments[4])
           guard let image = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
@@ -66,56 +168,81 @@ jobs:
           guard let data = representation.representation(using: .png, properties: [:]) else { exit(4) }
           try data.write(to: output, options: .atomic)
           SWIFT
-          xcrun swiftc -O -target arm64-apple-macos13.0 -framework AppKit -framework CoreGraphics \
-            preview-tools/CaptureWindow.swift -o preview-tools/capture-window
-          '''
-          marker = '"${executable}" -experimentalNotchHUDEnabled YES -ApplePersistenceIgnoreState YES'
-          if marker not in script:
-              raise SystemExit('application launch marker not found')
-          script = script.replace(marker, helper + '\n' + marker, 1)
-          script = script.replace('/usr/sbin/screencapture -x -l "${settings}" preview-evidence/hud-tile-editor.png', 'preview-tools/capture-window "${settings}" preview-evidence/hud-tile-editor.png')
-          script = script.replace('/usr/sbin/screencapture -x -l "${hud1}" preview-evidence/hud-panel-1.png', 'preview-tools/capture-window "${hud1}" preview-evidence/hud-panel-1.png')
-          script = script.replace('/usr/sbin/screencapture -x -l "${hud2}" preview-evidence/hud-panel-2.png', 'preview-tools/capture-window "${hud2}" preview-evidence/hud-panel-2.png')
+          xcrun swiftc -O -target arm64-apple-macos13.0 \
+            -framework AppKit -framework CoreGraphics \
+            preview-tools/WindowTools.swift -o preview-tools/window-tools
 
-          original_guard = '''existing="$(pgrep -x MacVitals || true)"
-          if [[ -n "${existing}" ]]; then
-            echo "A MacVitals process is already running; refusing to disturb the user's instance: ${existing}" >&2
-            exit 1
-          fi'''
-          safe_guard = r'''existing="$(pgrep -x MacVitals || true)"
-          user_processes=""
-          for existing_pid in ${existing}; do
-            existing_command="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
-            if [[ "${existing_command}" == *"GitHubActionsRunners/"*"/preview-app/MacVitals.app/Contents/MacOS/MacVitals"* ]]; then
-              echo "Cleaning orphaned preview process ${existing_pid}"
-              kill -TERM "${existing_pid}" 2>/dev/null || true
+          cleanup() {
+            set +e
+            if [[ -n "${app_pid:-}" ]]; then
+              kill -TERM "${app_pid}" 2>/dev/null || true
               for _ in {1..50}; do
-                kill -0 "${existing_pid}" 2>/dev/null || break
+                kill -0 "${app_pid}" 2>/dev/null || break
                 sleep 0.1
               done
-              kill -KILL "${existing_pid}" 2>/dev/null || true
-            else
-              user_processes="${user_processes} ${existing_pid}"
+              kill -KILL "${app_pid}" 2>/dev/null || true
             fi
-          done
-          if [[ -n "${user_processes// /}" ]]; then
-            echo "A non-preview MacVitals process is running; refusing to disturb it:${user_processes}" >&2
-            exit 1
-          fi'''
-          if original_guard not in script:
-              raise SystemExit('existing-process guard not found')
-          script = script.replace(original_guard, safe_guard, 1)
-          Path('/tmp/run-physical-hud-preview.sh').write_text(script, encoding='utf-8')
-          PY
-          bash -n /tmp/run-physical-hud-preview.sh
+          }
+          trap cleanup EXIT
 
-      - name: Capture exact physical preview
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash /tmp/run-physical-hud-preview.sh
+          output="${PWD}/preview-evidence/hud-tile-editor.png"
+          MACVITALS_PHYSICAL_PREVIEW_HUD_EDITOR=1 \
+          MACVITALS_PHYSICAL_PREVIEW_OUTPUT="${output}" \
+          "${executable}" \
+            -experimentalNotchHUDEnabled YES \
+            -ApplePersistenceIgnoreState YES \
+            > preview-evidence/app.stdout.log \
+            2> preview-evidence/app.stderr.log &
+          app_pid=$!
+
+          for _ in {1..150}; do
+            kill -0 "${app_pid}" 2>/dev/null || {
+              echo 'MacVitals exited before creating the preview' >&2
+              cat preview-evidence/app.stderr.log >&2 || true
+              exit 1
+            }
+            [[ -s "${output}" ]] && break
+            sleep 0.2
+          done
+          [[ -s "${output}" ]]
+          /usr/bin/sips -Z 1800 "${output}" >/dev/null
+          /usr/bin/sips -g pixelWidth -g pixelHeight "${output}" \
+            > preview-evidence/image-dimensions.txt
+
+          preview-tools/window-tools list "${app_pid}" > preview-evidence/windows.json
+          WINDOWS_JSON="preview-evidence/windows.json" python3 - <<'PY' > preview-evidence/hud-window-ids.txt
+          import json, os
+          windows = json.load(open(os.environ['WINDOWS_JSON'], encoding='utf-8'))
+          hud = [w for w in windows if 20 <= w['height'] <= 60 and w['width'] >= 70]
+          hud.sort(key=lambda w: w['width'], reverse=True)
+          for index, window in enumerate(hud[:2], 1):
+              print(f"hud{index}={window['id']}")
+          PY
+          source preview-evidence/hud-window-ids.txt || true
+          if [[ -n "${hud1:-}" ]]; then
+            preview-tools/window-tools capture "${app_pid}" "${hud1}" \
+              preview-evidence/hud-panel-1.png || rm -f preview-evidence/hud-panel-1.png
+          fi
+          if [[ -n "${hud2:-}" ]]; then
+            preview-tools/window-tools capture "${app_pid}" "${hud2}" \
+              preview-evidence/hud-panel-2.png || rm -f preview-evidence/hud-panel-2.png
+          fi
+
+          FEATURE_HEAD_SHA="${FEATURE_HEAD_SHA}" APP_PID="${app_pid}" python3 - <<'PY' \
+            > preview-evidence/preview-metadata.json
+          import json, os
+          print(json.dumps({
+            'featureHead': os.environ['FEATURE_HEAD_SHA'],
+            'processPID': int(os.environ['APP_PID']),
+            'sourceUI': 'PR 37 exact source',
+            'previewOnlyRuntimeHook': True,
+            'captureScope': 'MacVitals content view and own windows only',
+            'desktopCaptured': False,
+          }, indent=2, sort_keys=True))
+          PY
 
       - name: Upload physical preview
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: physical-preview-hud-tile-editor
