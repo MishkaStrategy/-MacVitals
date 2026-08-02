@@ -57,7 +57,7 @@ private struct StatusBarPetSettingsView: View {
 
   private var header: some View {
     HStack(spacing: 12) {
-      Image(systemName: "bolt.fill")
+      Image(systemName: "bolt.heart.fill")
         .font(.title2.bold())
         .foregroundStyle(.cyan)
         .frame(width: 38, height: 38)
@@ -66,7 +66,7 @@ private struct StatusBarPetSettingsView: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(StatusBarPetL10n.string("Electric Dragon"))
           .font(.title3.bold())
-        Text(StatusBarPetL10n.string("A tiny animated companion that lives beside MacVitals."))
+        Text(StatusBarPetL10n.string("A tiny friendly dragon that lives only on the hardware notch."))
           .font(.subheadline)
           .foregroundStyle(.secondary)
       }
@@ -82,65 +82,63 @@ private struct StatusBarPetSettingsView: View {
     VStack(alignment: .leading, spacing: 8) {
       Text(StatusBarPetL10n.string("Preview"))
         .font(.headline)
-      ZStack(alignment: .leading) {
-        RoundedRectangle(cornerRadius: 12)
-          .fill(Color.black.opacity(0.86))
-        HStack(spacing: 10) {
-          Label("MacVitals", systemImage: "waveform.path.ecg")
-            .font(.system(size: 13, weight: .semibold))
-          Divider().frame(height: 18)
-          Text("CPU 18%")
-          Text("52°C")
-          Text("74%")
-            .foregroundStyle(.green)
-          Spacer()
-        }
-        .font(.system(size: 12, weight: .medium, design: .rounded))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 14)
 
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-          let time = timeline.date.timeIntervalSinceReferenceDate
-          previewDragon(time: time)
+      TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        let time = timeline.date.timeIntervalSinceReferenceDate
+        GeometryReader { proxy in
+          let notchWidth = min(212.0, proxy.size.width * 0.58)
+          let notchLeft = (proxy.size.width - notchWidth) / 2
+          let travel = notchWidth + 28
+          let petX = notchLeft - 14 + (sin(time * 0.72) + 1) * travel / 2
+          let petY = petX < notchLeft || petX > notchLeft + notchWidth ? 21.0 : 47.0
+
+          ZStack(alignment: .topLeading) {
+            LinearGradient(
+              colors: [Color.indigo.opacity(0.72), Color.blue.opacity(0.34)],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing)
+
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+              .fill(.black)
+              .frame(width: notchWidth, height: 40)
+              .position(x: proxy.size.width / 2, y: 17)
+
+            NotchDragonPreviewGlyph(
+              time: time,
+              sparkIntensity: settings.configuration.sparkIntensity)
+              .frame(
+                width: settings.configuration.size.width,
+                height: settings.configuration.size.height)
+              .position(x: petX, y: petY)
+          }
         }
       }
-      .frame(height: 64)
+      .frame(height: 82)
+      .clipShape(RoundedRectangle(cornerRadius: 12))
       .overlay(
         RoundedRectangle(cornerRadius: 12)
-          .stroke(Color.white.opacity(0.1), lineWidth: 1))
+          .stroke(Color.primary.opacity(0.08), lineWidth: 1))
     }
-  }
-
-  private func previewDragon(time: TimeInterval) -> some View {
-    let width = settings.configuration.size.width
-    let height = settings.configuration.size.height
-    let travel = 250.0
-    let position = 82 + (sin(time * 0.7) + 1) * travel / 2
-    return StatusBarPetPreviewDragon(
-      configuration: settings.configuration,
-      time: time)
-      .frame(width: width, height: height)
-      .position(x: position, y: 17 + height / 2)
   }
 
   private var behaviorCard: some View {
     settingsCard(
       title: StatusBarPetL10n.string("Behavior"),
-      symbol: "figure.walk.motion") {
+      symbol: "sparkles") {
         VStack(spacing: 12) {
           toggleRow(
-            title: StatusBarPetL10n.string("Walk along the status bar"),
-            detail: StatusBarPetL10n.string("The dragon occasionally explores near the MacVitals item."),
+            title: StatusBarPetL10n.string("Move around the notch"),
+            detail: StatusBarPetL10n.string("The dragon wraps around the notch and never walks across the menu bar."),
             isOn: roamBinding)
           Divider()
           toggleRow(
-            title: StatusBarPetL10n.string("Play with the cursor"),
-            detail: StatusBarPetL10n.string("Hover nearby and the dragon will chase and spark at the pointer."),
+            title: StatusBarPetL10n.string("Play with the cursor near the notch"),
+            detail: StatusBarPetL10n.string("The dragon reacts only when the pointer is directly beside the notch."),
             isOn: interactionBinding)
           Divider()
           toggleRow(
             title: StatusBarPetL10n.string("Respect Reduce Motion"),
-            detail: StatusBarPetL10n.string("Stop roaming when macOS Reduce Motion is enabled."),
+            detail: StatusBarPetL10n.string("Pause notch movement when macOS Reduce Motion is enabled."),
             isOn: reducedMotionBinding)
 
           Divider()
@@ -163,7 +161,7 @@ private struct StatusBarPetSettingsView: View {
   private var appearanceCard: some View {
     settingsCard(
       title: StatusBarPetL10n.string("Appearance"),
-      symbol: "sparkles") {
+      symbol: "face.smiling") {
         VStack(alignment: .leading, spacing: 12) {
           Picker(StatusBarPetL10n.string("Dragon size"), selection: sizeBinding) {
             ForEach(StatusBarPetSize.allCases) { size in
@@ -193,8 +191,8 @@ private struct StatusBarPetSettingsView: View {
   private var footer: some View {
     HStack {
       Label(
-        StatusBarPetL10n.string("The overlay never intercepts mouse clicks."),
-        systemImage: "cursorarrow.rays")
+        StatusBarPetL10n.string("Shown only on a display with a hardware notch; mouse clicks pass through."),
+        systemImage: "macbook")
         .font(.caption)
         .foregroundStyle(.secondary)
       Spacer()
@@ -281,30 +279,40 @@ private struct StatusBarPetSettingsView: View {
   }
 }
 
-private struct StatusBarPetPreviewDragon: View {
-  let configuration: StatusBarPetConfiguration
+private struct NotchDragonPreviewGlyph: View {
   let time: TimeInterval
+  let sparkIntensity: Double
 
   var body: some View {
     ZStack {
       Circle()
-        .fill(
-          RadialGradient(
-            colors: [.cyan.opacity(0.46), .clear],
-            center: .center,
-            startRadius: 0,
-            endRadius: 24))
-        .scaleEffect(1 + sin(time * 4) * 0.06)
+        .fill(Color.cyan.opacity(0.12 + sparkIntensity * 0.12))
+        .scaleEffect(1 + sin(time * 3.4) * 0.05)
 
-      Image(systemName: "bolt.fill")
-        .font(.system(size: configuration.size.height * 0.66, weight: .black))
-        .foregroundStyle(
+      Capsule()
+        .fill(
           LinearGradient(
-            colors: [.indigo, .blue, .cyan],
+            colors: [.indigo, .blue],
             startPoint: .topLeading,
             endPoint: .bottomTrailing))
-        .rotationEffect(.degrees(-18 + sin(time * 5) * 5))
-        .shadow(color: .cyan.opacity(configuration.sparkIntensity), radius: 3)
+        .frame(width: 19, height: 13)
+        .rotationEffect(.degrees(sin(time * 4) * 3))
+
+      Circle()
+        .fill(Color.blue)
+        .frame(width: 14, height: 14)
+        .offset(x: -7, y: -3)
+
+      HStack(spacing: 3) {
+        Circle().fill(.white).frame(width: 3.5, height: 4.5)
+        Circle().fill(.white).frame(width: 3.5, height: 4.5)
+      }
+      .offset(x: -7, y: -4)
+
+      Image(systemName: "bolt.fill")
+        .font(.system(size: 6, weight: .bold))
+        .foregroundStyle(.cyan)
+        .offset(x: 9, y: -7)
     }
   }
 }
