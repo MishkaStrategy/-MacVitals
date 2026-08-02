@@ -48,10 +48,16 @@ final class StatusItemController: NSObject {
       button.setAccessibilityIdentifier("macVitalsStatusItem")
     }
 
-    coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
+    Publishers.CombineLatest3(
+      coordinator.$snapshot,
+      settings.$enabledMetrics,
+      settings.$showAroundStatusBar)
       .receive(on: RunLoop.main)
-      .sink { [weak self] snapshot, metrics in
-        self?.render(snapshot: snapshot, metrics: metrics)
+      .sink { [weak self] snapshot, metrics, showAroundStatusBar in
+        self?.render(
+          snapshot: snapshot,
+          metrics: metrics,
+          showAroundStatusBar: showAroundStatusBar)
       }
       .store(in: &cancellables)
   }
@@ -78,10 +84,9 @@ final class StatusItemController: NSObject {
       withTitle: NSLocalizedString("Preferences…", comment: ""),
       action: #selector(openPreferences), keyEquivalent: ",")
 
-    let powerFlow = NSLocalizedString("Power flow", comment: "")
-    let toggleFormat = NSLocalizedString(notchHUD.isEnabled ? "Hide %@" : "Show %@", comment: "")
     menu.addItem(
-      withTitle: String(format: toggleFormat, powerFlow),
+      withTitle: L10n.string(
+        settings.showAroundStatusBar ? "Hide around status bar" : "Show around status bar"),
       action: #selector(toggleNotchHUD), keyEquivalent: "")
 
     menu.addItem(.separator())
@@ -107,8 +112,11 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func toggleNotchHUD() {
-    let screen = statusItem.button?.window?.screen
-    notchHUD.toggle(preferredScreen: screen)
+    settings.showAroundStatusBar.toggle()
+    notchHUD.update(
+      snapshot: coordinator.snapshot,
+      preferredScreen: statusItem.button?.window?.screen,
+      enabled: settings.showAroundStatusBar)
   }
 
   @objc private func openPreferences() {
@@ -121,7 +129,11 @@ final class StatusItemController: NSObject {
     NSApp.terminate(nil)
   }
 
-  private func render(snapshot: SystemSnapshot, metrics: [MenuMetric]) {
+  private func render(
+    snapshot: SystemSnapshot,
+    metrics: [MenuMetric],
+    showAroundStatusBar: Bool
+  ) {
     let normalized = MenuLayoutRules.normalized(metrics)
 
     if let button = statusItem.button {
@@ -139,7 +151,8 @@ final class StatusItemController: NSObject {
 
       notchHUD.update(
         snapshot: snapshot,
-        preferredScreen: button.window?.screen)
+        preferredScreen: button.window?.screen,
+        enabled: showAroundStatusBar)
     }
     statusItem.length = NSStatusItem.variableLength
   }
