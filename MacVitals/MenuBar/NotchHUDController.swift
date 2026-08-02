@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class NotchHUDController {
-  static let defaultsKey = "experimentalNotchHUDEnabled"
+  nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
 
   private let state = NotchHUDState()
   private var leftPanel: NSPanel?
