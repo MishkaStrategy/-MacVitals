@@ -64,6 +64,11 @@ final class StatusItemController: NSObject {
           notchHUDConfiguration: configuration)
       }
       .store(in: &cancellables)
+
+    renderCurrentState()
+    DispatchQueue.main.async { [weak self] in
+      self?.renderCurrentState()
+    }
   }
 
   @objc private func togglePopover() {
@@ -120,11 +125,7 @@ final class StatusItemController: NSObject {
 
   @objc private func toggleNotchHUD() {
     settings.showAroundStatusBar.toggle()
-    notchHUD.update(
-      snapshot: coordinator.snapshot,
-      preferredScreen: statusItem.button?.window?.screen,
-      enabled: settings.showAroundStatusBar,
-      configuration: settings.notchHUDConfiguration)
+    renderCurrentState()
   }
 
   @objc private func openNotchHUDSettings() {
@@ -145,6 +146,14 @@ final class StatusItemController: NSObject {
     NSApp.terminate(nil)
   }
 
+  private func renderCurrentState() {
+    render(
+      snapshot: coordinator.snapshot,
+      metrics: settings.enabledMetrics,
+      showAroundStatusBar: settings.showAroundStatusBar,
+      notchHUDConfiguration: settings.notchHUDConfiguration)
+  }
+
   private func render(
     snapshot: SystemSnapshot,
     metrics: [MenuMetric],
@@ -154,9 +163,6 @@ final class StatusItemController: NSObject {
     let normalized = MenuLayoutRules.normalized(metrics)
     let preferredScreen = statusItem.button?.window?.screen
 
-    // The notch overlay is independent from the status item button. During early application
-    // startup macOS may not have attached the button to a window yet, but the indicator still
-    // needs to be created from the initial settings/snapshot emission.
     notchHUD.update(
       snapshot: snapshot,
       preferredScreen: preferredScreen,
