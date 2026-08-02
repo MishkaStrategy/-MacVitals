@@ -17,18 +17,78 @@ nonisolated struct NotchHUDReading: Equatable, Sendable {
   let level: NotchIndicatorLevel
 }
 
+nonisolated struct NotchHUDIndicatorSegmentRange: Equatable, Sendable {
+  let from: CGFloat
+  let to: CGFloat
+}
+
+nonisolated enum NotchHUDIndicatorSegments {
+  private static let splitGap: CGFloat = 0.008
+
+  static func primary(
+    progress: Double,
+    count: NotchIndicatorCount
+  ) -> NotchHUDIndicatorSegmentRange {
+    let resolvedProgress = CGFloat(min(max(progress, 0), 1))
+    guard count == .two else {
+      return NotchHUDIndicatorSegmentRange(from: 0, to: resolvedProgress)
+    }
+
+    let splitStart = 0.5 - splitGap
+    return NotchHUDIndicatorSegmentRange(
+      from: splitStart * (1 - resolvedProgress),
+      to: splitStart)
+  }
+
+  static func secondary(progress: Double) -> NotchHUDIndicatorSegmentRange {
+    let resolvedProgress = CGFloat(min(max(progress, 0), 1))
+    let splitEnd = 0.5 + splitGap
+    return NotchHUDIndicatorSegmentRange(
+      from: splitEnd,
+      to: splitEnd + (1 - splitEnd) * resolvedProgress)
+  }
+
+  static func primaryTrack(count: NotchIndicatorCount) -> NotchHUDIndicatorSegmentRange {
+    guard count == .two else {
+      return NotchHUDIndicatorSegmentRange(from: 0, to: 1)
+    }
+    return NotchHUDIndicatorSegmentRange(from: 0, to: 0.5 - splitGap)
+  }
+
+  static let secondaryTrack = NotchHUDIndicatorSegmentRange(
+    from: 0.5 + splitGap,
+    to: 1)
+}
+
 nonisolated enum NotchHUDReadingResolver {
   static func resolve(
     snapshot: SystemSnapshot,
     configuration: NotchHUDConfiguration
   ) -> NotchHUDReading {
     let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
-    let value = numericValue(for: normalized.metric, snapshot: snapshot)
-    let displayValue = renderedValue(for: normalized.metric, value: value)
-    let progress = value.map { normalizedProgress($0, metric: normalized.metric) } ?? 0
-    let level = level(for: value, configuration: normalized)
-    return NotchHUDReading(
+    return resolve(
+      snapshot: snapshot,
       metric: normalized.metric,
+      warningThreshold: normalized.warningThreshold,
+      criticalThreshold: normalized.criticalThreshold)
+  }
+
+  static func resolve(
+    snapshot: SystemSnapshot,
+    metric: MenuMetric,
+    warningThreshold: Double,
+    criticalThreshold: Double
+  ) -> NotchHUDReading {
+    let value = numericValue(for: metric, snapshot: snapshot)
+    let displayValue = renderedValue(for: metric, value: value)
+    let progress = value.map { normalizedProgress($0, metric: metric) } ?? 0
+    let level = level(
+      for: value,
+      metric: metric,
+      warningThreshold: warningThreshold,
+      criticalThreshold: criticalThreshold)
+    return NotchHUDReading(
+      metric: metric,
       numericValue: value,
       displayValue: displayValue,
       progress: progress,
@@ -91,16 +151,18 @@ nonisolated enum NotchHUDReadingResolver {
 
   private static func level(
     for value: Double?,
-    configuration: NotchHUDConfiguration
+    metric: MenuMetric,
+    warningThreshold: Double,
+    criticalThreshold: Double
   ) -> NotchIndicatorLevel {
     guard let value else { return .unavailable }
 
-    if configuration.metric.notchIndicatorLowerIsWorse {
-      if value <= configuration.criticalThreshold { return .critical }
-      if value <= configuration.warningThreshold { return .warning }
+    if metric.notchIndicatorLowerIsWorse {
+      if value <= criticalThreshold { return .critical }
+      if value <= warningThreshold { return .warning }
     } else {
-      if value >= configuration.criticalThreshold { return .critical }
-      if value >= configuration.warningThreshold { return .warning }
+      if value >= criticalThreshold { return .critical }
+      if value >= warningThreshold { return .warning }
     }
     return .normal
   }
@@ -138,10 +200,18 @@ struct NotchHUDIndicatorContentView: View {
 
   var body: some View {
     let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
-    let reading = NotchHUDReadingResolver.resolve(
+    let primaryReading = NotchHUDReadingResolver.resolve(
       snapshot: snapshot,
       configuration: normalized)
-    let activeColor = indicatorColor(reading: reading, configuration: normalized)
+    let secondaryReading = resolvedSecondaryReading(
+      snapshot: snapshot,
+      configuration: normalized)
+    let primaryColor = indicatorColor(
+      reading: primaryReading,
+      configuration: normalized)
+    let secondaryColor = secondaryReading.map {
+      indicatorColor(reading: $0, configuration: normalized)
+    }
 
     GeometryReader { proxy in
       let geometry = NotchHUDLayout.contourGeometry(
@@ -149,49 +219,130 @@ struct NotchHUDIndicatorContentView: View {
         safeAreaTop: safeAreaTop)
       let shape = NotchHUDContourShape(geometry: geometry)
       let lineWidth = CGFloat(normalized.lineThickness)
+      let count = normalized.indicatorCount
+      let primaryTrack = NotchHUDIndicatorSegments.primaryTrack(count: count)
+      let primarySegment = NotchHUDIndicatorSegments.primary(
+        progress: primaryReading.progress,
+        count: count)
 
       ZStack(alignment: .top) {
         shape
+          .trim(from: primaryTrack.from, to: primaryTrack.to)
           .stroke(
             Color.white.opacity(normalized.trackOpacity),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
 
         shape
-          .trim(from: 0, to: reading.progress)
+          .trim(from: primarySegment.from, to: primarySegment.to)
           .stroke(
-            activeColor,
+            primaryColor,
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
           )
           .shadow(
-            color: activeColor.opacity(0.75 * normalized.glowIntensity),
+            color: primaryColor.opacity(0.75 * normalized.glowIntensity),
             radius: 2 + 6 * normalized.glowIntensity
           )
           .animation(
             normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
-            value: reading.progress)
+            value: primaryReading.progress)
+
+        if let secondaryReading, let secondaryColor {
+          let secondaryTrack = NotchHUDIndicatorSegments.secondaryTrack
+          let secondarySegment = NotchHUDIndicatorSegments.secondary(
+            progress: secondaryReading.progress)
+
+          shape
+            .trim(from: secondaryTrack.from, to: secondaryTrack.to)
+            .stroke(
+              Color.white.opacity(normalized.trackOpacity),
+              style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+
+          shape
+            .trim(from: secondarySegment.from, to: secondarySegment.to)
+            .stroke(
+              secondaryColor,
+              style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+            )
+            .shadow(
+              color: secondaryColor.opacity(0.75 * normalized.glowIntensity),
+              radius: 2 + 6 * normalized.glowIntensity
+            )
+            .animation(
+              normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
+              value: secondaryReading.progress)
+        }
 
         if normalized.showValueText {
-          HStack(spacing: 5) {
-            if normalized.showSensorName {
-              Text(normalized.metric.displayName)
-                .foregroundStyle(Color.white.opacity(0.82))
+          if let secondaryReading, let secondaryColor {
+            HStack(spacing: 24) {
+              indicatorLabel(
+                reading: primaryReading,
+                color: primaryColor,
+                showSensorName: normalized.showSensorName)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+              indicatorLabel(
+                reading: secondaryReading,
+                color: secondaryColor,
+                showSensorName: normalized.showSensorName)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Text(reading.displayValue)
-              .foregroundStyle(activeColor)
-              .fontWeight(.semibold)
+            .frame(width: max(proxy.size.width - 44, 160))
+            .position(
+              x: proxy.size.width / 2,
+              y: geometry.bottomY + 16)
+          } else {
+            indicatorLabel(
+              reading: primaryReading,
+              color: primaryColor,
+              showSensorName: normalized.showSensorName)
+              .position(
+                x: proxy.size.width / 2,
+                y: geometry.bottomY + 16)
           }
-          .font(.system(size: 12, weight: .medium, design: .rounded).monospacedDigit())
-          .lineLimit(1)
-          .position(
-            x: proxy.size.width / 2,
-            y: geometry.bottomY + 16)
         }
       }
       .accessibilityElement(children: .ignore)
-      .accessibilityLabel(normalized.metric.displayName)
-      .accessibilityValue(reading.displayValue)
+      .accessibilityLabel(accessibilityLabel(
+        primary: primaryReading,
+        secondary: secondaryReading))
+      .accessibilityValue(accessibilityValue(
+        primary: primaryReading,
+        secondary: secondaryReading))
       .accessibilityIdentifier("experimentalNotchHUDIndicator")
     }
+  }
+
+  private func resolvedSecondaryReading(
+    snapshot: SystemSnapshot,
+    configuration: NotchHUDConfiguration
+  ) -> NotchHUDReading? {
+    guard let metric = configuration.secondaryMetric else { return nil }
+    let defaults = metric.notchIndicatorDefaultThresholds
+    return NotchHUDReadingResolver.resolve(
+      snapshot: snapshot,
+      metric: metric,
+      warningThreshold: configuration.secondaryWarningThreshold ?? defaults.warning,
+      criticalThreshold: configuration.secondaryCriticalThreshold ?? defaults.critical)
+  }
+
+  private func indicatorLabel(
+    reading: NotchHUDReading,
+    color: Color,
+    showSensorName: Bool
+  ) -> some View {
+    HStack(spacing: 5) {
+      if showSensorName {
+        Text(reading.metric.displayName)
+          .foregroundStyle(Color.white.opacity(0.82))
+      }
+      Text(reading.displayValue)
+        .foregroundStyle(color)
+        .fontWeight(.semibold)
+    }
+    .font(.system(size: 12, weight: .medium, design: .rounded).monospacedDigit())
+    .lineLimit(1)
+    .minimumScaleFactor(0.72)
   }
 
   private func indicatorColor(
@@ -212,9 +363,25 @@ struct NotchHUDIndicatorContentView: View {
       case .unavailable:
         return Color.white.opacity(0.42)
       case .normal:
-        return configuration.metric.defaultNotchIndicatorColor
+        return reading.metric.defaultNotchIndicatorColor
       }
     }
+  }
+
+  private func accessibilityLabel(
+    primary: NotchHUDReading,
+    secondary: NotchHUDReading?
+  ) -> String {
+    guard let secondary else { return primary.metric.displayName }
+    return "\(primary.metric.displayName), \(secondary.metric.displayName)"
+  }
+
+  private func accessibilityValue(
+    primary: NotchHUDReading,
+    secondary: NotchHUDReading?
+  ) -> String {
+    guard let secondary else { return primary.displayValue }
+    return "\(primary.displayValue), \(secondary.displayValue)"
   }
 }
 
