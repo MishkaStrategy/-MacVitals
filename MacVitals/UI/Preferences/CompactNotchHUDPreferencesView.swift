@@ -61,29 +61,47 @@ struct CompactNotchHUDPreferencesView: View {
 
   private var sensorCard: some View {
     CompactIndicatorCard {
-      Label(L10n.string("Displayed sensor"), systemImage: "sensor.fill")
+      Label(L10n.string("Displayed sensors"), systemImage: "sensor.fill")
         .font(.headline)
 
-      HStack(spacing: 14) {
-        VStack(alignment: .leading, spacing: 3) {
-          Text(L10n.string("Display one sensor"))
-            .font(.subheadline.weight(.semibold))
-          Text(L10n.string("The contour fill and value use this live sensor."))
-            .font(.caption)
-            .foregroundStyle(.secondary)
+      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 11) {
+        GridRow {
+          compactLabel(L10n.string("Indicator count"))
+          Picker(
+            L10n.string("Indicator count"),
+            selection: indicatorCountBinding
+          ) {
+            ForEach(NotchIndicatorCount.allCases) { count in
+              Text(count.displayName).tag(count)
+            }
+          }
+          .labelsHidden()
+          .pickerStyle(.segmented)
+          .accessibilityIdentifier("notchIndicatorCountPicker")
         }
-        Spacer()
-        Picker(L10n.string("Display one sensor"), selection: metricBinding) {
-          ForEach(MenuMetric.notchIndicatorMetrics) { metric in
-            Label(metric.displayName, systemImage: metric.defaultSymbol)
-              .tag(metric)
+
+        GridRow {
+          compactLabel(L10n.string("Indicator 1 (left)"))
+          metricPicker(
+            selection: primaryMetricBinding,
+            metrics: MenuMetric.notchIndicatorMetrics,
+            identifier: "notchIndicatorPrimaryMetricPicker")
+        }
+
+        if settings.notchHUDConfiguration.indicatorCount == .two {
+          GridRow {
+            compactLabel(L10n.string("Indicator 2 (right)"))
+            metricPicker(
+              selection: secondaryMetricBinding,
+              metrics: availableSecondaryMetrics,
+              identifier: "notchIndicatorSecondaryMetricPicker")
           }
         }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .frame(width: 210)
-        .accessibilityIdentifier("notchIndicatorMetricPicker")
       }
+
+      Text(indicatorCountDescription)
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 
@@ -94,14 +112,15 @@ struct CompactNotchHUDPreferencesView: View {
 
       Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 11) {
         GridRow {
-          compactLabel(L10n.string("Value text"))
+          compactLabel(L10n.string("Lower labels"))
           HStack(spacing: 16) {
             Toggle(
-              L10n.string("Show current value"),
+              L10n.string("Show labels below the contour"),
               isOn: configurationBinding(\.showValueText)
             )
             .toggleStyle(.checkbox)
-            .accessibilityIdentifier("notchIndicatorShowValueToggle")
+            .accessibilityIdentifier("notchIndicatorShowBottomLabelsToggle")
+
             Toggle(
               L10n.string("Show sensor name"),
               isOn: configurationBinding(\.showSensorName)
@@ -195,24 +214,23 @@ struct CompactNotchHUDPreferencesView: View {
       )
       .font(.headline)
 
-      HStack(spacing: 14) {
-        VStack(alignment: .leading, spacing: 3) {
-          Text(L10n.string("Warning and critical states"))
-            .font(.subheadline.weight(.semibold))
-          Text(thresholdDescription)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
+      thresholdRow(
+        title: L10n.string("Indicator 1"),
+        metric: settings.notchHUDConfiguration.metric,
+        warning: configurationBinding(\.warningThreshold),
+        critical: configurationBinding(\.criticalThreshold),
+        warningIdentifier: "notchIndicatorWarningField",
+        criticalIdentifier: "notchIndicatorCriticalField")
 
-        thresholdField(
-          title: L10n.string("Warning"),
-          value: configurationBinding(\.warningThreshold),
-          identifier: "notchIndicatorWarningField")
-        thresholdField(
-          title: L10n.string("Critical"),
-          value: configurationBinding(\.criticalThreshold),
-          identifier: "notchIndicatorCriticalField")
+      if let secondaryMetric = settings.notchHUDConfiguration.secondaryMetric {
+        Divider()
+        thresholdRow(
+          title: L10n.string("Indicator 2"),
+          metric: secondaryMetric,
+          warning: secondaryWarningBinding,
+          critical: secondaryCriticalBinding,
+          warningIdentifier: "notchIndicatorSecondaryWarningField",
+          criticalIdentifier: "notchIndicatorSecondaryCriticalField")
       }
     }
   }
@@ -234,7 +252,7 @@ struct CompactNotchHUDPreferencesView: View {
 
   private var resetRow: some View {
     HStack {
-      Text(L10n.string("Only one sensor is shown around the notch at a time."))
+      Text(L10n.string("Choose one sensor or split the contour between two sensors."))
         .font(.caption)
         .foregroundStyle(.secondary)
       Spacer()
@@ -246,14 +264,120 @@ struct CompactNotchHUDPreferencesView: View {
     .padding(.horizontal, 2)
   }
 
-  private var metricBinding: Binding<MenuMetric> {
+  private var indicatorCountBinding: Binding<NotchIndicatorCount> {
     Binding(
-      get: { settings.notchHUDConfiguration.metric },
-      set: { settings.setNotchHUDMetric($0, side: nil) })
+      get: { settings.notchHUDConfiguration.indicatorCount },
+      set: { count in
+        settings.notchHUDConfiguration = NotchHUDConfigurationPolicy.settingIndicatorCount(
+          count,
+          in: settings.notchHUDConfiguration)
+      })
   }
 
-  private var thresholdDescription: String {
-    settings.notchHUDConfiguration.metric.notchIndicatorLowerIsWorse
+  private var primaryMetricBinding: Binding<MenuMetric> {
+    Binding(
+      get: { settings.notchHUDConfiguration.metric },
+      set: { settings.setNotchHUDMetric($0, side: .left) })
+  }
+
+  private var secondaryMetricBinding: Binding<MenuMetric> {
+    Binding(
+      get: {
+        settings.notchHUDConfiguration.secondaryMetric
+          ?? availableSecondaryMetrics.first
+          ?? .temperature
+      },
+      set: { settings.setNotchHUDMetric($0, side: .right) })
+  }
+
+  private var availableSecondaryMetrics: [MenuMetric] {
+    MenuMetric.notchIndicatorMetrics.filter {
+      $0 != settings.notchHUDConfiguration.metric
+    }
+  }
+
+  private var secondaryWarningBinding: Binding<Double> {
+    Binding(
+      get: {
+        let metric = settings.notchHUDConfiguration.secondaryMetric ?? .temperature
+        return settings.notchHUDConfiguration.secondaryWarningThreshold
+          ?? metric.notchIndicatorDefaultThresholds.warning
+      },
+      set: { newValue in
+        var configuration = settings.notchHUDConfiguration
+        configuration.secondaryWarningThreshold = newValue
+        settings.notchHUDConfiguration = configuration
+      })
+  }
+
+  private var secondaryCriticalBinding: Binding<Double> {
+    Binding(
+      get: {
+        let metric = settings.notchHUDConfiguration.secondaryMetric ?? .temperature
+        return settings.notchHUDConfiguration.secondaryCriticalThreshold
+          ?? metric.notchIndicatorDefaultThresholds.critical
+      },
+      set: { newValue in
+        var configuration = settings.notchHUDConfiguration
+        configuration.secondaryCriticalThreshold = newValue
+        settings.notchHUDConfiguration = configuration
+      })
+  }
+
+  private var indicatorCountDescription: String {
+    settings.notchHUDConfiguration.indicatorCount == .one
+      ? L10n.string("One indicator keeps the current full-contour behavior.")
+      : L10n.string("The first sensor fills the left half and the second fills the right half.")
+  }
+
+  private func metricPicker(
+    selection: Binding<MenuMetric>,
+    metrics: [MenuMetric],
+    identifier: String
+  ) -> some View {
+    Picker(L10n.string("Displayed sensor"), selection: selection) {
+      ForEach(metrics) { metric in
+        Label(metric.displayName, systemImage: metric.defaultSymbol)
+          .tag(metric)
+      }
+    }
+    .labelsHidden()
+    .pickerStyle(.menu)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityIdentifier(identifier)
+  }
+
+  private func thresholdRow(
+    title: String,
+    metric: MenuMetric,
+    warning: Binding<Double>,
+    critical: Binding<Double>,
+    warningIdentifier: String,
+    criticalIdentifier: String
+  ) -> some View {
+    HStack(spacing: 14) {
+      VStack(alignment: .leading, spacing: 3) {
+        Text("\(title) · \(metric.displayName)")
+          .font(.subheadline.weight(.semibold))
+        Text(thresholdDescription(for: metric))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+
+      thresholdField(
+        title: L10n.string("Warning"),
+        value: warning,
+        identifier: warningIdentifier)
+      thresholdField(
+        title: L10n.string("Critical"),
+        value: critical,
+        identifier: criticalIdentifier)
+    }
+  }
+
+  private func thresholdDescription(for metric: MenuMetric) -> String {
+    metric.notchIndicatorLowerIsWorse
       ? L10n.string("Lower values become warning and critical colors.")
       : L10n.string("Higher values become warning and critical colors.")
   }
