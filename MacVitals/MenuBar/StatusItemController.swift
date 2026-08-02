@@ -152,6 +152,16 @@ final class StatusItemController: NSObject {
     notchHUDConfiguration: NotchHUDConfiguration
   ) {
     let normalized = MenuLayoutRules.normalized(metrics)
+    let preferredScreen = statusItem.button?.window?.screen
+
+    // The notch overlay is independent from the status item button. During early application
+    // startup macOS may not have attached the button to a window yet, but the indicator still
+    // needs to be created from the initial settings/snapshot emission.
+    notchHUD.update(
+      snapshot: snapshot,
+      preferredScreen: preferredScreen,
+      enabled: showAroundStatusBar,
+      configuration: notchHUDConfiguration)
 
     if let button = statusItem.button {
       button.title = ""
@@ -165,12 +175,6 @@ final class StatusItemController: NSObject {
       button.setAccessibilityLabel("MacVitals")
       button.setAccessibilityValue(
         MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
-
-      notchHUD.update(
-        snapshot: snapshot,
-        preferredScreen: button.window?.screen,
-        enabled: showAroundStatusBar,
-        configuration: notchHUDConfiguration)
     }
     statusItem.length = NSStatusItem.variableLength
   }
