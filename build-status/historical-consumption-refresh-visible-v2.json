@@ -1,15 +1,16 @@
 {
   "architecture": "arm64",
-  "consoleSessionActive": true,
+  "finishedAt": "2026-08-02T05:35:48.877754+00:00",
+  "newCrashReportCount": 0,
+  "observedDurationSeconds": 74,
   "physicalGuiRun": true,
-  "pid": 15636,
   "productSourceSha": "9a80c9c95c64fcfae0da07bf22565711c5b1ff2b",
   "requestedDurationSeconds": 900,
-  "result": null,
+  "result": "failure",
+  "sampleCount": 37,
   "schemaVersion": 1,
   "sourceSha": "4a52426ad22780627f5f9a2612640a17ca8f9dd6",
-  "startedAt": "2026-08-02T05:34:31.610597+00:00",
-  "state": "running",
+  "state": "finished",
   "visibleApp": "~/Downloads/MacVitals-consumption-refresh-visible-9a80c9c95c64.app",
   "xctestRun": false
 }
