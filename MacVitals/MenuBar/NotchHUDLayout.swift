@@ -11,11 +11,27 @@ nonisolated enum NotchHUDLayout {
   static let edgeMargin: CGFloat = 8
   static let minimumPanelWidth: CGFloat = 72
 
-  static func preferredPanelWidth(
-    metricCount: Int,
+  static func caffeinateButtonDiameter(
     configuration: NotchHUDConfiguration
   ) -> CGFloat {
-    guard metricCount > 0 else { return minimumPanelWidth }
+    min(22, max(18, CGFloat(configuration.density.panelHeight) - 6))
+  }
+
+  static func caffeinateButtonSide(
+    in configuration: NotchHUDConfiguration
+  ) -> NotchHUDSide? {
+    let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
+    if normalized.showRightPanel { return .right }
+    if normalized.showLeftPanel { return .left }
+    return nil
+  }
+
+  static func preferredPanelWidth(
+    metricCount: Int,
+    configuration: NotchHUDConfiguration,
+    includesCaffeinateButton: Bool = false
+  ) -> CGFloat {
+    guard metricCount > 0 || includesCaffeinateButton else { return minimumPanelWidth }
 
     let density = configuration.density
     let itemWidth = configuration.showLabels
@@ -23,9 +39,14 @@ nonisolated enum NotchHUDLayout {
       : CGFloat(density.metricWidth)
     let spacing = CGFloat(density.itemSpacing)
     let separators = configuration.showSeparators ? CGFloat(max(0, metricCount - 1)) : 0
+    let buttonWidth = includesCaffeinateButton
+      ? caffeinateButtonDiameter(configuration: configuration)
+        + (metricCount > 0 ? spacing : 0)
+      : 0
     let contentWidth = CGFloat(metricCount) * itemWidth
       + CGFloat(max(0, metricCount - 1)) * spacing
       + separators
+      + buttonWidth
       + CGFloat(density.horizontalPadding * 2)
     return max(minimumPanelWidth, contentWidth.rounded(.up))
   }
@@ -46,13 +67,16 @@ nonisolated enum NotchHUDLayout {
     let halfClearance = safeAreaTop > 0 ? notchHalfWidth : 8
     let leftBoundary = screenFrame.midX - halfClearance - notchGap
     let rightBoundary = screenFrame.midX + halfClearance + notchGap
+    let caffeinateSide = caffeinateButtonSide(in: normalized)
 
     let preferredLeftWidth = preferredPanelWidth(
       metricCount: normalized.metrics(for: .left).count,
-      configuration: normalized)
+      configuration: normalized,
+      includesCaffeinateButton: caffeinateSide == .left)
     let preferredRightWidth = preferredPanelWidth(
       metricCount: normalized.metrics(for: .right).count,
-      configuration: normalized)
+      configuration: normalized,
+      includesCaffeinateButton: caffeinateSide == .right)
     let maximumLeftWidth = max(minimumPanelWidth, leftBoundary - screenFrame.minX - edgeMargin)
     let maximumRightWidth = max(
       minimumPanelWidth,
