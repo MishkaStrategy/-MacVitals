@@ -1,0 +1,63 @@
+name: Physical Preview HUD Tile Editor Final
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-preview-hud-tile-editor-final
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-preview-hud-tile-editor'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 25
+    env:
+      FEATURE_HEAD_SHA: 54e7cbfc8fcaf9a6ea81d13b347543ec1e375436
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Materialize actor-safe capture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/physical-preview-hud-tile-editor-stacked.yml').read_text(encoding='utf-8').splitlines()
+          step = next(i for i, line in enumerate(source) if line.strip() == '- name: Build and capture complete physical HUD editor')
+          run_line = next(i for i in range(step + 1, len(source)) if source[i].strip() == 'run: |')
+          end = next(i for i in range(run_line + 1, len(source)) if source[i].strip() == '- name: Upload physical preview')
+          body = [line[10:] if line.startswith('          ') else line for line in source[run_line + 1:end]]
+          script = '\n'.join(body) + '\n'
+          script = script.replace('                func capture(_ path: String) {', '                @MainActor func capture(_ path: String) {', 1)
+          script = script.replace('                func findScrollView(in root: NSView) -> NSScrollView? {', '                @MainActor func findScrollView(in root: NSView) -> NSScrollView? {', 1)
+          Path('/tmp/run-complete-hud-preview.sh').write_text(script, encoding='utf-8')
+          PY
+          bash -n /tmp/run-complete-hud-preview.sh
+
+      - name: Build and capture complete physical HUD editor
+        shell: bash
+        run: bash /tmp/run-complete-hud-preview.sh
+
+      - name: Upload physical preview
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-preview-hud-tile-editor-final
+          path: preview-evidence/
+          if-no-files-found: error
+          retention-days: 30
