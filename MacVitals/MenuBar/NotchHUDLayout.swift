@@ -11,6 +11,49 @@ nonisolated enum NotchHUDLayout {
   static let edgeMargin: CGFloat = 8
   static let minimumPanelWidth: CGFloat = 72
 
+  static func preferredTileWidth(
+    metric: MenuMetric,
+    configuration: NotchHUDConfiguration
+  ) -> CGFloat {
+    let tile = configuration.tileConfiguration(for: metric)
+    let showsLabel = tile.contentStyle.showsLabel(globalShowsLabels: configuration.showLabels)
+    let showsIcon = tile.contentStyle.showsIcon(globalShowsLabels: configuration.showLabels)
+    let density = configuration.density
+
+    var base = showsLabel
+      ? CGFloat(density.labeledMetricWidth)
+      : CGFloat(density.metricWidth)
+    if !showsIcon { base -= 10 }
+    if !showsLabel, !showsIcon { base -= 8 }
+
+    switch tile.size {
+    case .automatic, .regular:
+      return max(38, base)
+    case .compact:
+      return max(38, base - 18)
+    case .wide:
+      return base + 30
+    }
+  }
+
+  static func preferredPanelWidth(
+    metrics: [MenuMetric],
+    configuration: NotchHUDConfiguration
+  ) -> CGFloat {
+    guard !metrics.isEmpty else { return minimumPanelWidth }
+
+    let spacing = CGFloat(configuration.density.itemSpacing)
+    let separators = configuration.showSeparators ? CGFloat(max(0, metrics.count - 1)) : 0
+    let tilesWidth = metrics.reduce(CGFloat.zero) {
+      $0 + preferredTileWidth(metric: $1, configuration: configuration)
+    }
+    let contentWidth = tilesWidth
+      + CGFloat(max(0, metrics.count - 1)) * spacing
+      + separators
+      + CGFloat(configuration.density.horizontalPadding * 2)
+    return max(minimumPanelWidth, contentWidth.rounded(.up))
+  }
+
   static func preferredPanelWidth(
     metricCount: Int,
     configuration: NotchHUDConfiguration
@@ -46,12 +89,14 @@ nonisolated enum NotchHUDLayout {
     let halfClearance = safeAreaTop > 0 ? notchHalfWidth : 8
     let leftBoundary = screenFrame.midX - halfClearance - notchGap
     let rightBoundary = screenFrame.midX + halfClearance + notchGap
+    let leftMetrics = normalized.metrics(for: .left)
+    let rightMetrics = normalized.metrics(for: .right)
 
     let preferredLeftWidth = preferredPanelWidth(
-      metricCount: normalized.metrics(for: .left).count,
+      metrics: leftMetrics,
       configuration: normalized)
     let preferredRightWidth = preferredPanelWidth(
-      metricCount: normalized.metrics(for: .right).count,
+      metrics: rightMetrics,
       configuration: normalized)
     let maximumLeftWidth = max(minimumPanelWidth, leftBoundary - screenFrame.minX - edgeMargin)
     let maximumRightWidth = max(
