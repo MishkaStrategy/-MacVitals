@@ -109,6 +109,20 @@ final class NotchHUDController {
       return
     }
 
+    let configuration = NotchHUDConfigurationPolicy.normalized(state.configuration)
+    let primaryReading = NotchHUDReadingResolver.resolve(
+      metric: configuration.metric,
+      thresholds: configuration.primaryThresholds,
+      snapshot: state.snapshot)
+    let secondaryReading = NotchHUDReadingResolver.resolve(
+      metric: configuration.secondaryMetric,
+      thresholds: configuration.secondaryThresholds,
+      snapshot: state.snapshot)
+    let segments = NotchHUDSegmentGeometry.resolve(
+      indicatorCount: configuration.indicatorCount,
+      primaryProgress: primaryReading.progress,
+      secondaryProgress: secondaryReading.progress)
+
     var payload: [String: Any] = [
       "event": event,
       "enabled": enabled,
@@ -116,6 +130,17 @@ final class NotchHUDController {
       "panelVisible": panel?.isVisible ?? false,
       "panelWindowNumber": panel?.windowNumber ?? 0,
       "screenCount": NSScreen.screens.count,
+      "indicatorCount": configuration.indicatorCount.rawValue,
+      "primaryMetric": configuration.metric.rawValue,
+      "secondaryMetric": configuration.secondaryMetric.rawValue,
+      "showValueText": configuration.showValueText,
+      "showSensorName": configuration.showSensorName,
+      "primaryProgress": primaryReading.progress,
+      "secondaryProgress": secondaryReading.progress,
+      "primaryTrimStart": segments.primaryStart,
+      "primaryTrimEnd": segments.primaryEnd,
+      "secondaryTrimStart": segments.secondaryStart,
+      "secondaryTrimEnd": segments.secondaryEnd,
     ]
 
     if let screen {
