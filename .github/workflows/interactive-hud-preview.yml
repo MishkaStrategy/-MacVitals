@@ -1,0 +1,191 @@
+name: Interactive HUD Preview
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: interactive-hud-preview
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-preview-hud-tile-editor'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 40
+    env:
+      FEATURE_HEAD_SHA: 54e7cbfc8fcaf9a6ea81d13b347543ec1e375436
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Build and launch interactive preview
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin ]]
+          [[ "$(uname -m)" == arm64 ]]
+          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "$(git rev-parse HEAD^1)" == "${FEATURE_HEAD_SHA}" ]]
+
+          rm -rf interactive-derived interactive-preview interactive-home interactive-evidence interactive-tools
+          mkdir -p interactive-preview interactive-home interactive-evidence interactive-tools
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('MacVitals/MenuBar/StatusItemController.swift')
+          text = path.read_text(encoding='utf-8')
+          needle = '''      .store(in: &cancellables)
+            }
+
+            @objc private func togglePopover()'''
+          replacement = '''      .store(in: &cancellables)
+
+              if ProcessInfo.processInfo.environment["MACVITALS_INTERACTIVE_HUD_PREVIEW"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                  self?.openNotchHUDSettings()
+                }
+              }
+            }
+
+            @objc private func togglePopover()'''
+          if needle not in text:
+              raise SystemExit('interactive preview insertion point not found')
+          path.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+          PY
+
+          python3 scripts/materialize_app_icon.py
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate
+
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${PWD}/interactive-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            clean build > interactive-evidence/build.log 2>&1
+
+          source_app="${PWD}/interactive-derived/Build/Products/Debug/MacVitals.app"
+          preview_app="${PWD}/interactive-preview/MacVitals HUD Preview.app"
+          ditto "${source_app}" "${preview_app}"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.mishkastrategy.MacVitals.HUDPreview' \
+            "${preview_app}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MacVitals HUD Preview' \
+            "${preview_app}/Contents/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleName MacVitals HUD Preview' \
+            "${preview_app}/Contents/Info.plist" || true
+
+          executable="${preview_app}/Contents/MacOS/MacVitals"
+          [[ -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == arm64 ]]
+
+          cat > interactive-tools/WindowProbe.swift <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+
+          guard CommandLine.arguments.count == 2, let targetPID = Int32(CommandLine.arguments[1]) else { exit(2) }
+          let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+          for info in windows {
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == targetPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
+            if width >= 700 && height >= 600 {
+              print(info[kCGWindowName as String] as? String ?? "MacVitals HUD Preview")
+              exit(0)
+            }
+          }
+          exit(1)
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework CoreGraphics \
+            interactive-tools/WindowProbe.swift -o interactive-tools/window-probe
+
+          HOME="${PWD}/interactive-home" \
+          MACVITALS_INTERACTIVE_HUD_PREVIEW=1 \
+          "${executable}" \
+            -experimentalNotchHUDEnabled YES \
+            -AppleLanguages '(ru)' \
+            -AppleLocale ru_RU \
+            -ApplePersistenceIgnoreState YES \
+            > interactive-evidence/app.stdout.log \
+            2> interactive-evidence/app.stderr.log &
+          preview_pid=$!
+
+          for _ in {1..150}; do
+            kill -0 "${preview_pid}" 2>/dev/null || {
+              cat interactive-evidence/app.stderr.log >&2 || true
+              exit 1
+            }
+            if interactive-tools/window-probe "${preview_pid}" \
+              > interactive-evidence/window-title.txt 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          interactive-tools/window-probe "${preview_pid}" \
+            > interactive-evidence/window-title.txt
+
+          printf 'PREVIEW_PID=%s\n' "${preview_pid}" >> "${GITHUB_ENV}"
+          printf 'PREVIEW_APP=%s\n' "${preview_app}" >> "${GITHUB_ENV}"
+          printf 'PREVIEW_HOME=%s\n' "${PWD}/interactive-home" >> "${GITHUB_ENV}"
+
+          PREVIEW_PID="${preview_pid}" FEATURE_HEAD_SHA="${FEATURE_HEAD_SHA}" python3 - <<'PY' \
+            > interactive-evidence/ready.json
+          import json, os
+          print(json.dumps({
+            'ready': True,
+            'featureHead': os.environ['FEATURE_HEAD_SHA'],
+            'pid': int(os.environ['PREVIEW_PID']),
+            'mode': 'interactive',
+            'settingsIsolation': 'temporary HOME',
+            'mainModified': False,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload readiness evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: interactive-hud-preview-ready
+          path: interactive-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Keep preview open for inspection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "MacVitals HUD Preview is ready: PID ${PREVIEW_PID}"
+          for _ in {1..1800}; do
+            kill -0 "${PREVIEW_PID}" 2>/dev/null || exit 0
+            sleep 1
+          done
+
+      - name: Stop preview and clean temporary state
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -n "${PREVIEW_PID:-}" ]]; then
+            kill -TERM "${PREVIEW_PID}" 2>/dev/null || true
+            for _ in {1..50}; do
+              kill -0 "${PREVIEW_PID}" 2>/dev/null || break
+              sleep 0.1
+            done
+            kill -KILL "${PREVIEW_PID}" 2>/dev/null || true
+          fi
+          rm -rf "${PREVIEW_HOME:-}" "${PREVIEW_APP:-}"
