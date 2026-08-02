@@ -43,10 +43,16 @@ jobs:
           end = next(i for i in range(run_line + 1, len(source)) if source[i].strip() == '- name: Upload physical preview')
           body = [line[10:] if line.startswith('          ') else line for line in source[run_line + 1:end]]
           script = '\n'.join(body) + '\n'
-          script = script.replace('                func capture(_ path: String) {', '                @MainActor func capture(_ path: String) {', 1)
-          script = script.replace('                func findScrollView(in root: NSView) -> NSScrollView? {', '                @MainActor func findScrollView(in root: NSView) -> NSScrollView? {', 1)
+          capture_old = 'func capture(_ path: String) {'
+          scroll_old = 'func findScrollView(in root: NSView) -> NSScrollView? {'
+          if script.count(capture_old) != 1 or script.count(scroll_old) != 1:
+              raise SystemExit('actor-safe patch targets were not unique')
+          script = script.replace(capture_old, '@MainActor func capture(_ path: String) {', 1)
+          script = script.replace(scroll_old, '@MainActor func findScrollView(in root: NSView) -> NSScrollView? {', 1)
           Path('/tmp/run-complete-hud-preview.sh').write_text(script, encoding='utf-8')
           PY
+          grep -F '@MainActor func capture' /tmp/run-complete-hud-preview.sh
+          grep -F '@MainActor func findScrollView' /tmp/run-complete-hud-preview.sh
           bash -n /tmp/run-complete-hud-preview.sh
 
       - name: Build and capture complete physical HUD editor
