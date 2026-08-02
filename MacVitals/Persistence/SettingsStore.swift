@@ -168,6 +168,16 @@ final class SettingsStore: ObservableObject {
       UserDefaults.standard.set(showAroundStatusBar, forKey: Keys.showAroundStatusBar)
     }
   }
+  @Published var notchHUDConfiguration: NotchHUDConfiguration {
+    didSet {
+      let normalized = NotchHUDConfigurationPolicy.normalized(notchHUDConfiguration)
+      if normalized != notchHUDConfiguration {
+        notchHUDConfiguration = normalized
+        return
+      }
+      persistNotchHUDConfiguration()
+    }
+  }
   @Published var notificationsEnabled: Bool {
     didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
   }
@@ -211,6 +221,10 @@ final class SettingsStore: ObservableObject {
     MenuMetric.allCases.filter { !enabledMetrics.contains($0) }
   }
 
+  var notchHUDPreset: NotchHUDPreset {
+    NotchHUDConfigurationPolicy.resolvedPreset(for: notchHUDConfiguration)
+  }
+
   init(launchAtLoginManager: any LaunchAtLoginManaging = SystemLaunchAtLoginManager()) {
     self.launchAtLoginManager = launchAtLoginManager
 
@@ -219,6 +233,9 @@ final class SettingsStore: ObservableObject {
       defaults.double(forKey: Keys.samplingInterval))
     showInDock = defaults.bool(forKey: Keys.showInDock)
     showAroundStatusBar = defaults.bool(forKey: Keys.showAroundStatusBar)
+    notchHUDConfiguration = defaults.data(forKey: Keys.notchHUDConfiguration)
+      .flatMap { NotchHUDConfigurationPersistence.decode($0) }
+      ?? .balanced
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
     memoryAlertsEnabled = defaults.object(forKey: Keys.memoryAlertsEnabled) == nil
       ? true
@@ -280,6 +297,29 @@ final class SettingsStore: ObservableObject {
     selectedPreset = .custom
   }
 
+  func applyNotchHUDPreset(_ preset: NotchHUDPreset) {
+    guard preset != .custom else { return }
+    notchHUDConfiguration = preset.configuration
+  }
+
+  func setNotchHUDMetric(_ metric: MenuMetric, side: NotchHUDSide?) {
+    notchHUDConfiguration = NotchHUDConfigurationPolicy.setting(
+      metric,
+      side: side,
+      in: notchHUDConfiguration)
+  }
+
+  func moveNotchHUDMetric(_ metric: MenuMetric, towardStart: Bool) {
+    notchHUDConfiguration = NotchHUDConfigurationPolicy.moving(
+      metric,
+      towardStart: towardStart,
+      in: notchHUDConfiguration)
+  }
+
+  func resetNotchHUDConfiguration() {
+    notchHUDConfiguration = .balanced
+  }
+
   func setLaunchAtLogin(_ enabled: Bool) {
     do {
       try launchAtLoginManager.setEnabled(enabled)
@@ -308,12 +348,19 @@ final class SettingsStore: ObservableObject {
     }
   }
 
+  private func persistNotchHUDConfiguration() {
+    if let data = NotchHUDConfigurationPersistence.encode(notchHUDConfiguration) {
+      UserDefaults.standard.set(data, forKey: Keys.notchHUDConfiguration)
+    }
+  }
+
   private enum Keys {
     static let menuConfiguration = "menuConfiguration.v1"
     static let selectedPreset = "selectedPreset"
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
     static let showAroundStatusBar = NotchHUDController.defaultsKey
+    static let notchHUDConfiguration = "notchHUDConfiguration.v1"
     static let notificationsEnabled = "notificationsEnabled"
     static let memoryAlertsEnabled = "memoryAlertsEnabled"
     static let lowBatteryAlertsEnabled = "lowBatteryAlertsEnabled"
