@@ -4,45 +4,18 @@ extension Notification.Name {
   static let openStatusBarHUDPreferences = Notification.Name("openStatusBarHUDPreferences")
 }
 
-private enum CompactHUDPlacement: String, CaseIterable, Identifiable {
-  case hidden
-  case left
-  case right
-
-  var id: String { rawValue }
-
-  var title: String {
-    switch self {
-    case .hidden: return L10n.string("Hidden")
-    case .left: return L10n.string("Left")
-    case .right: return L10n.string("Right")
-    }
-  }
-
-  var side: NotchHUDSide? {
-    switch self {
-    case .hidden: return nil
-    case .left: return .left
-    case .right: return .right
-    }
-  }
-}
-
 @MainActor
 struct CompactNotchHUDPreferencesView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
-  @State private var selectedMetric: MenuMetric = .cpu
-  @State private var showsTileAppearance = false
-  @State private var showsThresholds = false
 
   var body: some View {
     ScrollView {
-      LazyVStack(spacing: 10) {
+      LazyVStack(spacing: 12) {
         previewCard
-        layoutCard
-        tileCard
-        panelAppearanceCard
+        sensorCard
+        appearanceCard
+        thresholdsCard
         displayCard
         resetRow
       }
@@ -52,7 +25,7 @@ struct CompactNotchHUDPreferencesView: View {
   }
 
   private var previewCard: some View {
-    CompactHUDCard {
+    CompactIndicatorCard {
       HStack(spacing: 10) {
         Label(L10n.string("Live preview"), systemImage: "eye.fill")
           .font(.headline)
@@ -62,211 +35,198 @@ struct CompactNotchHUDPreferencesView: View {
           .accessibilityIdentifier("notchHUDEnabledToggle")
       }
 
-      CompactNotchHUDPreview(
-        snapshot: coordinator.snapshot,
-        configuration: settings.notchHUDConfiguration)
-        .frame(height: 62)
-        .accessibilityIdentifier("notchHUDLivePreview")
+      ZStack {
+        RoundedRectangle(cornerRadius: 12)
+          .fill(Color.black.opacity(0.9))
+        NotchHUDIndicatorContentView(
+          snapshot: coordinator.snapshot,
+          configuration: settings.notchHUDConfiguration,
+          safeAreaTop: 34
+        )
+        .frame(
+          width: min(
+            500,
+            NotchHUDLayout.preferredPanelWidth(
+              configuration: settings.notchHUDConfiguration)),
+          height: 70)
+      }
+      .frame(height: 82)
+      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .overlay(
+        RoundedRectangle(cornerRadius: 12)
+          .stroke(Color.white.opacity(0.1), lineWidth: 1))
+      .accessibilityIdentifier("notchHUDLivePreview")
     }
   }
 
-  private var layoutCard: some View {
-    CompactHUDCard {
-      HStack(spacing: 12) {
-        Label(L10n.string("Layout preset"), systemImage: "square.grid.2x2")
-          .font(.headline)
+  private var sensorCard: some View {
+    CompactIndicatorCard {
+      Label(L10n.string("Displayed sensor"), systemImage: "sensor.fill")
+        .font(.headline)
+
+      HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(L10n.string("Display one sensor"))
+            .font(.subheadline.weight(.semibold))
+          Text(L10n.string("The contour fill and value use this live sensor."))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         Spacer()
-        Picker(L10n.string("Preset"), selection: presetBinding) {
-          ForEach(NotchHUDPreset.allCases) { preset in
-            Text(preset.displayName).tag(preset)
+        Picker(L10n.string("Display one sensor"), selection: metricBinding) {
+          ForEach(MenuMetric.notchIndicatorMetrics) { metric in
+            Label(metric.displayName, systemImage: metric.defaultSymbol)
+              .tag(metric)
           }
         }
         .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 390)
-        .accessibilityIdentifier("notchHUDPresetPicker")
-      }
-
-      Divider()
-
-      HStack(alignment: .top, spacing: 10) {
-        panelSummary(side: .left)
-        panelSummary(side: .right)
+        .pickerStyle(.menu)
+        .frame(width: 210)
+        .accessibilityIdentifier("notchIndicatorMetricPicker")
       }
     }
   }
 
-  private var tileCard: some View {
-    CompactHUDCard {
-      HStack {
-        Label(L10n.string("Tile editor"), systemImage: "slider.horizontal.3")
-          .font(.headline)
-        Spacer()
-        Button(L10n.string("Reset tile")) {
-          resetSelectedTile()
-        }
-        .buttonStyle(.borderless)
-      }
+  private var appearanceCard: some View {
+    CompactIndicatorCard {
+      Label(L10n.string("Indicator appearance"), systemImage: "scribble.variable")
+        .font(.headline)
 
-      tileSelector
-      Divider()
-
-      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 9) {
+      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 11) {
         GridRow {
-          compactLabel(L10n.string("Placement"))
-          Picker(L10n.string("Placement"), selection: placementBinding) {
-            ForEach(CompactHUDPlacement.allCases) { placement in
-              Text(placement.title).tag(placement)
-            }
+          compactLabel(L10n.string("Value text"))
+          HStack(spacing: 16) {
+            Toggle(
+              L10n.string("Show current value"),
+              isOn: configurationBinding(\.showValueText)
+            )
+            .toggleStyle(.checkbox)
+            .accessibilityIdentifier("notchIndicatorShowValueToggle")
+            Toggle(
+              L10n.string("Show sensor name"),
+              isOn: configurationBinding(\.showSensorName)
+            )
+            .toggleStyle(.checkbox)
+            .disabled(!settings.notchHUDConfiguration.showValueText)
           }
-          .labelsHidden()
-          .pickerStyle(.segmented)
-          .accessibilityIdentifier("notchHUDPlacementPicker")
         }
 
         GridRow {
-          compactLabel(L10n.string("Composition"))
-          Picker(L10n.string("Composition"), selection: tileBinding(\.contentStyle)) {
-            ForEach(NotchHUDTileContentStyle.allCases) { style in
-              Text(style.displayName).tag(style)
-            }
-          }
-          .labelsHidden()
-          .pickerStyle(.menu)
-        }
-
-        GridRow {
-          compactLabel(L10n.string("Custom label"))
-          TextField(L10n.string("Short label"), text: tileBinding(\.customLabel))
-            .textFieldStyle(.roundedBorder)
-        }
-
-        GridRow {
-          compactLabel(L10n.string("Icon"))
-          Picker(L10n.string("Icon"), selection: tileBinding(\.symbolName)) {
-            ForEach(selectedMetric.notchHUDSymbolOptions, id: \.self) { symbol in
-              Label(symbol, systemImage: symbol).tag(symbol)
-            }
-          }
-          .labelsHidden()
-          .pickerStyle(.menu)
-        }
-
-        GridRow {
-          compactLabel(L10n.string("Tile width"))
-          Picker(L10n.string("Tile width"), selection: tileBinding(\.size)) {
-            ForEach(NotchHUDTileSize.allCases) { size in
-              Text(size.displayName).tag(size)
-            }
-          }
-          .labelsHidden()
-          .pickerStyle(.segmented)
-        }
-
-        GridRow {
-          compactLabel(L10n.string("Value formatting"))
-          HStack(spacing: 8) {
-            Picker(L10n.string("Precision"), selection: tileBinding(\.precision)) {
-              ForEach(NotchHUDTilePrecision.allCases) { precision in
-                Text(precision.displayName).tag(precision)
+          compactLabel(L10n.string("Color mode"))
+          HStack(spacing: 10) {
+            Picker(
+              L10n.string("Color mode"),
+              selection: configurationBinding(\.colorMode)
+            ) {
+              ForEach(NotchIndicatorColorMode.allCases) { mode in
+                Text(mode.displayName).tag(mode)
               }
             }
             .labelsHidden()
-            .pickerStyle(.menu)
+            .pickerStyle(.segmented)
 
-            Toggle(L10n.string("Show measurement unit"), isOn: tileBinding(\.showsUnit))
-              .toggleStyle(.checkbox)
-          }
-        }
-      }
-
-      DisclosureGroup(isExpanded: $showsTileAppearance) {
-        tileAppearanceControls
-          .padding(.top, 8)
-      } label: {
-        Label(L10n.string("Color and background"), systemImage: "paintbrush.fill")
-          .font(.subheadline.weight(.semibold))
-      }
-
-      if tile.colorMode == .semantic {
-        DisclosureGroup(isExpanded: $showsThresholds) {
-          thresholdControls
-            .padding(.top, 8)
-        } label: {
-          Label(L10n.string("Threshold colors"), systemImage: "gauge.with.dots.needle.67percent")
-            .font(.subheadline.weight(.semibold))
-        }
-      }
-    }
-  }
-
-  private var panelAppearanceCard: some View {
-    CompactHUDCard {
-      Label(L10n.string("Panel appearance"), systemImage: "rectangle.3.group.fill")
-        .font(.headline)
-
-      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 9) {
-        GridRow {
-          compactLabel(L10n.string("Panel density"))
-          Picker(L10n.string("Density"), selection: configurationBinding(\.density)) {
-            ForEach(NotchHUDDensity.allCases) { density in
-              Text(density.displayName).tag(density)
+            if settings.notchHUDConfiguration.colorMode == .custom {
+              Picker(
+                L10n.string("Custom color"),
+                selection: configurationBinding(\.accent)
+              ) {
+                ForEach(NotchIndicatorAccent.allCases) { accent in
+                  Text(accent.displayName).tag(accent)
+                }
+              }
+              .labelsHidden()
+              .pickerStyle(.menu)
+              .frame(width: 120)
             }
           }
-          .labelsHidden()
-          .pickerStyle(.segmented)
         }
 
         GridRow {
-          compactLabel(L10n.string("Base text size"))
-          Picker(L10n.string("Text size"), selection: configurationBinding(\.textSize)) {
-            ForEach(NotchHUDTextSize.allCases) { size in
-              Text(size.displayName).tag(size)
-            }
-          }
-          .labelsHidden()
-          .pickerStyle(.segmented)
+          compactLabel(L10n.string("Line thickness"))
+          valueSlider(
+            value: configurationBinding(\.lineThickness),
+            range: 1...6,
+            step: 0.5,
+            suffix: "pt",
+            identifier: "notchIndicatorLineThicknessSlider")
         }
 
         GridRow {
-          compactLabel(L10n.string("Panel background strength"))
-          HStack(spacing: 8) {
-            Slider(
-              value: configurationBinding(\.backgroundOpacity),
-              in: 0.2...0.95,
-              step: 0.05)
-            Text("\(Int(settings.notchHUDConfiguration.backgroundOpacity * 100))%")
-              .font(.caption.monospacedDigit())
-              .frame(width: 38, alignment: .trailing)
-          }
+          compactLabel(L10n.string("Contour width"))
+          valueSlider(
+            value: configurationBinding(\.horizontalExtension),
+            range: 36...180,
+            step: 4,
+            suffix: "pt",
+            identifier: "notchIndicatorContourWidthSlider")
+        }
+
+        GridRow {
+          compactLabel(L10n.string("Inactive track"))
+          percentageSlider(
+            value: configurationBinding(\.trackOpacity),
+            range: 0.05...0.55,
+            identifier: "notchIndicatorTrackOpacitySlider")
+        }
+
+        GridRow {
+          compactLabel(L10n.string("Glow"))
+          percentageSlider(
+            value: configurationBinding(\.glowIntensity),
+            range: 0...1,
+            identifier: "notchIndicatorGlowSlider")
         }
       }
 
       Divider()
 
-      HStack(spacing: 18) {
-        Toggle(
-          L10n.string("Labels in automatic tile mode"),
-          isOn: configurationBinding(\.showLabels))
-        Toggle(
-          L10n.string("Show separators"),
-          isOn: configurationBinding(\.showSeparators))
-        Toggle(
-          L10n.string("Hide unavailable tiles"),
-          isOn: configurationBinding(\.hideUnavailableMetrics))
+      Toggle(
+        L10n.string("Animate value changes"),
+        isOn: configurationBinding(\.animateChanges))
+        .toggleStyle(.checkbox)
+    }
+  }
+
+  private var thresholdsCard: some View {
+    CompactIndicatorCard {
+      Label(
+        L10n.string("Threshold colors"),
+        systemImage: "gauge.with.dots.needle.67percent"
+      )
+      .font(.headline)
+
+      HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(L10n.string("Warning and critical states"))
+            .font(.subheadline.weight(.semibold))
+          Text(thresholdDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer()
+
+        thresholdField(
+          title: L10n.string("Warning"),
+          value: configurationBinding(\.warningThreshold),
+          identifier: "notchIndicatorWarningField")
+        thresholdField(
+          title: L10n.string("Critical"),
+          value: configurationBinding(\.criticalThreshold),
+          identifier: "notchIndicatorCriticalField")
       }
-      .toggleStyle(.checkbox)
-      .font(.caption)
     }
   }
 
   private var displayCard: some View {
-    CompactHUDCard {
+    CompactIndicatorCard {
       Toggle(
         isOn: configurationBinding(\.showOnDisplaysWithoutNotch)
       ) {
-        Label(L10n.string("Show on displays without a notch"), systemImage: "display.2")
-          .font(.subheadline.weight(.semibold))
+        Label(
+          L10n.string("Show a simulated contour on displays without a notch"),
+          systemImage: "display.2"
+        )
+        .font(.subheadline.weight(.semibold))
       }
       .toggleStyle(.switch)
     }
@@ -274,231 +234,28 @@ struct CompactNotchHUDPreferencesView: View {
 
   private var resetRow: some View {
     HStack {
-      Text(L10n.string("HUD and tile settings are stored locally on this Mac."))
+      Text(L10n.string("Only one sensor is shown around the notch at a time."))
         .font(.caption)
         .foregroundStyle(.secondary)
       Spacer()
-      Button(L10n.string("Restore HUD Defaults")) {
+      Button(L10n.string("Restore Indicator Defaults")) {
         settings.resetNotchHUDConfiguration()
-        selectedMetric = .cpu
       }
       .accessibilityIdentifier("restoreNotchHUDDefaultsButton")
     }
     .padding(.horizontal, 2)
   }
 
-  private var tileSelector: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: 6) {
-        ForEach(MenuMetric.allCases) { metric in
-          Button {
-            selectedMetric = metric
-          } label: {
-            HStack(spacing: 5) {
-              Image(systemName: settings.notchHUDConfiguration.tileConfiguration(for: metric).symbolName)
-              Text(metric.notchHUDShortLabel)
-            }
-            .font(.caption.weight(selectedMetric == metric ? .semibold : .regular))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-              selectedMetric == metric ? Color.accentColor.opacity(0.16) : Color.clear,
-              in: Capsule())
-            .overlay(
-              Capsule()
-                .stroke(
-                  selectedMetric == metric ? Color.accentColor.opacity(0.42) : Color.secondary.opacity(0.18),
-                  lineWidth: 1))
-          }
-          .buttonStyle(.plain)
-          .accessibilityIdentifier("notchHUDTileSelector.\(metric.rawValue)")
-        }
-      }
-    }
-  }
-
-  private var tileAppearanceControls: some View {
-    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 9) {
-      GridRow {
-        compactLabel(L10n.string("Content alignment"))
-        Picker(L10n.string("Content alignment"), selection: tileBinding(\.alignment)) {
-          ForEach(NotchHUDTileAlignment.allCases) { alignment in
-            Text(alignment.displayName).tag(alignment)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-      }
-
-      GridRow {
-        compactLabel(L10n.string("Value emphasis"))
-        Picker(L10n.string("Value emphasis"), selection: tileBinding(\.emphasis)) {
-          ForEach(NotchHUDTileEmphasis.allCases) { emphasis in
-            Text(emphasis.displayName).tag(emphasis)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-      }
-
-      GridRow {
-        compactLabel(L10n.string("Value color"))
-        HStack(spacing: 8) {
-          Picker(L10n.string("Value color"), selection: tileBinding(\.colorMode)) {
-            ForEach(NotchHUDTileColorMode.allCases) { mode in
-              Text(mode.displayName).tag(mode)
-            }
-          }
-          .labelsHidden()
-          .pickerStyle(.menu)
-
-          if tile.colorMode == .custom {
-            Picker(L10n.string("Custom color"), selection: tileBinding(\.accent)) {
-              ForEach(NotchHUDTileAccent.allCases) { accent in
-                Text(accent.displayName).tag(accent)
-              }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-          }
-        }
-      }
-
-      GridRow {
-        compactLabel(L10n.string("Tile background"))
-        Picker(L10n.string("Tile background"), selection: tileBinding(\.backgroundStyle)) {
-          ForEach(NotchHUDTileBackgroundStyle.allCases) { style in
-            Text(style.displayName).tag(style)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-      }
-
-      if tile.backgroundStyle != .none {
-        GridRow {
-          compactLabel(L10n.string("Tile background strength"))
-          HStack(spacing: 8) {
-            Slider(value: tileBinding(\.backgroundOpacity), in: 0...1, step: 0.05)
-            Text("\(Int(tile.backgroundOpacity * 100))%")
-              .font(.caption.monospacedDigit())
-              .frame(width: 38, alignment: .trailing)
-          }
-        }
-      }
-    }
-  }
-
-  private var thresholdControls: some View {
-    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 9) {
-      GridRow {
-        compactLabel(L10n.string("Threshold direction"))
-        Picker(L10n.string("Threshold direction"), selection: tileBinding(\.thresholdDirection)) {
-          ForEach(NotchHUDThresholdDirection.allCases) { direction in
-            Text(direction.displayName).tag(direction)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-      }
-
-      GridRow {
-        compactLabel(L10n.string("Warning"))
-        TextField(
-          L10n.string("Warning"),
-          value: tileBinding(\.warningThreshold),
-          format: .number)
-          .textFieldStyle(.roundedBorder)
-      }
-
-      GridRow {
-        compactLabel(L10n.string("Critical"))
-        TextField(
-          L10n.string("Critical"),
-          value: tileBinding(\.criticalThreshold),
-          format: .number)
-          .textFieldStyle(.roundedBorder)
-      }
-    }
-  }
-
-  private func panelSummary(side: NotchHUDSide) -> some View {
-    let configuredMetrics = configuredMetrics(for: side)
-    let visibleCount = side == .left
-      ? settings.notchHUDConfiguration.leftVisibleCount
-      : settings.notchHUDConfiguration.rightVisibleCount
-    let enabled = side == .left
-      ? settings.notchHUDConfiguration.showLeftPanel
-      : settings.notchHUDConfiguration.showRightPanel
-
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 7) {
-        Image(systemName: side == .left ? "rectangle.lefthalf.inset.filled" : "rectangle.righthalf.inset.filled")
-          .foregroundStyle(Color.accentColor)
-        Text(side.displayName)
-          .font(.subheadline.weight(.semibold))
-        Spacer()
-        Toggle("", isOn: panelVisibilityBinding(side: side))
-          .labelsHidden()
-          .toggleStyle(.switch)
-      }
-
-      HStack {
-        Text(
-          configuredMetrics
-            .prefix(visibleCount)
-            .map(\.notchHUDShortLabel)
-            .joined(separator: " · "))
-          .font(.caption.monospaced())
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-        Spacer()
-        Stepper(
-          value: visibleCountBinding(side: side),
-          in: 1...max(1, min(configuredMetrics.count, NotchHUDConfigurationPolicy.maximumMetricsPerSide))) {
-            Text("\(enabled ? min(visibleCount, configuredMetrics.count) : 0)")
-              .font(.caption.monospacedDigit())
-              .frame(width: 18)
-          }
-          .disabled(configuredMetrics.isEmpty || !enabled)
-          .accessibilityIdentifier("notchHUDVisibleCount.\(side.rawValue)")
-      }
-    }
-    .padding(10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 9))
-  }
-
-  private func compactLabel(_ title: String) -> some View {
-    Text(title)
-      .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
-      .frame(width: 142, alignment: .leading)
-  }
-
-  private var presetBinding: Binding<NotchHUDPreset> {
+  private var metricBinding: Binding<MenuMetric> {
     Binding(
-      get: { settings.notchHUDPreset },
-      set: { preset in
-        settings.applyNotchHUDPreset(preset)
-        selectedMetric = .cpu
-      })
+      get: { settings.notchHUDConfiguration.metric },
+      set: { settings.setNotchHUDMetric($0, side: nil) })
   }
 
-  private var tile: NotchHUDTileConfiguration {
-    settings.notchHUDConfiguration.tileConfiguration(for: selectedMetric)
-  }
-
-  private var placementBinding: Binding<CompactHUDPlacement> {
-    Binding(
-      get: {
-        switch settings.notchHUDConfiguration.placement(of: selectedMetric) {
-        case .left: return .left
-        case .right: return .right
-        case nil: return .hidden
-        }
-      },
-      set: { settings.setNotchHUDMetric(selectedMetric, side: $0.side) })
+  private var thresholdDescription: String {
+    settings.notchHUDConfiguration.metric.notchIndicatorLowerIsWorse
+      ? L10n.string("Lower values become warning and critical colors.")
+      : L10n.string("Higher values become warning and critical colors.")
   }
 
   private func configurationBinding<Value>(
@@ -513,109 +270,68 @@ struct CompactNotchHUDPreferencesView: View {
       })
   }
 
-  private func tileBinding<Value>(
-    _ keyPath: WritableKeyPath<NotchHUDTileConfiguration, Value>
-  ) -> Binding<Value> {
-    Binding(
-      get: { tile[keyPath: keyPath] },
-      set: { newValue in
-        var updated = tile
-        updated[keyPath: keyPath] = newValue
-        settings.notchHUDConfiguration = NotchHUDConfigurationPolicy.settingTile(
-          updated,
-          for: selectedMetric,
-          in: settings.notchHUDConfiguration)
-      })
+  private func compactLabel(_ title: String) -> some View {
+    Text(title)
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .frame(width: 124, alignment: .leading)
   }
 
-  private func panelVisibilityBinding(side: NotchHUDSide) -> Binding<Bool> {
-    switch side {
-    case .left: return configurationBinding(\.showLeftPanel)
-    case .right: return configurationBinding(\.showRightPanel)
+  private func valueSlider(
+    value: Binding<Double>,
+    range: ClosedRange<Double>,
+    step: Double,
+    suffix: String,
+    identifier: String
+  ) -> some View {
+    HStack(spacing: 9) {
+      Slider(value: value, in: range, step: step)
+        .accessibilityIdentifier(identifier)
+      Text("\(value.wrappedValue, specifier: "%.1f") \(suffix)")
+        .font(.caption.monospacedDigit())
+        .frame(width: 62, alignment: .trailing)
     }
   }
 
-  private func visibleCountBinding(side: NotchHUDSide) -> Binding<Int> {
-    switch side {
-    case .left: return configurationBinding(\.leftVisibleCount)
-    case .right: return configurationBinding(\.rightVisibleCount)
+  private func percentageSlider(
+    value: Binding<Double>,
+    range: ClosedRange<Double>,
+    identifier: String
+  ) -> some View {
+    HStack(spacing: 9) {
+      Slider(value: value, in: range, step: 0.05)
+        .accessibilityIdentifier(identifier)
+      Text("\(Int(value.wrappedValue * 100))%")
+        .font(.caption.monospacedDigit())
+        .frame(width: 42, alignment: .trailing)
     }
   }
 
-  private func configuredMetrics(for side: NotchHUDSide) -> [MenuMetric] {
-    switch side {
-    case .left: return settings.notchHUDConfiguration.leftMetrics
-    case .right: return settings.notchHUDConfiguration.rightMetrics
-    }
-  }
-
-  private func resetSelectedTile() {
-    settings.notchHUDConfiguration = NotchHUDConfigurationPolicy.resettingTile(
-      selectedMetric,
-      in: settings.notchHUDConfiguration)
-  }
-}
-
-@MainActor
-private struct CompactNotchHUDPreview: View {
-  let snapshot: SystemSnapshot
-  let configuration: NotchHUDConfiguration
-
-  var body: some View {
-    GeometryReader { geometry in
-      let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
-      let leftMetrics = normalized.metrics(for: .left)
-      let rightMetrics = normalized.metrics(for: .right)
-      let leftWidth = normalized.showLeftPanel
-        ? NotchHUDLayout.preferredPanelWidth(metrics: leftMetrics, configuration: normalized)
-        : 0
-      let rightWidth = normalized.showRightPanel
-        ? NotchHUDLayout.preferredPanelWidth(metrics: rightMetrics, configuration: normalized)
-        : 0
-      let notchWidth: CGFloat = 78
-      let totalWidth = leftWidth + rightWidth + notchWidth + 14
-      let scale = min(1, max(0.44, (geometry.size.width - 16) / max(totalWidth, 1)))
-
-      ZStack {
-        RoundedRectangle(cornerRadius: 10)
-          .fill(Color.black.opacity(0.9))
-
-        HStack(spacing: 7) {
-          if normalized.showLeftPanel {
-            NotchHUDSideContentView(
-              snapshot: snapshot,
-              configuration: normalized,
-              side: .left)
-              .frame(width: leftWidth, height: CGFloat(normalized.density.panelHeight))
-          }
-
-          RoundedRectangle(cornerRadius: 8)
-            .fill(Color.black)
-            .frame(width: notchWidth, height: 26)
-            .accessibilityHidden(true)
-
-          if normalized.showRightPanel {
-            NotchHUDSideContentView(
-              snapshot: snapshot,
-              configuration: normalized,
-              side: .right)
-              .frame(width: rightWidth, height: CGFloat(normalized.density.panelHeight))
-          }
-        }
-        .scaleEffect(scale)
-      }
+  private func thresholdField(
+    title: String,
+    value: Binding<Double>,
+    identifier: String
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+      TextField(title, value: value, format: .number.precision(.fractionLength(0...1)))
+        .textFieldStyle(.roundedBorder)
+        .frame(width: 92)
+        .accessibilityIdentifier(identifier)
     }
   }
 }
 
-private struct CompactHUDCard<Content: View>: View {
+private struct CompactIndicatorCard<Content: View>: View {
   @ViewBuilder let content: Content
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 11) {
       content
     }
-    .padding(12)
+    .padding(13)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 11))
     .overlay(
