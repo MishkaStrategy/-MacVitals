@@ -2,28 +2,43 @@ import XCTest
 @testable import MacVitals
 
 final class NotchHUDCompactDefaultsTests: XCTestCase {
-  func testMinimalPresetUsesOneTilePerSide() {
+  func testDefaultConfigurationUsesOneCPUSensor() {
     let configuration = NotchHUDConfigurationPolicy.normalized(.minimal)
 
-    XCTAssertEqual(configuration.leftMetrics, [.cpu])
-    XCTAssertEqual(configuration.rightMetrics, [.temperature])
-    XCTAssertEqual(configuration.leftVisibleCount, 1)
-    XCTAssertEqual(configuration.rightVisibleCount, 1)
-    XCTAssertEqual(configuration.metrics(for: .left), [.cpu])
-    XCTAssertEqual(configuration.metrics(for: .right), [.temperature])
-    XCTAssertEqual(configuration.density, .compact)
-    XCTAssertEqual(configuration.textSize, .small)
-    XCTAssertFalse(configuration.showLabels)
-    XCTAssertFalse(configuration.showSeparators)
+    XCTAssertEqual(configuration.metric, .cpu)
+    XCTAssertTrue(configuration.showValueText)
+    XCTAssertTrue(configuration.showSensorName)
+    XCTAssertEqual(configuration.colorMode, .automatic)
+    XCTAssertEqual(configuration.lineThickness, 2.5)
+    XCTAssertFalse(configuration.showOnDisplaysWithoutNotch)
   }
 
-  func testMinimalPresetResolvesWithoutBecomingCustom() {
-    XCTAssertEqual(
-      NotchHUDConfigurationPolicy.resolvedPreset(for: .minimal),
-      .minimal)
+  func testChangingSensorResetsItsThresholds() {
+    let changed = NotchHUDConfigurationPolicy.setting(
+      .battery,
+      side: nil,
+      in: .minimal)
+
+    XCTAssertEqual(changed.metric, .battery)
+    XCTAssertEqual(changed.warningThreshold, 25)
+    XCTAssertEqual(changed.criticalThreshold, 10)
   }
 
-  func testCustomPresetFallsBackToCompactConfiguration() {
-    XCTAssertEqual(NotchHUDPreset.custom.configuration, .minimal)
+  func testLegacyTileConfigurationMigratesToSingleSensor() throws {
+    let data = Data(
+      """
+      {
+        "schemaVersion": 2,
+        "configuration": {
+          "leftMetrics": ["temperature", "cpu"],
+          "rightMetrics": ["battery"]
+        }
+      }
+      """.utf8)
+
+    let migrated = try XCTUnwrap(NotchHUDConfigurationPersistence.decode(data))
+    XCTAssertEqual(migrated.metric, .temperature)
+    XCTAssertEqual(migrated.warningThreshold, 75)
+    XCTAssertEqual(migrated.criticalThreshold, 90)
   }
 }
