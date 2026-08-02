@@ -17,17 +17,17 @@ nonisolated enum StatusBarPetSize: String, Codable, CaseIterable, Identifiable, 
 
   var width: Double {
     switch self {
-    case .tiny: return 30
-    case .small: return 38
-    case .medium: return 46
+    case .tiny: return 22
+    case .small: return 28
+    case .medium: return 34
     }
   }
 
   var height: Double {
     switch self {
-    case .tiny: return 23
-    case .small: return 29
-    case .medium: return 35
+    case .tiny: return 18
+    case .small: return 22
+    case .medium: return 27
     }
   }
 }
@@ -48,7 +48,7 @@ nonisolated struct StatusBarPetConfiguration: Codable, Equatable, Sendable {
     respectReducedMotion: true,
     size: .small,
     movementSpeed: 1,
-    sparkIntensity: 0.75)
+    sparkIntensity: 0.55)
 }
 
 nonisolated enum StatusBarPetConfigurationPolicy {
@@ -88,32 +88,84 @@ nonisolated enum StatusBarPetConfigurationPersistence {
 }
 
 nonisolated enum StatusBarPetMotionRules {
-  static let cursorInteractionRadius = 92.0
-  static let cursorInteractionTopDistance = 78.0
+  static let hardwareNotchWidth = 212.0
+  static let minimumSafeAreaTop = 30.0
+  static let maximumSafeAreaTop = 44.0
+  static let sidePlayground = 38.0
+  static let cursorInteractionRadius = 78.0
+  static let cursorHorizontalPadding = 36.0
+  static let cursorBottomPadding = 32.0
 
-  static func roamBounds(screenWidth: Double, anchorX: Double?) -> ClosedRange<Double> {
-    let center = anchorX ?? screenWidth * 0.72
-    let lower = max(24, center - 280)
-    let upper = min(screenWidth - 24, center + 280)
-    if lower <= upper { return lower...upper }
-    let fallback = min(max(center, 24), max(24, screenWidth - 24))
-    return fallback...fallback
+  static func resolvedSafeAreaTop(_ safeAreaTop: Double) -> Double {
+    guard safeAreaTop > 0 else { return minimumSafeAreaTop }
+    return min(max(safeAreaTop, minimumSafeAreaTop), maximumSafeAreaTop)
+  }
+
+  static func panelWidth(for size: StatusBarPetSize) -> Double {
+    hardwareNotchWidth + sidePlayground * 2 + size.width * 0.35
+  }
+
+  static func panelHeight(safeAreaTop: Double, size: StatusBarPetSize) -> Double {
+    resolvedSafeAreaTop(safeAreaTop) + size.height + 12
+  }
+
+  static func notchEdges(panelWidth: Double) -> (left: Double, right: Double) {
+    let left = (panelWidth - hardwareNotchWidth) / 2
+    return (left, left + hardwareNotchWidth)
+  }
+
+  static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
+    let edges = notchEdges(panelWidth: panelWidth)
+    let overshoot = min(sidePlayground * 0.72, petWidth * 0.72)
+    return (edges.left - overshoot)...(edges.right + overshoot)
   }
 
   static func clamped(_ x: Double, to bounds: ClosedRange<Double>) -> Double {
     min(max(x, bounds.lowerBound), bounds.upperBound)
   }
 
+  static func petY(
+    x: Double,
+    panelWidth: Double,
+    safeAreaTop: Double,
+    petHeight: Double
+  ) -> Double {
+    let edges = notchEdges(panelWidth: panelWidth)
+    let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
+    let shoulderY = max(petHeight * 0.52, resolvedTop * 0.34)
+    let bottomY = resolvedTop + petHeight * 0.18 + 2
+
+    if x < edges.left {
+      let lower = roamBounds(panelWidth: panelWidth, petWidth: petHeight).lowerBound
+      let progress = min(max((x - lower) / max(1, edges.left - lower), 0), 1)
+      return shoulderY + (bottomY - shoulderY) * progress
+    }
+
+    if x > edges.right {
+      let upper = roamBounds(panelWidth: panelWidth, petWidth: petHeight).upperBound
+      let progress = min(max((upper - x) / max(1, upper - edges.right), 0), 1)
+      return shoulderY + (bottomY - shoulderY) * progress
+    }
+
+    return bottomY
+  }
+
   static func shouldPlay(
     petX: Double,
     cursorX: Double,
-    cursorDistanceFromTop: Double,
+    cursorY: Double,
+    panelWidth: Double,
+    safeAreaTop: Double,
     interactionEnabled: Bool
   ) -> Bool {
-    interactionEnabled
-      && cursorDistanceFromTop >= 0
-      && cursorDistanceFromTop <= cursorInteractionTopDistance
-      && abs(cursorX - petX) <= cursorInteractionRadius
+    guard interactionEnabled else { return false }
+    let edges = notchEdges(panelWidth: panelWidth)
+    let maximumY = resolvedSafeAreaTop(safeAreaTop) + cursorBottomPadding
+    let insideNotchZone = cursorX >= edges.left - cursorHorizontalPadding
+      && cursorX <= edges.right + cursorHorizontalPadding
+      && cursorY >= 0
+      && cursorY <= maximumY
+    return insideNotchZone && abs(cursorX - petX) <= cursorInteractionRadius
   }
 
   static func advancedX(
@@ -126,22 +178,5 @@ nonisolated enum StatusBarPetMotionRules {
     let difference = target - current
     let step = min(abs(difference), pointsPerSecond * deltaTime)
     return current + (difference < 0 ? -step : step)
-  }
-
-  static func avoidingNotch(
-    target: Double,
-    screenWidth: Double,
-    safeAreaTop: Double,
-    anchorX: Double?
-  ) -> Double {
-    guard safeAreaTop > 0 else { return target }
-    let center = screenWidth / 2
-    let exclusionHalfWidth = 124.0
-    guard target > center - exclusionHalfWidth, target < center + exclusionHalfWidth else {
-      return target
-    }
-    return (anchorX ?? target) < center
-      ? center - exclusionHalfWidth - 18
-      : center + exclusionHalfWidth + 18
   }
 }
