@@ -7,9 +7,9 @@ final class StatusBarPetSettingsWindowController: NSWindowController, NSWindowDe
 
   init(settings: StatusBarPetSettingsStore) {
     self.settings = settings
-    let rootView = StatusBarPetSettingsView(settings: settings)
-    let hostingController = NSHostingController(rootView: rootView)
-    let window = NSWindow(contentViewController: hostingController)
+    let window = NSWindow(
+      contentViewController: NSHostingController(
+        rootView: StatusBarPetSettingsView(settings: settings)))
     window.title = StatusBarPetL10n.string("Electric Dragon")
     window.styleMask = [.titled, .closable, .miniaturizable]
     window.setContentSize(NSSize(width: 470, height: 520))
@@ -86,11 +86,12 @@ private struct StatusBarPetSettingsView: View {
       TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
         let time = timeline.date.timeIntervalSinceReferenceDate
         GeometryReader { proxy in
-          let notchWidth = min(212.0, proxy.size.width * 0.58)
+          let notchWidth = min(CGFloat(212), proxy.size.width * 0.58)
           let notchLeft = (proxy.size.width - notchWidth) / 2
           let travel = notchWidth + 28
-          let petX = notchLeft - 14 + (sin(time * 0.72) + 1) * travel / 2
-          let petY = petX < notchLeft || petX > notchLeft + notchWidth ? 21.0 : 47.0
+          let phase = CGFloat((sin(time * 0.72) + 1) / 2)
+          let petX = notchLeft - 14 + phase * travel
+          let petY: CGFloat = petX < notchLeft || petX > notchLeft + notchWidth ? 21 : 47
 
           ZStack(alignment: .topLeading) {
             LinearGradient(
@@ -122,76 +123,74 @@ private struct StatusBarPetSettingsView: View {
   }
 
   private var behaviorCard: some View {
-    settingsCard(
-      title: StatusBarPetL10n.string("Behavior"),
-      symbol: "sparkles") {
-        VStack(spacing: 12) {
-          toggleRow(
-            title: StatusBarPetL10n.string("Move around the notch"),
-            detail: StatusBarPetL10n.string("The dragon wraps around the notch and never walks across the menu bar."),
-            isOn: roamBinding)
-          Divider()
-          toggleRow(
-            title: StatusBarPetL10n.string("Play with the cursor near the notch"),
-            detail: StatusBarPetL10n.string("The dragon reacts only when the pointer is directly beside the notch."),
-            isOn: interactionBinding)
-          Divider()
-          toggleRow(
-            title: StatusBarPetL10n.string("Respect Reduce Motion"),
-            detail: StatusBarPetL10n.string("Pause notch movement when macOS Reduce Motion is enabled."),
-            isOn: reducedMotionBinding)
-
-          Divider()
-
-          VStack(alignment: .leading, spacing: 7) {
-            HStack {
-              Text(StatusBarPetL10n.string("Movement speed"))
-              Spacer()
-              Text(String(format: "%.1fx", settings.configuration.movementSpeed))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
-            Slider(value: speedBinding, in: 0.45...1.8, step: 0.05)
-              .accessibilityIdentifier("statusBarPetSpeedSlider")
+    settingsCard(title: StatusBarPetL10n.string("Behavior"), symbol: "sparkles") {
+      VStack(spacing: 12) {
+        toggleRow(
+          title: StatusBarPetL10n.string("Move around the notch"),
+          detail: StatusBarPetL10n.string(
+            "The dragon wraps around the notch and never walks across the menu bar."),
+          isOn: roamBinding)
+        Divider()
+        toggleRow(
+          title: StatusBarPetL10n.string("Play with the cursor near the notch"),
+          detail: StatusBarPetL10n.string(
+            "The dragon reacts only when the pointer is directly beside the notch."),
+          isOn: interactionBinding)
+        Divider()
+        toggleRow(
+          title: StatusBarPetL10n.string("Respect Reduce Motion"),
+          detail: StatusBarPetL10n.string(
+            "Pause notch movement when macOS Reduce Motion is enabled."),
+          isOn: reducedMotionBinding)
+        Divider()
+        VStack(alignment: .leading, spacing: 7) {
+          HStack {
+            Text(StatusBarPetL10n.string("Movement speed"))
+            Spacer()
+            Text(String(format: "%.1fx", settings.configuration.movementSpeed))
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
           }
+          Slider(value: speedBinding, in: 0.45...1.8, step: 0.05)
+            .accessibilityIdentifier("statusBarPetSpeedSlider")
         }
       }
+    }
   }
 
   private var appearanceCard: some View {
-    settingsCard(
-      title: StatusBarPetL10n.string("Appearance"),
-      symbol: "face.smiling") {
-        VStack(alignment: .leading, spacing: 12) {
-          Picker(StatusBarPetL10n.string("Dragon size"), selection: sizeBinding) {
-            ForEach(StatusBarPetSize.allCases) { size in
-              Text(size.displayName).tag(size)
-            }
-          }
-          .pickerStyle(.segmented)
-          .accessibilityIdentifier("statusBarPetSizePicker")
-
-          Divider()
-
-          VStack(alignment: .leading, spacing: 7) {
-            HStack {
-              Text(StatusBarPetL10n.string("Electric sparks"))
-              Spacer()
-              Text("\(Int(settings.configuration.sparkIntensity * 100))%")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
-            Slider(value: sparksBinding, in: 0...1, step: 0.05)
-              .accessibilityIdentifier("statusBarPetSparkSlider")
+    settingsCard(title: StatusBarPetL10n.string("Appearance"), symbol: "face.smiling") {
+      VStack(alignment: .leading, spacing: 12) {
+        Picker(StatusBarPetL10n.string("Dragon size"), selection: sizeBinding) {
+          ForEach(StatusBarPetSize.allCases) { size in
+            Text(size.displayName).tag(size)
           }
         }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("statusBarPetSizePicker")
+
+        Divider()
+
+        VStack(alignment: .leading, spacing: 7) {
+          HStack {
+            Text(StatusBarPetL10n.string("Electric sparks"))
+            Spacer()
+            Text("\(Int(settings.configuration.sparkIntensity * 100))%")
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+          Slider(value: sparksBinding, in: 0...1, step: 0.05)
+            .accessibilityIdentifier("statusBarPetSparkSlider")
+        }
       }
+    }
   }
 
   private var footer: some View {
     HStack {
       Label(
-        StatusBarPetL10n.string("Shown only on a display with a hardware notch; mouse clicks pass through."),
+        StatusBarPetL10n.string(
+          "Shown only on a display with a hardware notch; mouse clicks pass through."),
         systemImage: "macbook")
         .font(.caption)
         .foregroundStyle(.secondary)
