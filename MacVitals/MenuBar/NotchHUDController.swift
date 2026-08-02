@@ -111,17 +111,22 @@ final class NotchHUDController {
 
     let configuration = NotchHUDConfigurationPolicy.normalized(state.configuration)
     let primaryReading = NotchHUDReadingResolver.resolve(
+      snapshot: state.snapshot,
       metric: configuration.metric,
-      thresholds: configuration.primaryThresholds,
-      snapshot: state.snapshot)
+      warningThreshold: configuration.warningThreshold,
+      criticalThreshold: configuration.criticalThreshold)
+    let secondaryMetric = configuration.secondaryMetric ?? configuration.metric
+    let secondaryDefaults = secondaryMetric.notchIndicatorDefaultThresholds
     let secondaryReading = NotchHUDReadingResolver.resolve(
-      metric: configuration.secondaryMetric,
-      thresholds: configuration.secondaryThresholds,
-      snapshot: state.snapshot)
-    let segments = NotchHUDSegmentGeometry.resolve(
-      indicatorCount: configuration.indicatorCount,
-      primaryProgress: primaryReading.progress,
-      secondaryProgress: secondaryReading.progress)
+      snapshot: state.snapshot,
+      metric: secondaryMetric,
+      warningThreshold: configuration.secondaryWarningThreshold ?? secondaryDefaults.warning,
+      criticalThreshold: configuration.secondaryCriticalThreshold ?? secondaryDefaults.critical)
+    let primarySegment = NotchHUDIndicatorSegments.primary(
+      progress: primaryReading.progress,
+      count: configuration.indicatorCount)
+    let secondarySegment = NotchHUDIndicatorSegments.secondary(
+      progress: secondaryReading.progress)
 
     var payload: [String: Any] = [
       "event": event,
@@ -132,15 +137,15 @@ final class NotchHUDController {
       "screenCount": NSScreen.screens.count,
       "indicatorCount": configuration.indicatorCount.rawValue,
       "primaryMetric": configuration.metric.rawValue,
-      "secondaryMetric": configuration.secondaryMetric.rawValue,
+      "secondaryMetric": configuration.secondaryMetric?.rawValue ?? NSNull(),
       "showValueText": configuration.showValueText,
       "showSensorName": configuration.showSensorName,
       "primaryProgress": primaryReading.progress,
       "secondaryProgress": secondaryReading.progress,
-      "primaryTrimStart": segments.primaryStart,
-      "primaryTrimEnd": segments.primaryEnd,
-      "secondaryTrimStart": segments.secondaryStart,
-      "secondaryTrimEnd": segments.secondaryEnd,
+      "primaryTrimStart": primarySegment.from,
+      "primaryTrimEnd": primarySegment.to,
+      "secondaryTrimStart": secondarySegment.from,
+      "secondaryTrimEnd": secondarySegment.to,
     ]
 
     if let screen {
