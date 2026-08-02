@@ -1,0 +1,194 @@
+name: Launch Corrected Notch Dragon Preview
+
+on:
+  push:
+    branches: [agent/notch-dragon-preview-v2]
+
+concurrency:
+  group: launch-corrected-notch-dragon-preview
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  launch-preview:
+    if: github.actor == 'mishkacher' && github.ref == 'refs/heads/agent/notch-dragon-preview-v2'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    env:
+      ARTIFACT_ID: '8838997572'
+      ARTIFACT_SHA256: 7fd5c78dd17f3dcc16eacacab7cd1f664995efde75d983974d9fd5a1d08d08a7
+      FEATURE_HEAD_SHA: 82e95a608fcedb0325dee0a11ed93cc7d3156f84
+      PREVIEW_BUNDLE_ID: com.mishkacher.MacVitals.NotchDragonPreview
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Install corrected notch-only preview
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin ]]
+          [[ "$(uname -m)" == arm64 ]]
+
+          console_user="$(stat -f '%Su' /dev/console)"
+          [[ -n "${console_user}" && "${console_user}" != root ]]
+          [[ "$(id -un)" == "${console_user}" ]]
+          console_uid="$(id -u "${console_user}")"
+          launchctl print "gui/${console_uid}" >/dev/null
+
+          rm -rf notch-dragon-download notch-dragon-extract notch-dragon-evidence
+          mkdir -p notch-dragon-download notch-dragon-extract notch-dragon-evidence
+
+          cat > /tmp/MacVitalsScreenInfo.swift <<'SWIFT'
+          import AppKit
+          import Foundation
+
+          guard let screen = NSScreen.main ?? NSScreen.screens.first else { exit(2) }
+          let payload: [String: Any] = [
+            "safeAreaTop": screen.safeAreaInsets.top,
+            "screenX": screen.frame.minX,
+            "screenY": screen.frame.minY,
+            "screenWidth": screen.frame.width,
+            "screenHeight": screen.frame.height,
+          ]
+          let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+          FileHandle.standardOutput.write(data)
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 -framework AppKit \
+            /tmp/MacVitalsScreenInfo.swift -o /tmp/macvitals-screen-info
+          /tmp/macvitals-screen-info > notch-dragon-evidence/screen.json
+          SAFE_AREA_JSON="notch-dragon-evidence/screen.json" python3 - <<'PY'
+          import json, os
+          data = json.load(open(os.environ['SAFE_AREA_JSON'], encoding='utf-8'))
+          assert data['safeAreaTop'] > 0, data
+          PY
+
+          outer="notch-dragon-download/artifact.zip"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "${outer}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip"
+          [[ "$(shasum -a 256 "${outer}" | awk '{print $1}')" == "${ARTIFACT_SHA256}" ]]
+
+          ditto -x -k "${outer}" notch-dragon-download/content
+          inner="$(find notch-dragon-download/content -type f -name 'MacVitals-*.zip' -print -quit)"
+          [[ -n "${inner}" ]]
+          python3 scripts/validate_app_zip.py "${inner}"
+          ditto -x -k "${inner}" notch-dragon-extract
+
+          source_app="${PWD}/notch-dragon-extract/MacVitals.app"
+          [[ -x "${source_app}/Contents/MacOS/MacVitals" ]]
+          [[ "$(lipo -archs "${source_app}/Contents/MacOS/MacVitals")" == arm64 ]]
+
+          preview_root="${HOME}/Applications"
+          preview_app="${preview_root}/MacVitals Notch Dragon Preview.app"
+          preview_executable="${preview_app}/Contents/MacOS/MacVitals"
+          mkdir -p "${preview_root}"
+
+          while IFS= read -r pid; do
+            [[ -n "${pid}" ]] || continue
+            command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+            if [[ "${command}" == "${preview_executable}"* ]]; then
+              kill -TERM "${pid}" 2>/dev/null || true
+              for _ in {1..50}; do
+                kill -0 "${pid}" 2>/dev/null || break
+                sleep 0.1
+              done
+              kill -KILL "${pid}" 2>/dev/null || true
+            fi
+          done < <(pgrep -x MacVitals || true)
+
+          rm -rf "${preview_app}"
+          ditto "${source_app}" "${preview_app}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${PREVIEW_BUNDLE_ID}" \
+            "${preview_app}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MacVitals Notch Dragon Preview' \
+            "${preview_app}/Contents/Info.plist"
+          /usr/bin/plutil -lint "${preview_app}/Contents/Info.plist"
+
+          python3 - <<'PY' > notch-dragon-evidence/pet-config.hex
+          import json
+          payload = {
+              "schemaVersion": 1,
+              "configuration": {
+                  "isEnabled": True,
+                  "roamEnabled": True,
+                  "cursorInteractionEnabled": True,
+                  "respectReducedMotion": False,
+                  "size": "small",
+                  "movementSpeed": 0.8,
+                  "sparkIntensity": 0.45,
+              },
+          }
+          print(json.dumps(payload, separators=(",", ":")).encode().hex())
+          PY
+          config_hex="$(cat notch-dragon-evidence/pet-config.hex)"
+          defaults write "${PREVIEW_BUNDLE_ID}" statusBarPetConfiguration.v1 -data "${config_hex}"
+          defaults read "${PREVIEW_BUNDLE_ID}" statusBarPetConfiguration.v1 \
+            > notch-dragon-evidence/defaults-roundtrip.txt
+
+          /usr/bin/env -u RUNNER_TRACKING_ID -u GITHUB_ACTIONS -u CI \
+            /usr/bin/open -na "${preview_app}"
+
+          preview_pid=""
+          for _ in {1..100}; do
+            while IFS= read -r pid; do
+              [[ -n "${pid}" ]] || continue
+              command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+              if [[ "${command}" == "${preview_executable}"* ]]; then
+                preview_pid="${pid}"
+                break
+              fi
+            done < <(pgrep -x MacVitals || true)
+            [[ -n "${preview_pid}" ]] && break
+            sleep 0.2
+          done
+          [[ -n "${preview_pid}" ]]
+          sleep 6
+          kill -0 "${preview_pid}"
+
+          cat > notch-dragon-evidence/preview.json <<JSON
+          {
+            "featureHead": "${FEATURE_HEAD_SHA}",
+            "artifactId": ${ARTIFACT_ID},
+            "artifactSha256": "${ARTIFACT_SHA256}",
+            "bundleIdentifier": "${PREVIEW_BUNDLE_ID}",
+            "applicationPath": "${preview_app}",
+            "processPID": ${preview_pid},
+            "processAlive": true,
+            "territory": "hardware-notch-only",
+            "expectedMaximumOverlayWidthPoints": 320,
+            "configuration": {
+              "enabled": true,
+              "size": "small",
+              "movementSpeed": 0.8,
+              "sparkIntensity": 0.45,
+              "notchMovement": true,
+              "cursorInteractionNearNotch": true,
+              "respectReducedMotion": false
+            }
+          }
+          JSON
+
+          ps -p "${preview_pid}" -o pid=,ppid=,%cpu=,rss=,etime=,command= \
+            > notch-dragon-evidence/process.txt
+          echo "corrected-notch-preview-launched=true" > notch-dragon-evidence/result.txt
+
+      - name: Upload preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: corrected-notch-dragon-preview-evidence
+          path: notch-dragon-evidence/
+          if-no-files-found: error
+          retention-days: 14
