@@ -120,8 +120,9 @@ jobs:
           defaults read "${PREVIEW_BUNDLE_ID}" statusBarPetConfiguration.v1 \
             > dragon-preview-evidence/defaults-roundtrip.txt
 
-          # Unset runner tracking so the preview remains alive after the Actions job ends.
-          launchctl asuser "${console_uid}" /usr/bin/env \
+          # The self-hosted runner already runs in the active GUI session.
+          # Remove runner-tracking variables so the preview survives post-job cleanup.
+          /usr/bin/env \
             -u RUNNER_TRACKING_ID \
             -u GITHUB_ACTIONS \
             -u CI \
