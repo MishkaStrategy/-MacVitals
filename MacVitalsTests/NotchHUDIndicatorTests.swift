@@ -18,13 +18,27 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.001)
   }
 
-  func testContourGeometryMatchesHardwareNotchWidth() {
+  func testContourGeometryTracesOutsideHardwareCutout() {
     let geometry = NotchHUDLayout.contourGeometry(
       in: CGSize(width: 356, height: 68),
       safeAreaTop: 38)
 
     XCTAssertEqual(geometry.notchRightX - geometry.notchLeftX, 212, accuracy: 0.001)
-    XCTAssertGreaterThan(geometry.bottomY, geometry.topY)
+    XCTAssertLessThanOrEqual(geometry.topY, 1)
+    XCTAssertGreaterThan(geometry.bottomY, 38)
+    XCTAssertLessThan(geometry.shoulderRadius, 15)
+  }
+
+  func testPanelKeepsGlowPaddingWhenLabelsAreHidden() {
+    var configuration = NotchHUDConfiguration.minimal
+    configuration.showValueText = false
+
+    XCTAssertEqual(
+      NotchHUDLayout.preferredPanelHeight(
+        safeAreaTop: 38,
+        configuration: configuration),
+      50,
+      accuracy: 0.001)
   }
 
   func testEmptySnapshotProducesUnavailableReading() {
