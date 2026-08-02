@@ -59,6 +59,10 @@
 "Menu Bar" = "Строка меню";
 "Privacy" = "Приватность";
 "Update interval" = "Интервал обновления";
+"Choose separate refresh rates for battery and external power." = "Задайте отдельную частоту обновления для батареи и внешнего питания.";
+"On power adapter" = "От сети";
+"Active profile" = "Активный профиль";
+"Monitoring switches automatically when the power source changes." = "Интервал переключается автоматически при смене источника питания.";
 "Show in Dock" = "Показывать в Dock";
 "Launch at login" = "Запускать при входе";
 "Enable local alerts" = "Включить локальные уведомления";

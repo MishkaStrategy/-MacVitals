@@ -167,24 +167,49 @@ struct PreferencesView: View {
       VStack(spacing: 14) {
         SettingsCard(
           title: L10n.string("Monitoring frequency"),
-          subtitle: L10n.string("Choose how often live metrics and charts refresh."),
+          subtitle: L10n.string("Choose separate refresh rates for battery and external power."),
           symbol: "timer") {
-            VStack(alignment: .leading, spacing: 10) {
-              Picker("Update interval", selection: $settings.samplingInterval) {
-                ForEach(SamplingIntervalPolicy.supportedValues, id: \.self) {
-                  Text(L10n.format("%g s", $0)).tag($0)
-                }
-              }
-              .labelsHidden()
-              .pickerStyle(.segmented)
-              .accessibilityIdentifier("samplingIntervalPicker")
+            VStack(alignment: .leading, spacing: 14) {
+              samplingIntervalRow(
+                title: L10n.string("On power adapter"),
+                detail: samplingIntervalDescription(
+                  for: settings.samplingIntervalOnExternalPower),
+                symbol: "powerplug.fill",
+                selection: $settings.samplingIntervalOnExternalPower,
+                accessibilityIdentifier: "samplingIntervalExternalPowerPicker")
 
-              HStack(spacing: 7) {
-                Image(systemName: settings.samplingInterval <= 2 ? "bolt.fill" : "leaf.fill")
-                Text(samplingIntervalDescription)
+              Divider()
+
+              samplingIntervalRow(
+                title: L10n.string("On battery"),
+                detail: samplingIntervalDescription(
+                  for: settings.samplingIntervalOnBattery),
+                symbol: "battery.75percent",
+                selection: $settings.samplingIntervalOnBattery,
+                accessibilityIdentifier: "samplingIntervalBatteryPicker")
+
+              Divider()
+
+              HStack(spacing: 8) {
+                Image(systemName: coordinator.samplingPowerSource == .battery
+                  ? "battery.75percent" : "powerplug.fill")
+                  .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                  Text(L10n.string("Active profile"))
+                    .font(.caption.weight(.semibold))
+                  Text(
+                    "\(samplingPowerSourceTitle) · "
+                      + L10n.format("%g s", coordinator.effectiveSamplingInterval))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(L10n.string("Monitoring switches automatically when the power source changes."))
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .multilineTextAlignment(.trailing)
+                  .frame(maxWidth: 230, alignment: .trailing)
               }
-              .font(.caption)
-              .foregroundStyle(.secondary)
             }
           }
 
@@ -230,7 +255,7 @@ struct PreferencesView: View {
             HStack(spacing: 12) {
               sessionStat(
                 title: L10n.string("Interval"),
-                value: L10n.format("%g s", settings.samplingInterval),
+                value: L10n.format("%g s", coordinator.effectiveSamplingInterval),
                 symbol: "clock")
               sessionStat(
                 title: L10n.string("Sensors"),
@@ -455,8 +480,15 @@ struct PreferencesView: View {
     }
   }
 
-  private var samplingIntervalDescription: String {
-    switch settings.samplingInterval {
+  private var samplingPowerSourceTitle: String {
+    switch coordinator.samplingPowerSource {
+    case .battery: return L10n.string("On battery")
+    case .externalPower: return L10n.string("On power adapter")
+    }
+  }
+
+  private func samplingIntervalDescription(for interval: TimeInterval) -> String {
+    switch interval {
     case ...2: return L10n.string("Fastest response with higher sensor and energy overhead.")
     case ...5: return L10n.string("Balanced live monitoring for everyday use.")
     case ...15: return L10n.string("Lower overhead while keeping useful history.")
@@ -476,6 +508,39 @@ struct PreferencesView: View {
       snapshot.fans.value != nil,
       snapshot.power.value != nil,
     ].filter { $0 }.count
+  }
+
+  private func samplingIntervalRow(
+    title: String,
+    detail: String,
+    symbol: String,
+    selection: Binding<Double>,
+    accessibilityIdentifier: String
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 9) {
+        Image(systemName: symbol)
+          .font(.body.weight(.semibold))
+          .foregroundStyle(Color.accentColor)
+          .frame(width: 22)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(title).font(.subheadline.weight(.semibold))
+          Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Text(L10n.format("%g s", selection.wrappedValue))
+          .font(.body.monospacedDigit())
+      }
+
+      Picker("Update interval", selection: selection) {
+        ForEach(SamplingIntervalPolicy.supportedValues, id: \.self) {
+          Text(L10n.format("%g s", $0)).tag($0)
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .accessibilityIdentifier(accessibilityIdentifier)
+    }
   }
 
   private func preferenceToggle(

@@ -171,14 +171,26 @@ final class SettingsStore: ObservableObject {
       applyPreset(selectedPreset)
     }
   }
-  @Published var samplingInterval: Double {
+  @Published var samplingIntervalOnBattery: Double {
     didSet {
-      let normalized = SamplingIntervalPolicy.normalized(samplingInterval)
-      if normalized != samplingInterval {
-        samplingInterval = normalized
+      let normalized = SamplingIntervalPolicy.normalized(samplingIntervalOnBattery)
+      if normalized != samplingIntervalOnBattery {
+        samplingIntervalOnBattery = normalized
         return
       }
-      UserDefaults.standard.set(normalized, forKey: Keys.samplingInterval)
+      UserDefaults.standard.set(normalized, forKey: Keys.samplingIntervalOnBattery)
+    }
+  }
+  @Published var samplingIntervalOnExternalPower: Double {
+    didSet {
+      let normalized = SamplingIntervalPolicy.normalized(samplingIntervalOnExternalPower)
+      if normalized != samplingIntervalOnExternalPower {
+        samplingIntervalOnExternalPower = normalized
+        return
+      }
+      let defaults = UserDefaults.standard
+      defaults.set(normalized, forKey: Keys.samplingIntervalOnExternalPower)
+      defaults.set(normalized, forKey: Keys.samplingInterval)
     }
   }
   @Published var showInDock: Bool {
@@ -236,8 +248,22 @@ final class SettingsStore: ObservableObject {
     self.launchAtLoginManager = launchAtLoginManager
 
     let defaults = UserDefaults.standard
-    samplingInterval = SamplingIntervalPolicy.normalized(
-      defaults.double(forKey: Keys.samplingInterval))
+    let samplingIntervals = SamplingIntervalPreferences.resolve(
+      legacyValue: defaults.object(forKey: Keys.samplingInterval) == nil
+        ? nil : defaults.double(forKey: Keys.samplingInterval),
+      batteryValue: defaults.object(forKey: Keys.samplingIntervalOnBattery) == nil
+        ? nil : defaults.double(forKey: Keys.samplingIntervalOnBattery),
+      externalPowerValue: defaults.object(forKey: Keys.samplingIntervalOnExternalPower) == nil
+        ? nil : defaults.double(forKey: Keys.samplingIntervalOnExternalPower))
+    samplingIntervalOnBattery = samplingIntervals.onBattery
+    samplingIntervalOnExternalPower = samplingIntervals.onExternalPower
+    if defaults.object(forKey: Keys.samplingIntervalOnBattery) == nil {
+      defaults.set(samplingIntervals.onBattery, forKey: Keys.samplingIntervalOnBattery)
+    }
+    if defaults.object(forKey: Keys.samplingIntervalOnExternalPower) == nil {
+      defaults.set(samplingIntervals.onExternalPower, forKey: Keys.samplingIntervalOnExternalPower)
+    }
+    defaults.set(samplingIntervals.onExternalPower, forKey: Keys.samplingInterval)
     showInDock = defaults.bool(forKey: Keys.showInDock)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
     memoryAlertsEnabled = defaults.object(forKey: Keys.memoryAlertsEnabled) == nil
@@ -374,6 +400,8 @@ final class SettingsStore: ObservableObject {
     static let customMenuConfiguration = "customMenuConfiguration.v1"
     static let selectedPreset = "selectedPreset"
     static let samplingInterval = "samplingInterval"
+    static let samplingIntervalOnBattery = "samplingInterval.onBattery"
+    static let samplingIntervalOnExternalPower = "samplingInterval.onExternalPower"
     static let showInDock = "showInDock"
     static let notificationsEnabled = "notificationsEnabled"
     static let memoryAlertsEnabled = "memoryAlertsEnabled"

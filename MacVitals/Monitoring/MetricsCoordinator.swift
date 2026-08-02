@@ -51,6 +51,9 @@ final class MetricsCoordinator: ObservableObject {
   @Published private(set) var fanHistory: [Int: [TimedPoint]] = [:]
   @Published private(set) var samplingHealth: SamplingHealth?
   @Published private(set) var isRunning = false
+  @Published private(set) var samplingPowerSource: SamplingPowerSource = .externalPower
+  @Published private(set) var effectiveSamplingInterval: TimeInterval =
+    SamplingIntervalPolicy.defaultValue
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
 
@@ -67,6 +70,9 @@ final class MetricsCoordinator: ObservableObject {
   private var adapterInputPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
+  private var samplingIntervals = SamplingIntervalPreferences(
+    onBattery: SamplingIntervalPolicy.defaultValue,
+    onExternalPower: SamplingIntervalPolicy.defaultValue)
 
   func start() {
     start(resetBeforeSampling: false)
@@ -78,6 +84,16 @@ final class MetricsCoordinator: ObservableObject {
     isRunning = false
   }
 
+  func configureSamplingIntervals(
+    onBattery: TimeInterval,
+    onExternalPower: TimeInterval
+  ) {
+    samplingIntervals = SamplingIntervalPreferences(
+      onBattery: onBattery,
+      onExternalPower: onExternalPower)
+    effectiveSamplingInterval = samplingIntervals.interval(for: samplingPowerSource)
+  }
+
   func handleSleep() {
     stop()
     appendDiscontinuity()
@@ -86,11 +102,6 @@ final class MetricsCoordinator: ObservableObject {
 
   func handleWake() {
     start(resetBeforeSampling: true)
-  }
-
-  private var currentInterval: TimeInterval {
-    SamplingIntervalPolicy.normalized(
-      UserDefaults.standard.double(forKey: "samplingInterval"))
   }
 
   private func start(resetBeforeSampling: Bool) {
@@ -106,7 +117,8 @@ final class MetricsCoordinator: ObservableObject {
         let result = await sampler.sample()
         guard !Task.isCancelled else { break }
 
-        let interval = self?.currentInterval ?? SamplingIntervalPolicy.defaultValue
+        let interval = self?.updateSamplingContext(from: result.snapshot)
+          ?? SamplingIntervalPolicy.defaultValue
         self?.consume(result, configuredInterval: interval)
 
         let nanos = SamplingIntervalPolicy.sleepNanoseconds(
@@ -119,6 +131,17 @@ final class MetricsCoordinator: ObservableObject {
         }
       }
     }
+  }
+
+  private func updateSamplingContext(from snapshot: SystemSnapshot) -> TimeInterval {
+    let source = SamplingPowerSource.resolve(
+      externalPowerConnected: snapshot.battery.value?.externalPowerConnected,
+      adapterConnected: snapshot.adapter.value?.connected,
+      batteryPresent: snapshot.battery.value?.present,
+      fallback: samplingPowerSource)
+    samplingPowerSource = source
+    effectiveSamplingInterval = samplingIntervals.interval(for: source)
+    return effectiveSamplingInterval
   }
 
   private func consume(_ result: SampleResult, configuredInterval: TimeInterval) {

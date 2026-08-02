@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
+    coordinator.configureSamplingIntervals(
+      onBattery: settings.samplingIntervalOnBattery,
+      onExternalPower: settings.samplingIntervalOnExternalPower)
     statusController = StatusItemController(
       coordinator: coordinator,
       settings: settings,
@@ -38,7 +41,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       .store(in: &cancellables)
 
-    settings.$samplingInterval
+    settings.$samplingIntervalOnBattery
+      .combineLatest(settings.$samplingIntervalOnExternalPower)
+      .dropFirst()
+      .sink { [weak self] batteryInterval, externalPowerInterval in
+        self?.coordinator.configureSamplingIntervals(
+          onBattery: batteryInterval,
+          onExternalPower: externalPowerInterval)
+      }
+      .store(in: &cancellables)
+
+    coordinator.$effectiveSamplingInterval
       .removeDuplicates()
       .dropFirst()
       .sink { [weak self] interval in
@@ -52,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     fanControl.refreshStatus()
     coordinator.start()
-    consumptionHistory.start(interval: settings.samplingInterval)
+    consumptionHistory.start(interval: coordinator.effectiveSamplingInterval)
     LifecycleMonitor.shared.start(coordinator: coordinator)
     Logger.lifecycle.info("MacVitals started")
   }

@@ -1,5 +1,54 @@
 import Foundation
 
+nonisolated enum SamplingPowerSource: String, Codable, Sendable {
+  case battery
+  case externalPower
+
+  static func resolve(
+    externalPowerConnected: Bool?,
+    adapterConnected: Bool?,
+    batteryPresent: Bool?,
+    fallback: Self = .externalPower
+  ) -> Self {
+    if externalPowerConnected == true || adapterConnected == true || batteryPresent == false {
+      return .externalPower
+    }
+    if externalPowerConnected == false {
+      return .battery
+    }
+    return fallback
+  }
+}
+
+nonisolated struct SamplingIntervalPreferences: Equatable, Sendable {
+  let onBattery: TimeInterval
+  let onExternalPower: TimeInterval
+
+  init(onBattery: TimeInterval, onExternalPower: TimeInterval) {
+    self.onBattery = SamplingIntervalPolicy.normalized(onBattery)
+    self.onExternalPower = SamplingIntervalPolicy.normalized(onExternalPower)
+  }
+
+  static func resolve(
+    legacyValue: TimeInterval?,
+    batteryValue: TimeInterval?,
+    externalPowerValue: TimeInterval?
+  ) -> Self {
+    let legacy = SamplingIntervalPolicy.normalized(
+      legacyValue ?? SamplingIntervalPolicy.defaultValue)
+    return Self(
+      onBattery: batteryValue ?? legacy,
+      onExternalPower: externalPowerValue ?? legacy)
+  }
+
+  func interval(for source: SamplingPowerSource) -> TimeInterval {
+    switch source {
+    case .battery: return onBattery
+    case .externalPower: return onExternalPower
+    }
+  }
+}
+
 nonisolated enum SamplingIntervalPolicy {
   static let supportedValues: [TimeInterval] = [1, 2, 5, 10, 15, 30]
   static let defaultValue: TimeInterval = 5

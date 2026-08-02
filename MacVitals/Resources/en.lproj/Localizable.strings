@@ -59,6 +59,10 @@
 "Menu Bar" = "Menu Bar";
 "Privacy" = "Privacy";
 "Update interval" = "Update interval";
+"Choose separate refresh rates for battery and external power." = "Choose separate refresh rates for battery and external power.";
+"On power adapter" = "On power adapter";
+"Active profile" = "Active profile";
+"Monitoring switches automatically when the power source changes." = "Monitoring switches automatically when the power source changes.";
 "Show in Dock" = "Show in Dock";
 "Launch at login" = "Launch at login";
 "Enable local alerts" = "Enable local alerts";

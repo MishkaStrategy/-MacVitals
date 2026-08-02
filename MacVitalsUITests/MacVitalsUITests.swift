@@ -102,7 +102,9 @@ final class MacVitalsUITests: XCTestCase {
     assertElementExists("themePreview.multicolor", in: app, file: file, line: line)
 
     selectTab(labels.general, language: language, in: app, file: file, line: line)
-    assertElementExists("samplingIntervalPicker", in: app, file: file, line: line)
+    assertElementExists(
+      "samplingIntervalExternalPowerPicker", in: app, file: file, line: line)
+    assertElementExists("samplingIntervalBatteryPicker", in: app, file: file, line: line)
     assertElementExists("showInDockToggle", in: app, file: file, line: line)
     assertElementExists("launchAtLoginToggle", in: app, file: file, line: line)
 
