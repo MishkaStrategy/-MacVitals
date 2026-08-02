@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8834027738'
-      APP_ARTIFACT_DIGEST: '436a67d90198decdfc13b831f9484e52bbee2c04f01f0a9a3c3a4c37d643c6ff'
-      FEATURE_HEAD_SHA: '0f921830e5396be9a9f8d3bf70e64c612e623a36'
+      APP_ARTIFACT_ID: '8834228481'
+      APP_ARTIFACT_DIGEST: '16a203ae223ad036bd67ca54d67157262def1ce408636298bd1271f51b81c7d7'
+      FEATURE_HEAD_SHA: '45919011cf8b221e22eaea7ecd4ef195cb469c9b'
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -71,6 +71,10 @@ jobs:
           let enabled = CommandLine.arguments[2] == "true"
           CFPreferencesSetAppValue("experimentalNotchHUDEnabled" as CFString, enabled as CFBoolean, bundle)
           guard CFPreferencesAppSynchronize(bundle) else { exit(3) }
+          guard let stored = CFPreferencesCopyAppValue(
+            "experimentalNotchHUDEnabled" as CFString,
+            bundle
+          ) as? Bool, stored == enabled else { exit(4) }
           SWIFT
 
           cat > physical-tools/Evidence.swift <<'SWIFT'
@@ -118,6 +122,8 @@ jobs:
           }
           trap cleanup EXIT
           physical-tools/preferences "${bundle_id}" true
+          printf 'bundle-id=%s\nenabled-roundtrip=true\n' "${bundle_id}" \
+            > physical-evidence/preference-check.txt
 
           "${executable}" -ApplePersistenceIgnoreState YES \
             > physical-evidence/app.stdout.log 2> physical-evidence/app.stderr.log &
