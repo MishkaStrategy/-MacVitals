@@ -6,22 +6,21 @@ final class NotchHUDController {
   nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
 
   private let state = NotchHUDState()
-  private var leftPanel: NSPanel?
-  private var rightPanel: NSPanel?
+  private var panel: NSPanel?
   private var enabled = false
   private var activeScreenNumber: NSNumber?
 
   var isEnabled: Bool { enabled }
 
   var hasAllocatedPanelsForTesting: Bool {
-    leftPanel != nil || rightPanel != nil
+    panel != nil
   }
 
   func update(
     snapshot: SystemSnapshot,
     preferredScreen: NSScreen?,
     enabled: Bool,
-    configuration: NotchHUDConfiguration = .balanced
+    configuration: NotchHUDConfiguration = .minimal
   ) {
     self.enabled = enabled
 
@@ -36,8 +35,7 @@ final class NotchHUDController {
   }
 
   func hide() {
-    leftPanel?.orderOut(nil)
-    rightPanel?.orderOut(nil)
+    panel?.orderOut(nil)
     activeScreenNumber = nil
   }
 
@@ -53,53 +51,35 @@ final class NotchHUDController {
     }
 
     let configuration = state.configuration
-    guard configuration.showLeftPanel || configuration.showRightPanel else {
-      hide()
-      return
-    }
-    guard configuration.showOnDisplaysWithoutNotch || screen.safeAreaInsets.top > 0 else {
+    let safeAreaTop = screen.safeAreaInsets.top
+    guard configuration.showOnDisplaysWithoutNotch || safeAreaTop > 0 else {
       hide()
       return
     }
 
-    ensurePanels()
-    guard let leftPanel, let rightPanel else { return }
+    ensurePanel()
+    guard let panel else { return }
 
     activeScreenNumber = screen.deviceDescription[
       NSDeviceDescriptionKey("NSScreenNumber")
     ] as? NSNumber
+    state.safeAreaTop = NotchHUDLayout.resolvedSafeAreaTop(safeAreaTop)
 
-    let frames = NotchHUDLayout.sideFrames(
+    let frame = NotchHUDLayout.panelFrame(
       for: screen.frame,
-      safeAreaTop: screen.safeAreaInsets.top,
+      safeAreaTop: safeAreaTop,
       configuration: configuration)
-
-    if configuration.showLeftPanel {
-      leftPanel.setFrame(frames.left, display: true)
-      leftPanel.orderFrontRegardless()
-    } else {
-      leftPanel.orderOut(nil)
-    }
-
-    if configuration.showRightPanel {
-      rightPanel.setFrame(frames.right, display: true)
-      rightPanel.orderFrontRegardless()
-    } else {
-      rightPanel.orderOut(nil)
-    }
+    panel.setFrame(frame, display: true)
+    panel.orderFrontRegardless()
   }
 
-  private func ensurePanels() {
-    guard leftPanel == nil, rightPanel == nil else { return }
+  private func ensurePanel() {
+    guard panel == nil else { return }
 
-    let left = Self.makePanel()
-    let right = Self.makePanel()
-    left.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .left))
-    right.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .right))
-    leftPanel = left
-    rightPanel = right
+    let indicatorPanel = Self.makePanel()
+    indicatorPanel.contentViewController = NSHostingController(
+      rootView: NotchHUDIndicatorView(state: state))
+    panel = indicatorPanel
   }
 
   private static func makePanel() -> NSPanel {
