@@ -1,245 +1,279 @@
 import Combine
+import Foundation
 import SwiftUI
+
+nonisolated enum NotchIndicatorLevel: Equatable, Sendable {
+  case unavailable
+  case normal
+  case warning
+  case critical
+}
+
+nonisolated struct NotchHUDReading: Equatable, Sendable {
+  let metric: MenuMetric
+  let numericValue: Double?
+  let displayValue: String
+  let progress: Double
+  let level: NotchIndicatorLevel
+}
+
+nonisolated enum NotchHUDReadingResolver {
+  static func resolve(
+    snapshot: SystemSnapshot,
+    configuration: NotchHUDConfiguration
+  ) -> NotchHUDReading {
+    let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
+    let value = numericValue(for: normalized.metric, snapshot: snapshot)
+    let displayValue = renderedValue(for: normalized.metric, value: value)
+    let progress = value.map { normalizedProgress($0, metric: normalized.metric) } ?? 0
+    let level = level(for: value, configuration: normalized)
+    return NotchHUDReading(
+      metric: normalized.metric,
+      numericValue: value,
+      displayValue: displayValue,
+      progress: progress,
+      level: level)
+  }
+
+  private static func numericValue(
+    for metric: MenuMetric,
+    snapshot: SystemSnapshot
+  ) -> Double? {
+    switch metric {
+    case .cpu:
+      return finite(snapshot.cpu.value?.total)
+    case .gpu:
+      return finite(snapshot.gpu.value?.systemUtilizationPercent)
+    case .memory:
+      return finite(snapshot.memory.value?.usedPercent)
+    case .temperature:
+      return finite(
+        snapshot.temperature.value?.processorCelsius
+          ?? snapshot.temperature.value?.batteryCelsius)
+    case .battery:
+      return finite(snapshot.battery.value?.percentage)
+    case .fans:
+      return snapshot.fans.value?.fans.compactMap { finite($0.currentRPM) }.max()
+    case .systemPower:
+      return finite(snapshot.power.value?.estimatedSystemPowerWatts).map { abs($0) }
+    case .adapterPower:
+      return finite(
+        snapshot.power.value?.adapterInputPowerWatts
+          ?? snapshot.adapter.value?.ratedPowerWatts
+      ).map { abs($0) }
+    case .powerStatus:
+      return nil
+    }
+  }
+
+  private static func renderedValue(for metric: MenuMetric, value: Double?) -> String {
+    guard let value else { return "—" }
+
+    switch metric {
+    case .cpu, .gpu, .memory, .battery:
+      return "\(Int(value.rounded()))%"
+    case .temperature:
+      return "\(Int(value.rounded()))°C"
+    case .fans:
+      return "\(Int(value.rounded())) RPM"
+    case .systemPower, .adapterPower:
+      return String(format: "%.1f W", value)
+    case .powerStatus:
+      return "—"
+    }
+  }
+
+  private static func normalizedProgress(_ value: Double, metric: MenuMetric) -> Double {
+    let range = metric.notchIndicatorRange
+    guard range.upperBound > range.lowerBound else { return 0 }
+    return min(max((value - range.lowerBound) / (range.upperBound - range.lowerBound), 0), 1)
+  }
+
+  private static func level(
+    for value: Double?,
+    configuration: NotchHUDConfiguration
+  ) -> NotchIndicatorLevel {
+    guard let value else { return .unavailable }
+
+    if configuration.metric.notchIndicatorLowerIsWorse {
+      if value <= configuration.criticalThreshold { return .critical }
+      if value <= configuration.warningThreshold { return .warning }
+    } else {
+      if value >= configuration.criticalThreshold { return .critical }
+      if value >= configuration.warningThreshold { return .warning }
+    }
+    return .normal
+  }
+
+  private static func finite(_ value: Double?) -> Double? {
+    guard let value, value.isFinite else { return nil }
+    return value
+  }
+}
 
 @MainActor
 final class NotchHUDState: ObservableObject {
   @Published var snapshot: SystemSnapshot = .empty
   @Published var configuration: NotchHUDConfiguration = .minimal
+  @Published var safeAreaTop: CGFloat = NotchHUDLayout.minimumSafeAreaTop
 }
 
 @MainActor
-struct NotchHUDSideView: View {
+struct NotchHUDIndicatorView: View {
   @ObservedObject var state: NotchHUDState
-  let side: NotchHUDSide
 
   var body: some View {
-    NotchHUDSideContentView(
+    NotchHUDIndicatorContentView(
       snapshot: state.snapshot,
       configuration: state.configuration,
-      side: side)
+      safeAreaTop: state.safeAreaTop)
   }
 }
 
 @MainActor
-struct NotchHUDSideContentView: View {
+struct NotchHUDIndicatorContentView: View {
   let snapshot: SystemSnapshot
   let configuration: NotchHUDConfiguration
-  let side: NotchHUDSide
+  let safeAreaTop: CGFloat
 
   var body: some View {
-    HStack(spacing: CGFloat(configuration.density.itemSpacing)) {
-      ForEach(Array(metrics.enumerated()), id: \.element) { index, metric in
-        let tile = configuration.tileConfiguration(for: metric)
-        NotchHUDCompactMetricView(
-          metric: metric,
-          rawValue: rawValue(for: metric),
-          configuration: configuration,
-          tileConfiguration: tile)
+    let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
+    let reading = NotchHUDReadingResolver.resolve(
+      snapshot: snapshot,
+      configuration: normalized)
+    let activeColor = indicatorColor(reading: reading, configuration: normalized)
 
-        if configuration.showSeparators, index < metrics.count - 1 {
-          Rectangle()
-            .fill(Color.white.opacity(0.14))
-            .frame(width: 1, height: separatorHeight)
+    GeometryReader { proxy in
+      let geometry = NotchHUDLayout.contourGeometry(
+        in: proxy.size,
+        safeAreaTop: safeAreaTop)
+      let shape = NotchHUDContourShape(geometry: geometry)
+      let lineWidth = CGFloat(normalized.lineThickness)
+
+      ZStack(alignment: .top) {
+        shape
+          .stroke(
+            Color.white.opacity(normalized.trackOpacity),
+            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+
+        shape
+          .trim(from: 0, to: reading.progress)
+          .stroke(
+            activeColor,
+            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+          )
+          .shadow(
+            color: activeColor.opacity(0.75 * normalized.glowIntensity),
+            radius: 2 + 6 * normalized.glowIntensity
+          )
+          .animation(
+            normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
+            value: reading.progress)
+
+        if normalized.showValueText {
+          HStack(spacing: 5) {
+            if normalized.showSensorName {
+              Text(normalized.metric.displayName)
+                .foregroundStyle(Color.white.opacity(0.82))
+            }
+            Text(reading.displayValue)
+              .foregroundStyle(activeColor)
+              .fontWeight(.semibold)
+          }
+          .font(.system(size: 12, weight: .medium, design: .rounded).monospacedDigit())
+          .lineLimit(1)
+          .position(
+            x: proxy.size.width / 2,
+            y: geometry.bottomY + 16)
         }
       }
-    }
-    .padding(.horizontal, CGFloat(configuration.density.horizontalPadding))
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(.ultraThinMaterial, in: Capsule())
-    .background(
-      Color.black.opacity(configuration.backgroundOpacity * 0.55),
-      in: Capsule())
-    .overlay(
-      Capsule()
-        .stroke(Color.white.opacity(0.14 + configuration.backgroundOpacity * 0.08), lineWidth: 0.7))
-    .accessibilityElement(children: .contain)
-    .accessibilityIdentifier(
-      side == .left ? "experimentalNotchHUDLeft" : "experimentalNotchHUDRight")
-  }
-
-  private var configuredMetrics: [MenuMetric] {
-    NotchHUDConfigurationPolicy.normalized(configuration).metrics(for: side)
-  }
-
-  private var metrics: [MenuMetric] {
-    guard configuration.hideUnavailableMetrics else { return configuredMetrics }
-    let available = configuredMetrics.filter { isAvailable($0) }
-    return available.isEmpty ? Array(configuredMetrics.prefix(1)) : available
-  }
-
-  private var separatorHeight: CGFloat {
-    CGFloat(configuration.density.panelHeight * 0.5)
-  }
-
-  private func isAvailable(_ metric: MenuMetric) -> Bool {
-    let rendered = rawValue(for: metric).trimmingCharacters(in: .whitespacesAndNewlines)
-    return rendered != "—"
-      && rendered != "-"
-      && !rendered.localizedCaseInsensitiveContains("unavailable")
-  }
-
-  private func rawValue(for metric: MenuMetric) -> String {
-    MenuBarStatusTitleRenderer.segments(
-      snapshot: snapshot,
-      metrics: [metric])
-      .first?.value ?? "—"
-  }
-}
-
-@MainActor
-private struct NotchHUDCompactMetricView: View {
-  let metric: MenuMetric
-  let rawValue: String
-  let configuration: NotchHUDConfiguration
-  let tileConfiguration: NotchHUDTileConfiguration
-
-  var body: some View {
-    HStack(spacing: metricSpacing) {
-      if showsIcon {
-        Image(systemName: tileConfiguration.symbolName)
-          .font(.system(size: iconSize, weight: .semibold))
-          .foregroundStyle(foregroundColor.opacity(0.92))
-          .frame(width: iconFrameWidth)
-      }
-
-      if showsLabel {
-        Text(label)
-          .font(.system(size: labelSize, weight: .semibold))
-          .foregroundStyle(foregroundColor.opacity(0.62))
-          .lineLimit(1)
-      }
-
-      Text(value)
-        .font(
-          .system(
-            size: valueSize,
-            weight: valueWeight,
-            design: .rounded)
-            .monospacedDigit())
-        .foregroundStyle(foregroundColor)
-        .lineLimit(1)
-        .minimumScaleFactor(0.62)
-    }
-    .padding(.horizontal, tileHorizontalPadding)
-    .frame(
-      minWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
-      maxWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
-      maxHeight: .infinity,
-      alignment: frameAlignment)
-    .background(
-      RoundedRectangle(cornerRadius: tileCornerRadius)
-        .fill(backgroundColor))
-    .overlay(
-      RoundedRectangle(cornerRadius: tileCornerRadius)
-        .stroke(outlineColor, lineWidth: tileConfiguration.backgroundStyle == .outline ? 0.8 : 0))
-    .contentShape(Rectangle())
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(label)
-    .accessibilityValue(value)
-    .accessibilityIdentifier("notchHUDTile.\(metric.rawValue)")
-  }
-
-  private var value: String {
-    NotchHUDTileValueFormatter.renderedValue(
-      from: rawValue,
-      configuration: tileConfiguration)
-  }
-
-  private var label: String {
-    tileConfiguration.customLabel.isEmpty
-      ? metric.notchHUDShortLabel
-      : tileConfiguration.customLabel
-  }
-
-  private var showsIcon: Bool {
-    tileConfiguration.contentStyle.showsIcon(globalShowsLabels: configuration.showLabels)
-  }
-
-  private var showsLabel: Bool {
-    tileConfiguration.contentStyle.showsLabel(globalShowsLabels: configuration.showLabels)
-  }
-
-  private var scale: CGFloat {
-    CGFloat(configuration.textSize.scale * tileConfiguration.emphasis.scale)
-  }
-
-  private var iconSize: CGFloat { 10.5 * scale }
-  private var labelSize: CGFloat { 8.5 * CGFloat(configuration.textSize.scale) }
-  private var valueSize: CGFloat { 10.5 * scale }
-  private var iconFrameWidth: CGFloat { 13 * scale }
-  private var metricSpacing: CGFloat { configuration.density == .compact ? 3 : 4 }
-  private var tileCornerRadius: CGFloat { max(5, CGFloat(configuration.density.panelHeight) * 0.28) }
-  private var tileHorizontalPadding: CGFloat {
-    tileConfiguration.backgroundStyle == .none ? 0 : 4
-  }
-
-  private var valueWeight: Font.Weight {
-    switch tileConfiguration.emphasis {
-    case .muted: return .medium
-    case .normal: return .semibold
-    case .prominent: return .bold
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(normalized.metric.displayName)
+      .accessibilityValue(reading.displayValue)
+      .accessibilityIdentifier("experimentalNotchHUDIndicator")
     }
   }
 
-  private var frameAlignment: Alignment {
-    switch tileConfiguration.alignment {
-    case .leading: return .leading
-    case .center: return .center
-    case .trailing: return .trailing
-    }
-  }
-
-  private var foregroundColor: Color {
-    switch tileConfiguration.colorMode {
-    case .inherited, .monochrome:
-      return .white
+  private func indicatorColor(
+    reading: NotchHUDReading,
+    configuration: NotchHUDConfiguration
+  ) -> Color {
+    switch configuration.colorMode {
     case .accent:
       return .accentColor
     case .custom:
-      return tileConfiguration.accent.color
-    case .semantic:
-      switch NotchHUDTileConfigurationPolicy.semanticState(
-        renderedValue: rawValue,
-        configuration: tileConfiguration)
-      {
-      case .normal: return .green
-      case .warning: return .orange
-      case .critical: return .red
-      case .unavailable: return Color.white.opacity(0.45)
+      return configuration.accent.color
+    case .automatic:
+      switch reading.level {
+      case .critical:
+        return .red
+      case .warning:
+        return .orange
+      case .unavailable:
+        return Color.white.opacity(0.42)
+      case .normal:
+        return configuration.metric.defaultNotchIndicatorColor
       }
     }
   }
+}
 
-  private var backgroundColor: Color {
-    switch tileConfiguration.backgroundStyle {
-    case .none, .outline:
-      return .clear
-    case .subtle:
-      return foregroundColor.opacity(tileConfiguration.backgroundOpacity * 0.45)
-    case .filled:
-      return foregroundColor.opacity(tileConfiguration.backgroundOpacity)
-    }
-  }
+private struct NotchHUDContourShape: Shape {
+  let geometry: NotchHUDContourGeometry
 
-  private var outlineColor: Color {
-    tileConfiguration.backgroundStyle == .outline
-      ? foregroundColor.opacity(max(0.18, tileConfiguration.backgroundOpacity))
-      : .clear
+  func path(in rect: CGRect) -> Path {
+    let leftShoulderStart = geometry.notchLeftX - geometry.shoulderRadius
+    let leftBottomEnd = geometry.notchLeftX + geometry.shoulderRadius
+    let rightBottomStart = geometry.notchRightX - geometry.shoulderRadius
+    let rightShoulderEnd = geometry.notchRightX + geometry.shoulderRadius
+
+    var path = Path()
+    path.move(to: CGPoint(x: rect.minX, y: geometry.topY))
+    path.addLine(to: CGPoint(x: leftShoulderStart, y: geometry.topY))
+    path.addCurve(
+      to: CGPoint(x: leftBottomEnd, y: geometry.bottomY),
+      control1: CGPoint(x: geometry.notchLeftX, y: geometry.topY),
+      control2: CGPoint(x: geometry.notchLeftX, y: geometry.bottomY))
+    path.addLine(to: CGPoint(x: rightBottomStart, y: geometry.bottomY))
+    path.addCurve(
+      to: CGPoint(x: rightShoulderEnd, y: geometry.topY),
+      control1: CGPoint(x: geometry.notchRightX, y: geometry.bottomY),
+      control2: CGPoint(x: geometry.notchRightX, y: geometry.topY))
+    path.addLine(to: CGPoint(x: rect.maxX, y: geometry.topY))
+    return path
   }
 }
 
-private extension NotchHUDTileAccent {
-  var color: Color {
+extension MenuMetric {
+  fileprivate var defaultNotchIndicatorColor: Color {
     switch self {
-    case .white: return .white
+    case .battery:
+      return .mint
+    case .temperature:
+      return .cyan
+    case .systemPower, .adapterPower:
+      return .green
+    case .fans:
+      return .blue
+    case .cpu, .gpu, .memory, .powerStatus:
+      return .cyan
+    }
+  }
+}
+
+extension NotchIndicatorAccent {
+  fileprivate var color: Color {
+    switch self {
     case .blue: return .blue
     case .cyan: return .cyan
+    case .mint: return .mint
     case .green: return .green
     case .yellow: return .yellow
     case .orange: return .orange
     case .red: return .red
     case .pink: return .pink
     case .purple: return .purple
+    case .white: return .white
     }
   }
 }
