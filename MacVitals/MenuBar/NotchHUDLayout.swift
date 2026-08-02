@@ -13,6 +13,7 @@ nonisolated enum NotchHUDLayout {
   static let minimumSafeAreaTop: CGFloat = 30
   static let maximumSafeAreaTop: CGFloat = 44
   static let edgeMargin: CGFloat = 8
+  static let contourBottomOffset: CGFloat = 2.5
 
   static func resolvedSafeAreaTop(_ safeAreaTop: CGFloat) -> CGFloat {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -28,7 +29,7 @@ nonisolated enum NotchHUDLayout {
     safeAreaTop: CGFloat,
     configuration: NotchHUDConfiguration
   ) -> CGFloat {
-    resolvedSafeAreaTop(safeAreaTop) + (configuration.showValueText ? 30 : 8)
+    resolvedSafeAreaTop(safeAreaTop) + (configuration.showValueText ? 30 : 12)
   }
 
   static func panelFrame(
@@ -54,11 +55,13 @@ nonisolated enum NotchHUDLayout {
     let resolvedNotchWidth = min(notchWidth, max(120, size.width - 72))
     let notchLeft = (size.width - resolvedNotchWidth) / 2
     let notchRight = notchLeft + resolvedNotchWidth
+    let bottomY = min(size.height - 2, resolvedTop + contourBottomOffset)
+
     return NotchHUDContourGeometry(
-      topY: 3,
-      bottomY: max(20, resolvedTop - 3),
+      topY: 0.5,
+      bottomY: bottomY,
       notchLeftX: notchLeft,
       notchRightX: notchRight,
-      shoulderRadius: min(20, max(12, resolvedTop * 0.48)))
+      shoulderRadius: min(14, max(9, resolvedTop * 0.30)))
   }
 }
