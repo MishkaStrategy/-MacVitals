@@ -28,7 +28,7 @@ final class NotchHUDLayoutTests: XCTestCase {
       accuracy: 0.5)
   }
 
-  func testPanelWidthsFollowVisibleSensorCountsAndCoffeeControl() {
+  func testPanelWidthsFollowVisibleSensorCounts() {
     let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
     var configuration = NotchHUDConfiguration.balanced
     configuration.leftVisibleCount = 1
@@ -48,39 +48,9 @@ final class NotchHUDLayoutTests: XCTestCase {
       frames.right.width,
       NotchHUDLayout.preferredPanelWidth(
         metricCount: 2,
-        configuration: configuration,
-        includesCaffeinateButton: true),
+        configuration: configuration),
       accuracy: 0.5)
     XCTAssertFalse(frames.left.intersects(frames.right))
-  }
-
-  func testCoffeeControlMovesToOnlyVisiblePanel() {
-    var configuration = NotchHUDConfiguration.balanced
-    XCTAssertEqual(NotchHUDLayout.caffeinateButtonSide(in: configuration), .right)
-
-    configuration.showRightPanel = false
-    XCTAssertEqual(NotchHUDLayout.caffeinateButtonSide(in: configuration), .left)
-
-    configuration.showLeftPanel = false
-    XCTAssertNil(NotchHUDLayout.caffeinateButtonSide(in: configuration))
-  }
-
-  func testCoffeeControlAddsWidthToItsPanel() {
-    let configuration = NotchHUDConfiguration.balanced
-    let withoutButton = NotchHUDLayout.preferredPanelWidth(
-      metricCount: 2,
-      configuration: configuration)
-    let withButton = NotchHUDLayout.preferredPanelWidth(
-      metricCount: 2,
-      configuration: configuration,
-      includesCaffeinateButton: true)
-
-    XCTAssertGreaterThan(withButton, withoutButton)
-    XCTAssertEqual(
-      withButton - withoutButton,
-      NotchHUDLayout.caffeinateButtonDiameter(configuration: configuration)
-        + CGFloat(configuration.density.itemSpacing),
-      accuracy: 0.5)
   }
 
   func testDetailedPresetFitsOnNotchedMacBookScreen() {
