@@ -288,6 +288,7 @@ struct SupplementalMetricDetailView: View {
           .foregroundStyle(by: .value("Direction", point.series))
           .lineStyle(StrokeStyle(lineWidth: 1.7, lineJoin: .round))
       }
+      .chartXScale(domain: chartXDomain)
       .chartYScale(domain: 0...networkYMaximum)
       .chartXAxis { chartXAxis }
       .chartYAxis {
@@ -359,6 +360,7 @@ struct SupplementalMetricDetailView: View {
           .foregroundStyle(by: .value("Storage", point.series))
           .lineStyle(StrokeStyle(lineWidth: 1.7, lineJoin: .round))
       }
+      .chartXScale(domain: chartXDomain)
       .chartYScale(domain: 0...storageYMaximum)
       .chartXAxis { chartXAxis }
       .chartYAxis {
@@ -424,6 +426,11 @@ struct SupplementalMetricDetailView: View {
 
   private var storageYMaximum: Double {
     max(1, Double(storageMonitor.snapshot?.totalBytes ?? 1))
+  }
+
+  private var chartXDomain: ClosedRange<Date> {
+    let end = Date()
+    return end.addingTimeInterval(-selectedRange.duration)...end
   }
 
   private var chartXAxis: some AxisContent {

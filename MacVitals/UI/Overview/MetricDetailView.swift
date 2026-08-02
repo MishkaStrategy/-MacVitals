@@ -227,6 +227,7 @@ struct MetricDetailView: View {
         .foregroundStyle(Color.accentColor)
         .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
+      .chartXScale(domain: chartXDomain)
       .chartYScale(domain: yDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
@@ -381,6 +382,7 @@ struct MetricDetailView: View {
         RuleMark(y: .value("Zero", 0))
           .foregroundStyle(.secondary.opacity(0.35))
       }
+      .chartXScale(domain: chartXDomain)
       .chartYScale(domain: powerYDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
@@ -480,6 +482,7 @@ struct MetricDetailView: View {
         .foregroundStyle(by: .value("Fans", point.fanLabel))
         .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
+      .chartXScale(domain: chartXDomain)
       .chartYScale(domain: fanYDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
@@ -505,6 +508,11 @@ struct MetricDetailView: View {
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var chartXDomain: ClosedRange<Date> {
+    let end = Date()
+    return end.addingTimeInterval(-selectedRange.duration)...end
   }
 
   @AxisContentBuilder
