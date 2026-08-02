@@ -1,0 +1,114 @@
+name: Apply Active Sampling Compatibility
+
+on:
+  push:
+    branches: [feature/power-aware-sampling-intervals]
+    paths:
+      - .github/workflows/one-shot-active-sampling-compatibility.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Add active interval compatibility state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workdir="${RUNNER_TEMP}/macvitals-active-interval"
+          rm -rf -- "${workdir}"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "${workdir}"
+          cd "${workdir}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              path = Path(path)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 anchor, found {count}")
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "MacVitals/Persistence/SettingsStore.swift",
+              '''  @Published var samplingIntervalOnBattery: Double {
+''',
+              '''  @Published private(set) var samplingInterval: Double
+  @Published var samplingIntervalOnBattery: Double {
+''',
+              "active interval property")
+
+          replace_once(
+              "MacVitals/Persistence/SettingsStore.swift",
+              '''    samplingIntervalOnBattery = samplingIntervals.onBattery
+    samplingIntervalOnExternalPower = samplingIntervals.onExternalPower
+''',
+              '''    samplingInterval = samplingIntervals.onExternalPower
+    samplingIntervalOnBattery = samplingIntervals.onBattery
+    samplingIntervalOnExternalPower = samplingIntervals.onExternalPower
+''',
+              "active interval initialization")
+
+          replace_once(
+              "MacVitals/Persistence/SettingsStore.swift",
+              '''  func setNotificationAuthorizationState(_ state: NotificationAuthorizationState) {
+    notificationAuthorizationState = state
+  }
+
+''',
+              '''  func setNotificationAuthorizationState(_ state: NotificationAuthorizationState) {
+    notificationAuthorizationState = state
+  }
+
+  func setEffectiveSamplingInterval(_ interval: TimeInterval) {
+    samplingInterval = SamplingIntervalPolicy.normalized(interval)
+  }
+
+''',
+              "active interval setter")
+
+          replace_once(
+              "MacVitals/App/AppDelegate.swift",
+              '''    coordinator.configureSamplingIntervals(
+      onBattery: settings.samplingIntervalOnBattery,
+      onExternalPower: settings.samplingIntervalOnExternalPower)
+    statusController = StatusItemController(
+''',
+              '''    coordinator.configureSamplingIntervals(
+      onBattery: settings.samplingIntervalOnBattery,
+      onExternalPower: settings.samplingIntervalOnExternalPower)
+    settings.setEffectiveSamplingInterval(coordinator.effectiveSamplingInterval)
+    statusController = StatusItemController(
+''',
+              "initial active interval synchronization")
+
+          replace_once(
+              "MacVitals/App/AppDelegate.swift",
+              '''      .sink { [weak self] interval in
+        self?.consumptionHistory.restart(interval: interval)
+      }
+''',
+              '''      .sink { [weak self] interval in
+        self?.settings.setEffectiveSamplingInterval(interval)
+        self?.consumptionHistory.restart(interval: interval)
+      }
+''',
+              "active interval subscription")
+
+          Path(".github/workflows/one-shot-active-sampling-compatibility.yml").unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: expose active power-aware sampling interval"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
