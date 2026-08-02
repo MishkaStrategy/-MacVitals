@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8834228481'
-      APP_ARTIFACT_DIGEST: '16a203ae223ad036bd67ca54d67157262def1ce408636298bd1271f51b81c7d7'
-      FEATURE_HEAD_SHA: '45919011cf8b221e22eaea7ecd4ef195cb469c9b'
+      APP_ARTIFACT_ID: '8834411613'
+      APP_ARTIFACT_DIGEST: 'c0e20c958f24ac098824b2eb176dbd88008509844cca595d0c99a7c477efcd38'
+      FEATURE_HEAD_SHA: '10d2766b7bc8f4427043ccc3574a4f2d89eed753'
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -125,6 +125,7 @@ jobs:
           printf 'bundle-id=%s\nenabled-roundtrip=true\n' "${bundle_id}" \
             > physical-evidence/preference-check.txt
 
+          MACVITALS_NOTCH_DIAGNOSTICS_PATH="${PWD}/physical-evidence/notch-controller.json" \
           "${executable}" -ApplePersistenceIgnoreState YES \
             > physical-evidence/app.stdout.log 2> physical-evidence/app.stderr.log &
           app_pid=$!
