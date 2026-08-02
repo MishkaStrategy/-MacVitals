@@ -1,4 +1,4 @@
-name: Physical Test Notch Indicator V3
+name: Physical Test Notch Indicator V3 Retired
 
 on:
   pull_request:
@@ -11,88 +11,10 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  physical-notch-indicator-v3:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login == 'mishkacher' &&
-      github.actor == 'mishkacher' &&
-      github.event.pull_request.head.ref == 'agent/physical-test-notch-indicator'
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 15
-    env:
-      APP_ARTIFACT_ID: '8834411613'
-      APP_ARTIFACT_DIGEST: 'c0e20c958f24ac098824b2eb176dbd88008509844cca595d0c99a7c477efcd38'
-      FEATURE_HEAD_SHA: '10d2766b7bc8f4427043ccc3574a4f2d89eed753'
-
+  retired:
+    if: github.event.pull_request.head.ref == 'agent/physical-test-notch-indicator'
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          persist-credentials: false
-          clean: true
-
-      - name: Materialize LaunchServices validation script
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          source = Path('.github/workflows/physical-test-notch-indicator-v2.yml').read_text(encoding='utf-8').splitlines()
-          step = next(i for i, line in enumerate(source) if line.strip() == '- name: Validate one physical notch overlay')
-          run_line = next(i for i in range(step + 1, len(source)) if source[i].strip() == 'run: |')
-          end = next(i for i in range(run_line + 1, len(source)) if source[i].strip() == '- name: Upload physical evidence')
-          body = [line[10:] if line.startswith('          ') else line for line in source[run_line + 1:end]]
-          script = '\n'.join(body) + '\n'
-
-          direct_launch = '''MACVITALS_NOTCH_DIAGNOSTICS_PATH="${PWD}/physical-evidence/notch-controller.json" \\
-          "${executable}" -ApplePersistenceIgnoreState YES \\
-            > physical-evidence/app.stdout.log 2> physical-evidence/app.stderr.log &
-          app_pid=$!'''
-          launch_services = '''diagnostics_path="${PWD}/physical-evidence/notch-controller.json"
-          launchctl setenv MACVITALS_NOTCH_DIAGNOSTICS_PATH "${diagnostics_path}"
-          /usr/bin/open -na "${app}" --args -ApplePersistenceIgnoreState YES
-          app_pid=""
-          for _ in {1..100}; do
-            app_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
-            [[ -n "${app_pid}" ]] && break
-            sleep .1
-          done
-          [[ -n "${app_pid}" ]]
-          printf 'launch-mode=LaunchServices\\n' > physical-evidence/launch-mode.txt'''
-          if direct_launch not in script:
-              raise SystemExit('direct launch block not found')
-          script = script.replace(direct_launch, launch_services, 1)
-
-          cleanup_marker = '''cleanup() {
-            set +e
-            [[ -n "${app_pid:-}" ]] && kill -TERM "${app_pid}" 2>/dev/null'''
-          cleanup_replacement = '''cleanup() {
-            set +e
-            launchctl unsetenv MACVITALS_NOTCH_DIAGNOSTICS_PATH 2>/dev/null || true
-            [[ -n "${app_pid:-}" ]] && kill -TERM "${app_pid}" 2>/dev/null'''
-          if cleanup_marker not in script:
-              raise SystemExit('cleanup block not found')
-          script = script.replace(cleanup_marker, cleanup_replacement, 1)
-
-          Path('/tmp/run-physical-notch-indicator.sh').write_text(script, encoding='utf-8')
-          PY
-          grep -F 'launch-mode=LaunchServices' /tmp/run-physical-notch-indicator.sh
-          bash -n /tmp/run-physical-notch-indicator.sh
-
-      - name: Validate one physical notch overlay
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash /tmp/run-physical-notch-indicator.sh
-
-      - name: Upload physical evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: physical-notch-indicator-evidence-v3
-          path: physical-evidence/
-          if-no-files-found: error
-          retention-days: 30
+      - run: echo 'Superseded by Physical Test Notch Indicator V4.'
