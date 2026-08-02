@@ -171,6 +171,7 @@ final class SettingsStore: ObservableObject {
       applyPreset(selectedPreset)
     }
   }
+  @Published private(set) var samplingInterval: Double
   @Published var samplingIntervalOnBattery: Double {
     didSet {
       let normalized = SamplingIntervalPolicy.normalized(samplingIntervalOnBattery)
@@ -255,6 +256,7 @@ final class SettingsStore: ObservableObject {
         ? nil : defaults.double(forKey: Keys.samplingIntervalOnBattery),
       externalPowerValue: defaults.object(forKey: Keys.samplingIntervalOnExternalPower) == nil
         ? nil : defaults.double(forKey: Keys.samplingIntervalOnExternalPower))
+    samplingInterval = samplingIntervals.onExternalPower
     samplingIntervalOnBattery = samplingIntervals.onBattery
     samplingIntervalOnExternalPower = samplingIntervals.onExternalPower
     if defaults.object(forKey: Keys.samplingIntervalOnBattery) == nil {
@@ -375,6 +377,10 @@ final class SettingsStore: ObservableObject {
 
   func setNotificationAuthorizationState(_ state: NotificationAuthorizationState) {
     notificationAuthorizationState = state
+  }
+
+  func setEffectiveSamplingInterval(_ interval: TimeInterval) {
+    samplingInterval = SamplingIntervalPolicy.normalized(interval)
   }
 
   func resetMenuLayout() {

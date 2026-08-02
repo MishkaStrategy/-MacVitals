@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     coordinator.configureSamplingIntervals(
       onBattery: settings.samplingIntervalOnBattery,
       onExternalPower: settings.samplingIntervalOnExternalPower)
+    settings.setEffectiveSamplingInterval(coordinator.effectiveSamplingInterval)
     statusController = StatusItemController(
       coordinator: coordinator,
       settings: settings,
@@ -55,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       .removeDuplicates()
       .dropFirst()
       .sink { [weak self] interval in
+        self?.settings.setEffectiveSamplingInterval(interval)
         self?.consumptionHistory.restart(interval: interval)
       }
       .store(in: &cancellables)
