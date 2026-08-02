@@ -1,0 +1,162 @@
+name: Validate Power-Aware Sampling Intervals
+
+on:
+  push:
+    branches: [validation/power-aware-sampling-intervals]
+    paths:
+      - .github/workflows/power-aware-sampling-validation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: power-aware-sampling-validation
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      PRODUCT_SHA: 44ddcc72d32f60c921d0f520110dac41025322f2
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Build exact source and run focused tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${RUNNER_TEMP}/macvitals-power-aware-source"
+          result_file="${RUNNER_TEMP}/macvitals-power-aware-result"
+          log_file="${RUNNER_TEMP}/macvitals-power-aware.log"
+          artifact_file="${RUNNER_TEMP}/macvitals-power-aware-artifact"
+          rm -rf -- "${source_dir}" "${result_file}" "${log_file}" "${artifact_file}"
+          mkdir -p -- "${source_dir}"
+          cd "${source_dir}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=1 origin "${PRODUCT_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${PRODUCT_SHA}" ]]
+          [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]
+
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          xcodegen_path=""
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              xcodegen_path="${candidate}"
+              break
+            fi
+          done
+          [[ -n "${xcodegen_path}" ]]
+
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+          rm -rf build/power-aware-release build/power-aware-tests
+
+          {
+            xcodebuild \
+              -project MacVitals.xcodeproj \
+              -scheme MacVitals \
+              -configuration Release \
+              -derivedDataPath build/power-aware-release \
+              ARCHS=arm64 \
+              ONLY_ACTIVE_ARCH=YES \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+
+            xcodebuild \
+              -project MacVitals.xcodeproj \
+              -scheme MacVitals \
+              -configuration Debug \
+              -derivedDataPath build/power-aware-tests \
+              -destination 'platform=macOS,arch=arm64' \
+              -only-testing:MacVitalsTests/SamplingIntervalPolicyTests \
+              -only-testing:MacVitalsTests/MenuLayoutRulesTests \
+              ARCHS=arm64 \
+              ONLY_ACTIVE_ARCH=YES \
+              CODE_SIGNING_ALLOWED=NO \
+              test
+          } 2>&1 | tee "${log_file}"
+
+          app="build/power-aware-release/Build/Products/Release/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -d "${app}" && -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == "arm64" ]]
+
+          short_sha="${PRODUCT_SHA:0:12}"
+          archive_name="MacVitals-power-aware-sampling-${short_sha}.zip"
+          archive_path="${RUNNER_TEMP}/${archive_name}"
+          ditto -c -k --sequesterRsrc --keepParent "${app}" "${archive_path}"
+          account_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | sed -n 's/^NFSHomeDirectory: //p')"
+          [[ -n "${account_home}" && -d "${account_home}" ]]
+          mkdir -p "${account_home}/Downloads"
+          cp -f "${archive_path}" "${account_home}/Downloads/${archive_name}"
+          printf '%s\n' "~/Downloads/${archive_name}" > "${artifact_file}"
+          printf 'success\n' > "${result_file}"
+
+      - name: Record validation result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          result_file="${RUNNER_TEMP}/macvitals-power-aware-result"
+          log_file="${RUNNER_TEMP}/macvitals-power-aware.log"
+          artifact_file="${RUNNER_TEMP}/macvitals-power-aware-artifact"
+          result="failure"
+          if [[ -f "${result_file}" && "$(cat "${result_file}")" == "success" ]]; then
+            result="success"
+          fi
+          artifact=""
+          if [[ -f "${artifact_file}" ]]; then
+            artifact="$(cat "${artifact_file}")"
+          fi
+
+          status_repo="${RUNNER_TEMP}/macvitals-power-aware-status"
+          rm -rf -- "${status_repo}"
+          git clone -q --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "${status_repo}"
+          cd "${status_repo}"
+          mkdir -p build-status
+
+          diagnostics=""
+          if [[ -f "${log_file}" ]]; then
+            diagnostics="$(tail -n 120 "${log_file}")"
+          fi
+
+          RESULT="${result}" PRODUCT_SHA="${PRODUCT_SHA}" WORKFLOW_SHA="${GITHUB_SHA}" \
+          ARTIFACT="${artifact}" DIAGNOSTICS="${diagnostics}" python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          payload = {
+              "schemaVersion": 1,
+              "result": os.environ["RESULT"],
+              "architecture": "arm64",
+              "sourceSha": os.environ["WORKFLOW_SHA"],
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "releaseBuildRun": True,
+              "testsRun": True,
+              "testTargets": [
+                  "MacVitalsTests/SamplingIntervalPolicyTests",
+                  "MacVitalsTests/MenuLayoutRulesTests",
+              ],
+              "localArtifact": os.environ.get("ARTIFACT") or None,
+              "diagnostics": os.environ.get("DIAGNOSTICS", "")[-18000:],
+              "finishedAt": datetime.now(timezone.utc).isoformat(),
+          }
+          Path("build-status/power-aware-sampling-validation.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/power-aware-sampling-validation.json
+          git commit -m "ci: record power-aware sampling validation [skip ci]"
+          git push -q origin "HEAD:${GITHUB_REF_NAME}"
+
+          [[ "${result}" == "success" ]]
