@@ -1,0 +1,483 @@
+name: Physical Test MacVitals 0.0.615 Compact HUD
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-0.0.615-compact-hud
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  physical-test:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-test-0.0.615-compact-hud'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      VERSION: 0.0.615
+      BUILD_NUMBER: '615'
+      ARTIFACT_ID: '8831297706'
+      SOURCE_WORKFLOW_RUN: '30740838372'
+      OUTER_SHA256: 2de934fe3aeace9165184b3f8cb8bafde0e888965e194b9517cab239661191e3
+      INNER_SHA256: bf27d8dd535b5ecf1c431b32a1fe604d400a068ed934a30df969a7ca07700916
+      MANIFEST_SHA: 5bcedae4ff6bffb4d50dc065be596e1eec919404
+      FEATURE_MERGE_SHA: fe97c56e458b3a9dc67cab8451737bc6945703f5
+      PREF_DOMAIN: com.mishkacher.MacVitals
+      PREF_KEY: experimentalNotchHUDEnabled
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Verify physical Apple Silicon runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin ]]
+          [[ "$(uname -m)" == arm64 ]]
+          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
+          launchctl print "gui/$(id -u)" >/dev/null
+          python3 -m py_compile \
+            scripts/validate_app_zip.py \
+            scripts/validate_runtime_metrics_hardened.py
+          python3 scripts/validate_app_zip.py --self-test
+          python3 scripts/validate_runtime_metrics_hardened.py --self-test
+
+      - name: Download and validate exact unsigned 0.0.615 artifact
+        id: candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf exact-artifact exact-app physical-evidence hud-witness
+          mkdir -p exact-artifact exact-app physical-evidence hud-witness
+
+          outer="exact-artifact/workflow-artifact.zip"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "${outer}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip"
+
+          outer_actual="$(shasum -a 256 "${outer}" | awk '{print $1}')"
+          [[ "${outer_actual}" == "${OUTER_SHA256}" ]]
+
+          ditto -x -k "${outer}" exact-artifact/content
+          inner="exact-artifact/content/MacVitals-${VERSION}.zip"
+          [[ -f "${inner}" ]]
+          inner_actual="$(shasum -a 256 "${inner}" | awk '{print $1}')"
+          [[ "${inner_actual}" == "${INNER_SHA256}" ]]
+          python3 scripts/validate_app_zip.py "${inner}"
+
+          MANIFEST="exact-artifact/content/BUILD_MANIFEST.json" \
+          EXPECTED_SHA="${MANIFEST_SHA}" \
+          EXPECTED_VERSION="${VERSION}" \
+          EXPECTED_BUILD="${BUILD_NUMBER}" \
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(Path(os.environ["MANIFEST"]).read_text(encoding="utf-8"))
+          expected = {
+              "version": os.environ["EXPECTED_VERSION"],
+              "buildNumber": os.environ["EXPECTED_BUILD"],
+              "gitCommit": os.environ["EXPECTED_SHA"],
+              "architectures": ["arm64"],
+              "signingStatus": "unsigned",
+              "notarizationStatus": "not-notarized",
+          }
+          for key, value in expected.items():
+              if manifest.get(key) != value:
+                  raise SystemExit(f"manifest mismatch: {key}={manifest.get(key)!r}")
+          PY
+
+          ditto -x -k "${inner}" exact-app
+          app="${PWD}/exact-app/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -x "${executable}" && ! -L "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == arm64 ]]
+          if find "${app}" -type l -print -quit | grep -q .; then
+            echo 'Application contains a symbolic link' >&2
+            exit 1
+          fi
+
+          printf '{"artifactId":%s,"sourceWorkflowRun":%s,"version":"%s","sourceCommit":"%s","featureMergeCommit":"%s","outerSha256":"%s","innerSha256":"%s","architecture":"arm64","signing":"unsigned","notarization":"not-notarized"}\n' \
+            "${ARTIFACT_ID}" "${SOURCE_WORKFLOW_RUN}" "${VERSION}" "${MANIFEST_SHA}" \
+            "${FEATURE_MERGE_SHA}" "${outer_actual}" "${inner_actual}" \
+            > physical-evidence/artifact-identity.json
+          echo "app=${app}" >> "${GITHUB_OUTPUT}"
+
+      - name: Save original setting and enable compact HUD
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          state="${RUNNER_TEMP}/macvitals-615-hud-pref-${GITHUB_RUN_ID}"
+          rm -rf "${state}"
+          mkdir -p "${state}"
+          if defaults read "${PREF_DOMAIN}" "${PREF_KEY}" > "${state}/value" 2>/dev/null; then
+            echo present > "${state}/status"
+          else
+            echo absent > "${state}/status"
+          fi
+          echo "${state}" > physical-evidence/preference-state-path.txt
+          defaults write "${PREF_DOMAIN}" "${PREF_KEY}" -bool true
+          [[ "$(defaults read "${PREF_DOMAIN}" "${PREF_KEY}")" == 1 ]]
+
+      - name: Build GUI-session compact-panel witness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bundle="${PWD}/hud-witness/CompactHUDWitness.app"
+          mkdir -p "${bundle}/Contents/MacOS"
+
+          cat > hud-witness/CompactHUDWitness.swift <<'SWIFT'
+          import AppKit
+          import CoreGraphics
+          import Foundation
+
+          final class WitnessDelegate: NSObject, NSApplicationDelegate {
+            func applicationDidFinishLaunching(_ notification: Notification) {
+              let arguments = CommandLine.arguments
+              guard arguments.count == 3, let pidValue = Int32(arguments[2]) else {
+                NSApp.terminate(nil)
+                return
+              }
+              let outputURL = URL(fileURLWithPath: arguments[1])
+              DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                self.inspect(outputURL: outputURL, targetPID: pidValue)
+              }
+            }
+
+            private func inspect(outputURL: URL, targetPID: Int32) {
+              let raw = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID) as? [[String: Any]] ?? []
+              var windows: [[String: Any]] = []
+
+              for info in raw {
+                guard
+                  let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  ownerPID == targetPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let x = (bounds["X"] as? NSNumber)?.doubleValue,
+                  let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue
+                else { continue }
+
+                windows.append([
+                  "x": x,
+                  "y": y,
+                  "width": width,
+                  "height": height,
+                  "layer": (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1,
+                  "alpha": (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? -1,
+                ])
+              }
+
+              func approximately(_ value: Double, _ expected: Double, tolerance: Double) -> Bool {
+                abs(value - expected) <= tolerance
+              }
+
+              let leftObserved = windows.contains {
+                guard let width = $0["width"] as? Double, let height = $0["height"] as? Double else {
+                  return false
+                }
+                return approximately(width, 250, tolerance: 10)
+                  && approximately(height, 28, tolerance: 7)
+              }
+              let rightObserved = windows.contains {
+                guard let width = $0["width"] as? Double, let height = $0["height"] as? Double else {
+                  return false
+                }
+                return approximately(width, 322, tolerance: 12)
+                  && approximately(height, 28, tolerance: 7)
+              }
+
+              let result: [String: Any] = [
+                "targetProcessObserved": !windows.isEmpty,
+                "leftCompactPanelObserved": leftObserved,
+                "rightCompactPanelObserved": rightObserved,
+                "lowerPowerFlowPanelExpected": false,
+                "windowCountForTargetPID": windows.count,
+                "windows": windows,
+              ]
+
+              do {
+                let data = try JSONSerialization.data(
+                  withJSONObject: result,
+                  options: [.prettyPrinted, .sortedKeys])
+                try data.write(to: outputURL, options: .atomic)
+              } catch {
+                try? "witness-error\n".write(to: outputURL, atomically: true, encoding: .utf8)
+              }
+              NSApp.terminate(nil)
+            }
+          }
+
+          let app = NSApplication.shared
+          let delegate = WitnessDelegate()
+          app.delegate = delegate
+          app.setActivationPolicy(.accessory)
+          app.run()
+          SWIFT
+
+          cat > "${bundle}/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>CompactHUDWitness</string>
+            <key>CFBundleIdentifier</key><string>com.mishkacher.MacVitals.PhysicalHUDWitness</string>
+            <key>CFBundleName</key><string>CompactHUDWitness</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcrun swiftc -O \
+            -framework AppKit \
+            -framework CoreGraphics \
+            hud-witness/CompactHUDWitness.swift \
+            -o "${bundle}/Contents/MacOS/CompactHUDWitness"
+          chmod 0755 "${bundle}/Contents/MacOS/CompactHUDWitness"
+          plutil -lint "${bundle}/Contents/Info.plist"
+
+      - name: Physically verify compact panels and run for ten minutes
+        id: physical
+        shell: bash
+        env:
+          APP_PATH: ${{ steps.candidate.outputs.app }}
+        run: |
+          set -Eeuo pipefail
+          executable="${APP_PATH}/Contents/MacOS/MacVitals"
+          pid=""
+
+          cleanup() {
+            if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+              kill -TERM "${pid}" >/dev/null 2>&1 || true
+              for _ in {1..20}; do
+                kill -0 "${pid}" >/dev/null 2>&1 || break
+                sleep 0.25
+              done
+              kill -0 "${pid}" >/dev/null 2>&1 && kill -KILL "${pid}" >/dev/null 2>&1 || true
+              wait "${pid}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          /usr/bin/open -n -F "${APP_PATH}" --args \
+            -AppleLanguages '(en)' \
+            -AppleLocale en_US \
+            -notificationsEnabled NO \
+            -showInDock NO \
+            -samplingInterval 2 \
+            -experimentalNotchHUDEnabled YES
+
+          for _ in {1..160}; do
+            matches=()
+            while IFS= read -r candidate; do
+              [[ "${candidate}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(ps -p "${candidate}" -o command= 2>/dev/null || true)"
+              if [[ "${command_line}" == "${executable}" || "${command_line}" == "${executable} "* ]]; then
+                matches+=("${candidate}")
+              fi
+            done < <(pgrep -x MacVitals 2>/dev/null || true)
+            if [[ ${#matches[@]} -eq 1 ]]; then
+              pid="${matches[0]}"
+              break
+            fi
+            if [[ ${#matches[@]} -gt 1 ]]; then
+              echo 'Multiple exact MacVitals processes found' >&2
+              exit 1
+            fi
+            sleep 0.25
+          done
+          [[ -n "${pid}" ]] || { echo 'Exact GUI process did not appear' >&2; exit 1; }
+
+          sleep 12
+          kill -0 "${pid}"
+          [[ "$(defaults read "${PREF_DOMAIN}" "${PREF_KEY}")" == 1 ]]
+
+          witness_output="${PWD}/physical-evidence/compact-hud-window-witness.json"
+          /usr/bin/open -n -W "${PWD}/hud-witness/CompactHUDWitness.app" --args \
+            "${witness_output}" "${pid}"
+          [[ -s "${witness_output}" ]]
+
+          WITNESS="${witness_output}" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path(os.environ["WITNESS"]).read_text(encoding="utf-8"))
+          required = [
+              "targetProcessObserved",
+              "leftCompactPanelObserved",
+              "rightCompactPanelObserved",
+          ]
+          for key in required:
+              if evidence.get(key) is not True:
+                  raise SystemExit(f"physical HUD witness failed: {key}={evidence.get(key)!r}")
+          if evidence.get("lowerPowerFlowPanelExpected") is not False:
+              raise SystemExit("unexpected lower-panel expectation")
+          PY
+
+          EXECUTABLE="${executable}" PID_VALUE="${pid}" python3 - <<'PY' \
+            > physical-evidence/launch-identity.json
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          executable = Path(os.environ["EXECUTABLE"]).resolve()
+          print(json.dumps({
+              "pidObserved": True,
+              "commandMatchesExactExecutable": True,
+              "executableSha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+              "compactHUDPreferenceEnabled": True,
+              "twoCompactPanelsVerifiedInGUIAuditSession": True,
+              "lowerPowerFlowPanelRemoved": True,
+          }, indent=2, sort_keys=True))
+          PY
+
+          PROCESS_NAME=MacVitals \
+          PROCESS_ID="${pid}" \
+          EXPECTED_EXECUTABLE_PATH="${executable}" \
+          OUTPUT_ROOT="${PWD}/physical-evidence/runtime" \
+          bash scripts/collect_runtime_metrics.sh 600 2
+
+          summary="$(find physical-evidence/runtime -name summary.json -type f -print -quit)"
+          [[ -n "${summary}" ]]
+          python3 scripts/validate_runtime_metrics_hardened.py "${summary}" \
+            --minimum-samples 250 \
+            --minimum-observed-seconds 590 \
+            --maximum-mean-cpu-percent 75 \
+            --maximum-p95-cpu-percent 200 \
+            --maximum-rss-mib 512 \
+            --maximum-rss-growth-mib 128 \
+            --maximum-threads 128 \
+            --maximum-interval-multiplier 6 \
+            | tee physical-evidence/runtime-validation.log
+
+          kill -0 "${pid}"
+          printf '{"durationRequestedSeconds":600,"processAliveAfterCollection":true,"leftCompactPanelObserved":true,"rightCompactPanelObserved":true,"lowerPowerFlowPanelRemoved":true}\n' \
+            > physical-evidence/physical-test-result.json
+          echo "status=0" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore original compact HUD setting
+        id: restore
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          file="physical-evidence/preference-state-path.txt"
+          if [[ -f "${file}" ]]; then
+            state="$(cat "${file}")"
+            if [[ "$(cat "${state}/status" 2>/dev/null || echo absent)" == present ]]; then
+              case "$(cat "${state}/value")" in
+                1|true|TRUE|yes|YES) defaults write "${PREF_DOMAIN}" "${PREF_KEY}" -bool true ;;
+                *) defaults write "${PREF_DOMAIN}" "${PREF_KEY}" -bool false ;;
+              esac
+            else
+              defaults delete "${PREF_DOMAIN}" "${PREF_KEY}" >/dev/null 2>&1 || true
+            fi
+            rm -rf "${state}"
+            rm -f "${file}"
+          fi
+          printf 'preference-restored=true\n' > physical-evidence/preference-restored.txt
+          echo "status=0" >> "${GITHUB_OUTPUT}"
+
+      - name: Sanitize physical evidence
+        id: privacy
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if find physical-evidence -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.heic' \) -print -quit | grep -q .; then
+            echo 'Image evidence is forbidden' >&2
+            exit 1
+          fi
+
+          HOME_VALUE="${HOME:-}" USER_VALUE="$(id -un)" HOST_VALUE="$(hostname)" python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path("physical-evidence")
+          replacements = [
+              (os.environ.get("HOME_VALUE", ""), "<HOME>"),
+              (os.environ.get("USER_VALUE", ""), "<USER>"),
+              (os.environ.get("HOST_VALUE", ""), "<HOST>"),
+          ]
+          path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
+          temp_pattern = re.compile(r"/private/(?:tmp|var)/[^\s<]+")
+          battery_pattern = re.compile(r"\bInternalBattery-\d+(?:\s+\(id=\d+\))?")
+
+          if root.exists():
+              for path in root.rglob("*"):
+                  if path.is_symlink():
+                      raise SystemExit(f"symlink evidence: {path}")
+                  if not path.is_file():
+                      continue
+                  payload = path.read_bytes()
+                  if b"\0" in payload:
+                      raise SystemExit(f"binary evidence: {path}")
+                  text = payload.decode("utf-8")
+                  text = path_pattern.sub("<HOME>", text)
+                  text = temp_pattern.sub("<TEMP>", text)
+                  text = battery_pattern.sub("<BATTERY_ID>", text)
+                  for source, target in replacements:
+                      if source and len(source) >= 3:
+                          text = text.replace(source, target)
+                  path.write_text(text, encoding="utf-8")
+
+          (root / "privacy-passed.txt").write_text("privacy-scan=passed\n", encoding="utf-8")
+          PY
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload physical test evidence
+        if: always() && steps.privacy.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-MacVitals-0.0.615-compact-hud
+          path: |
+            physical-evidence/
+            exact-artifact/content/BUILD_MANIFEST.json
+            exact-artifact/content/BUILD_STATUS.txt
+            exact-artifact/content/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce physical test result
+        if: always()
+        shell: bash
+        env:
+          PHYSICAL_OUTCOME: ${{ steps.physical.outcome }}
+          PHYSICAL_STATUS: ${{ steps.physical.outputs.status }}
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          RESTORE_STATUS: ${{ steps.restore.outputs.status }}
+          PRIVACY_OUTCOME: ${{ steps.privacy.outcome }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${PHYSICAL_OUTCOME}" == success ]]
+          [[ "${PHYSICAL_STATUS}" == 0 ]]
+          [[ "${RESTORE_OUTCOME}" == success ]]
+          [[ "${RESTORE_STATUS}" == 0 ]]
+          [[ "${PRIVACY_OUTCOME}" == success ]]
