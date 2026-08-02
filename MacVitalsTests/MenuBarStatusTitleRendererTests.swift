@@ -66,7 +66,7 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
   }
 
   @MainActor
-  func testCompleteStatusSurfaceIsPhysicallyWhiteAndNonTemplate() throws {
+  func testCompleteStatusSurfaceContainsOnlyWhiteOpaquePixels() throws {
     let image = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
       metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
@@ -76,12 +76,28 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
     XCTAssertGreaterThan(image.size.width, 12)
 
     let representation = try bitmapRepresentation(of: image)
-    let opaqueColor = try XCTUnwrap(firstOpaqueColor(in: representation))
-    let rgb = try XCTUnwrap(opaqueColor.usingColorSpace(.deviceRGB))
+    let statistics = try opaquePixelStatistics(in: representation)
 
-    XCTAssertGreaterThan(rgb.redComponent, 0.9)
-    XCTAssertGreaterThan(rgb.greenComponent, 0.9)
-    XCTAssertGreaterThan(rgb.blueComponent, 0.9)
+    XCTAssertGreaterThan(statistics.count, 100)
+    XCTAssertGreaterThan(
+      statistics.minimumRGB,
+      0.92,
+      "Every visible icon and value pixel must be physically white")
+  }
+
+  @MainActor
+  func testSingleMetricValuePixelsCannotRemainBlack() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
+      snapshot: .empty,
+      metrics: [.cpu])
+    let representation = try bitmapRepresentation(of: image)
+    let statistics = try opaquePixelStatistics(in: representation)
+
+    XCTAssertGreaterThan(statistics.count, 20)
+    XCTAssertGreaterThan(
+      statistics.minimumRGB,
+      0.92,
+      "The compact value glyph must be recolored together with its icon")
   }
 
   @MainActor
@@ -108,7 +124,9 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(image.size.width, 12)
 
     let representation = try bitmapRepresentation(of: image)
-    XCTAssertNotNil(firstOpaqueColor(in: representation))
+    let statistics = try opaquePixelStatistics(in: representation)
+    XCTAssertGreaterThan(statistics.count, 0)
+    XCTAssertGreaterThan(statistics.minimumRGB, 0.92)
   }
 
   private func bitmapRepresentation(of image: NSImage) throws -> NSBitmapImageRep {
@@ -116,15 +134,36 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
     return try XCTUnwrap(NSBitmapImageRep(data: data))
   }
 
-  private func firstOpaqueColor(in representation: NSBitmapImageRep) -> NSColor? {
+  private func opaquePixelStatistics(
+    in representation: NSBitmapImageRep
+  ) throws -> (count: Int, minimumRGB: CGFloat) {
+    var count = 0
+    var minimumRGB: CGFloat = 1
+
     for y in 0..<representation.pixelsHigh {
       for x in 0..<representation.pixelsWide {
-        guard let color = representation.colorAt(x: x, y: y), color.alphaComponent > 0.8 else {
+        guard
+          let color = representation.colorAt(x: x, y: y),
+          color.alphaComponent > 0.8,
+          let rgb = color.usingColorSpace(.deviceRGB)
+        else {
           continue
         }
-        return color
+
+        count += 1
+        minimumRGB = min(
+          minimumRGB,
+          rgb.redComponent,
+          rgb.greenComponent,
+          rgb.blueComponent)
       }
     }
-    return nil
+
+    guard count > 0 else {
+      XCTFail("Expected at least one mostly opaque status-bar pixel")
+      throw NSError(domain: "MenuBarStatusTitleRendererTests", code: 1)
+    }
+
+    return (count, minimumRGB)
   }
 }

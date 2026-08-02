@@ -142,6 +142,17 @@ nonisolated enum MenuBarStatusTitleRenderer {
       }
     }
 
+    // AppKit can still rasterize NSString glyphs with dark RGB values even when the
+    // requested foreground is white. Recolor the complete alpha mask after every icon
+    // and value has been drawn. sourceIn preserves antialiasing alpha while replacing
+    // every visible RGB pixel — including digits, percent signs and temperatures — with white.
+    let context = graphicsContext.cgContext
+    context.saveGState()
+    context.setBlendMode(.sourceIn)
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(origin: .zero, size: imageSize))
+    context.restoreGState()
+
     NSGraphicsContext.restoreGraphicsState()
 
     let image = NSImage(size: imageSize)
