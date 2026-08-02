@@ -1,0 +1,480 @@
+name: Physical Test MacVitals 0.0.601 Notch HUD
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-0.0.601-notch-hud
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  exact-artifact-physical-test:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.actor == github.repository_owner &&
+      github.event.pull_request.head.ref == 'agent/physical-test-0.0.601-notch-hud'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 35
+    env:
+      SOURCE_SHA: f7a915a001ab12e1b490986555aa8e089ff225c6
+      VERSION: 0.0.601
+      ARTIFACT_ID: '8830297443'
+      ARTIFACT_RUN_ID: '30737961096'
+      OUTER_ARTIFACT_SHA256: 933b0d195a9f5291c28ade9c3595e1b298540d6c5074385c81c0c854932af026
+      INNER_APP_ZIP_SHA256: 8eeba29ecb0d18ba22a8454349590977a2ab51bb5d8aa2789d820ac0ba159100
+      PREFERENCE_DOMAIN: com.mishkacher.MacVitals
+      PREFERENCE_KEY: experimentalNotchHUDEnabled
+
+    steps:
+      - name: Register runner privacy masks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workspace_parent="$(dirname "${GITHUB_WORKSPACE}")"
+          for value in "${HOME:-}" "${USER:-}" "$(id -un)" "$(hostname)" "${RUNNER_NAME:-}" "${GITHUB_WORKSPACE}" "${workspace_parent}"; do
+            if [[ -n "${value}" && ${#value} -ge 3 ]]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+
+      - name: Checkout exact source bound to artifact manifest
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+
+      - name: Verify physical runner and exact source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == "Darwin" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+          [[ "$(git rev-parse HEAD)" == "${SOURCE_SHA}" ]]
+          runner_user="$(id -un)"
+          console_user="$(stat -f '%Su' /dev/console)"
+          [[ "${runner_user}" == "${console_user}" ]] || {
+            echo "Physical test requires the active macOS console user" >&2
+            exit 1
+          }
+          launchctl print "gui/$(id -u)" >/dev/null
+          python3 -m py_compile \
+            scripts/diagnose_app_lifetime.py \
+            scripts/prepare_physical_artifact.py \
+            scripts/prepare_physical_artifact_hardened.py \
+            scripts/validate_app_zip.py \
+            scripts/validate_fan_evidence.py
+          python3 scripts/diagnose_app_lifetime.py --self-test
+          python3 scripts/prepare_physical_artifact_hardened.py self-test
+          python3 scripts/validate_app_zip.py --self-test
+          python3 scripts/validate_fan_evidence.py --self-test
+
+      - name: Download and validate exact workflow artifact
+        id: candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf candidate-download dist physical-test-app physical-test-evidence
+          mkdir -p candidate-download dist physical-test-app physical-test-evidence
+          archive="candidate-download/MacVitals-${VERSION}-arm64-unsigned.zip"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "${archive}" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip"
+
+          actual_outer="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+          [[ "${actual_outer}" == "${OUTER_ARTIFACT_SHA256}" ]] || {
+            echo "Outer workflow artifact digest mismatch" >&2
+            exit 1
+          }
+
+          PYTHONPATH=scripts python3 - "${archive}" "${PWD}/dist" "${VERSION}" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          import prepare_physical_artifact_hardened as staging
+
+          archive = Path(sys.argv[1]).resolve()
+          destination = Path(sys.argv[2]).resolve()
+          expected_version = sys.argv[3]
+          actual_version = staging.extract_validated(archive, destination)
+          if actual_version != expected_version:
+              raise SystemExit(f"Artifact version mismatch: {actual_version!r}")
+          manifest = json.loads((destination / "BUILD_MANIFEST.json").read_text(encoding="utf-8"))
+          expected = {
+              "version": "0.0.601",
+              "buildNumber": "601",
+              "gitCommit": "f7a915a001ab12e1b490986555aa8e089ff225c6",
+              "architectures": ["arm64"],
+              "signingStatus": "unsigned",
+              "notarizationStatus": "not-notarized",
+          }
+          for key, value in expected.items():
+              if manifest.get(key) != value:
+                  raise SystemExit(f"Manifest mismatch for {key}: {manifest.get(key)!r}")
+          print("Exact unsigned artifact manifest validated")
+          PY
+
+          inner_zip="dist/MacVitals-${VERSION}.zip"
+          actual_inner="$(shasum -a 256 "${inner_zip}" | awk '{print $1}')"
+          [[ "${actual_inner}" == "${INNER_APP_ZIP_SHA256}" ]] || {
+            echo "Inner application ZIP digest mismatch" >&2
+            exit 1
+          }
+          python3 scripts/validate_app_zip.py "${inner_zip}"
+          ditto -x -k "${inner_zip}" physical-test-app
+
+          app="${PWD}/physical-test-app/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          [[ -d "${app}" && ! -L "${app}" ]]
+          [[ -x "${executable}" && ! -L "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == "arm64" ]]
+          if find "${app}" -type l -print -quit | grep -q .; then
+            echo "Application bundle contains a symbolic link" >&2
+            exit 1
+          fi
+
+          APP_PATH="${app}" OUTER_DIGEST="${actual_outer}" INNER_DIGEST="${actual_inner}" python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import plistlib
+
+          app = Path(os.environ["APP_PATH"])
+          executable = app / "Contents" / "MacOS" / "MacVitals"
+          with (app / "Contents" / "Info.plist").open("rb") as handle:
+              info = plistlib.load(handle)
+          evidence = {
+              "artifactId": 8830297443,
+              "artifactRunId": 30737961096,
+              "version": info.get("CFBundleShortVersionString"),
+              "build": info.get("CFBundleVersion"),
+              "bundleIdentifier": info.get("CFBundleIdentifier"),
+              "architecture": "arm64",
+              "signingStatus": "unsigned",
+              "notarizationStatus": "not-notarized",
+              "sourceCommit": "f7a915a001ab12e1b490986555aa8e089ff225c6",
+              "outerArtifactSha256": os.environ["OUTER_DIGEST"],
+              "innerApplicationZipSha256": os.environ["INNER_DIGEST"],
+              "executableSha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+          }
+          Path("physical-test-evidence/artifact-identity.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "app=${app}" >> "${GITHUB_OUTPUT}"
+
+      - name: Collect read-only fan evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          developer_dir="$(xcode-select -p)"
+          [[ -x "${developer_dir}/usr/bin/xcodebuild" ]]
+          export DEVELOPER_DIR="${developer_dir}"
+          for candidate in "$(command -v xcodegen 2>/dev/null || true)" /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              export PATH="$(dirname "${candidate}"):${PATH}"
+              break
+            fi
+          done
+          command -v xcodegen >/dev/null
+          xcodegen generate
+          probe_root="${PWD}/build/physical-test-fan-probe"
+          xcodebuild -project MacVitals.xcodeproj -target MacVitalsFanProbe \
+            -configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO SYMROOT="${probe_root}" build \
+            > physical-test-evidence/fan-probe-build.log 2>&1
+          probe="${probe_root}/Release/MacVitalsFanProbe"
+          [[ -x "${probe}" && "$(lipo -archs "${probe}")" == "arm64" ]]
+          "${probe}" > physical-test-evidence/fan-evidence.json
+          python3 scripts/validate_fan_evidence.py \
+            --require-available \
+            --require-automatic \
+            physical-test-evidence/fan-evidence.json
+
+      - name: Save preference and enable experimental HUD
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          state_dir="${RUNNER_TEMP}/macvitals-0.0.601-preference-state-${GITHUB_RUN_ID}"
+          rm -rf "${state_dir}"
+          mkdir -p "${state_dir}"
+          if defaults read "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}" > "${state_dir}/value" 2>/dev/null; then
+            printf 'present\n' > "${state_dir}/status"
+          else
+            printf 'absent\n' > "${state_dir}/status"
+          fi
+          printf '%s\n' "${state_dir}" > physical-test-evidence/preference-state-path.txt
+          defaults write "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}" -bool true
+          [[ "$(defaults read "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}")" == "1" ]]
+
+      - name: Verify HUD panels in the physical GUI session
+        id: hud
+        shell: bash
+        env:
+          APP_PATH: ${{ steps.candidate.outputs.app }}
+        run: |
+          set -Eeuo pipefail
+          executable="${APP_PATH}/Contents/MacOS/MacVitals"
+          uid="$(id -u)"
+          shim_root="$(mktemp -d /private/tmp/macvitals-601-launchctl.XXXXXX)"
+          app_pid=""
+          cleanup() {
+            if [[ -n "${app_pid}" ]] && kill -0 "${app_pid}" >/dev/null 2>&1; then
+              kill -TERM "${app_pid}" >/dev/null 2>&1 || true
+              for _ in {1..20}; do
+                kill -0 "${app_pid}" >/dev/null 2>&1 || break
+                sleep 0.25
+              done
+              kill -0 "${app_pid}" >/dev/null 2>&1 && kill -KILL "${app_pid}" >/dev/null 2>&1 || true
+              wait "${app_pid}" 2>/dev/null || true
+            fi
+            rm -rf "${shim_root}"
+          }
+          trap cleanup EXIT HUP INT TERM
+          cat > "${shim_root}/launchctl" <<'SHIM'
+          #!/bin/bash
+          set -Eeuo pipefail
+          if [[ "${1:-}" == "asuser" ]]; then
+            requested_uid="$2"
+            shift 2
+            [[ "${requested_uid}" == "$(id -u)" ]] || exit 77
+            exec "$@"
+          fi
+          exec /bin/launchctl "$@"
+          SHIM
+          chmod 700 "${shim_root}/launchctl"
+
+          PATH="${shim_root}:${PATH}" launchctl asuser "${uid}" "${executable}" \
+            -AppleLanguages '(en)' \
+            -AppleLocale en_US \
+            -notificationsEnabled NO \
+            -showInDock NO \
+            -samplingInterval 2 \
+            -experimentalNotchHUDEnabled YES \
+            > physical-test-evidence/hud-launch.log 2>&1 &
+          app_pid="$!"
+
+          for _ in {1..60}; do
+            kill -0 "${app_pid}" >/dev/null 2>&1 || {
+              cat physical-test-evidence/hud-launch.log >&2 || true
+              exit 1
+            }
+            sleep 0.25
+          done
+
+          cat > "${RUNNER_TEMP}/verify-macvitals-601-hud.swift" <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+
+          guard let rawPID = ProcessInfo.processInfo.environment["TARGET_PID"],
+                let targetPID = Int32(rawPID) else {
+            fputs("TARGET_PID is invalid\n", stderr)
+            exit(2)
+          }
+          let entries = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID) as? [[String: Any]] ?? []
+
+          func number(_ dictionary: [String: Any], _ key: String) -> Double? {
+            (dictionary[key] as? NSNumber)?.doubleValue
+          }
+
+          var windows: [[String: Double]] = []
+          for entry in entries {
+            guard let owner = entry[kCGWindowOwnerPID as String] as? NSNumber,
+                  owner.int32Value == targetPID,
+                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
+                  let x = number(bounds, "X"),
+                  let y = number(bounds, "Y"),
+                  let width = number(bounds, "Width"),
+                  let height = number(bounds, "Height") else { continue }
+            windows.append(["x": x, "y": y, "width": width, "height": height])
+          }
+
+          let railFound = windows.contains {
+            ($0["width"] ?? 0) >= 500 && ($0["width"] ?? 0) <= 1300 &&
+            ($0["height"] ?? 0) >= 30 && ($0["height"] ?? 0) <= 60
+          }
+          let detailFound = windows.contains {
+            ($0["width"] ?? 0) >= 320 && ($0["width"] ?? 0) <= 390 &&
+            ($0["height"] ?? 0) >= 150 && ($0["height"] ?? 0) <= 210
+          }
+
+          let payload: [String: Any] = [
+            "targetPID": Int(targetPID),
+            "windowCount": windows.count,
+            "railPanelFound": railFound,
+            "detailPanelFound": detailFound,
+            "windows": windows,
+          ]
+          let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+          FileHandle.standardOutput.write(data)
+          FileHandle.standardOutput.write(Data("\n".utf8))
+          guard railFound && detailFound else { exit(1) }
+          SWIFT
+
+          TARGET_PID="${app_pid}" xcrun swift "${RUNNER_TEMP}/verify-macvitals-601-hud.swift" \
+            > physical-test-evidence/hud-window-evidence.json
+          echo "status=0" >> "${GITHUB_OUTPUT}"
+
+      - name: Run 10-minute HUD-enabled app lifetime test
+        id: lifetime
+        shell: bash
+        env:
+          APP_PATH: ${{ steps.candidate.outputs.app }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf app-lifetime-evidence
+          shim_root="$(mktemp -d /private/tmp/macvitals-601-lifetime.XXXXXX)"
+          trap 'rm -rf "${shim_root}"' EXIT
+          cat > "${shim_root}/launchctl" <<'SHIM'
+          #!/bin/bash
+          set -Eeuo pipefail
+          if [[ "${1:-}" == "asuser" ]]; then
+            [[ $# -ge 3 ]]
+            requested_uid="$2"
+            shift 2
+            [[ "${requested_uid}" == "$(id -u)" ]] || exit 77
+            exec "$@"
+          fi
+          exec /bin/launchctl "$@"
+          SHIM
+          chmod 700 "${shim_root}/launchctl"
+          set +e
+          PATH="${shim_root}:${PATH}" launchctl asuser "$(id -u)" caffeinate -ims \
+            python3 scripts/diagnose_app_lifetime.py \
+              --repository "${PWD}" \
+              --app "${APP_PATH}" \
+              --duration 600 \
+              --interval 2 \
+              --output app-lifetime-evidence \
+              > physical-test-evidence/diagnostic-run.raw.log 2>&1
+          status=$?
+          set -e
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          tail -n 200 physical-test-evidence/diagnostic-run.raw.log
+
+      - name: Restore experimental HUD preference
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          path_file="physical-test-evidence/preference-state-path.txt"
+          if [[ ! -f "${path_file}" ]]; then
+            exit 0
+          fi
+          state_dir="$(cat "${path_file}")"
+          status="$(cat "${state_dir}/status" 2>/dev/null || printf 'absent')"
+          if [[ "${status}" == "present" ]]; then
+            value="$(cat "${state_dir}/value")"
+            case "${value}" in
+              1|true|TRUE|yes|YES) defaults write "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}" -bool true ;;
+              *) defaults write "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}" -bool false ;;
+            esac
+          else
+            defaults delete "${PREFERENCE_DOMAIN}" "${PREFERENCE_KEY}" >/dev/null 2>&1 || true
+          fi
+          rm -rf "${state_dir}"
+          rm -f "${path_file}"
+
+      - name: Sanitize physical evidence
+        id: privacy
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REDACT_HOME="${HOME:-}" REDACT_USER="$(id -un 2>/dev/null || true)" REDACT_HOST="$(hostname 2>/dev/null || true)" python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          roots = [Path("physical-test-evidence"), Path("app-lifetime-evidence")]
+          home = os.environ.get("REDACT_HOME", "")
+          user = os.environ.get("REDACT_USER", "")
+          host = os.environ.get("REDACT_HOST", "")
+          path_pattern = re.compile(r"/(?:Users|home)/[^/\s<]+")
+          temp_pattern = re.compile(r"/private/(?:tmp|var)/[^\s<]+")
+          battery_pattern = re.compile(r"\bInternalBattery-\d+(?:\s+\(id=\d+\))?")
+          replacements = [(home, "<HOME>"), (host, "<HOST>")]
+          if len(user) >= 3:
+              replacements.append((user, "<USER>"))
+
+          def clean(value: str) -> str:
+              value = path_pattern.sub("<HOME>", value)
+              value = temp_pattern.sub("<TEMP>", value)
+              value = battery_pattern.sub("<BATTERY_ID>", value)
+              for source, replacement in replacements:
+                  if source:
+                      value = value.replace(source, replacement)
+              return value
+
+          for root in roots:
+              if not root.exists():
+                  continue
+              if root.is_symlink() or not root.is_dir():
+                  raise SystemExit(f"Unsafe evidence root: {root}")
+              for path in sorted(root.rglob("*")):
+                  if path.is_symlink():
+                      raise SystemExit(f"Symlink in evidence: {path}")
+                  if not path.is_file():
+                      continue
+                  payload = path.read_bytes()
+                  if b"\x00" in payload:
+                      raise SystemExit(f"Binary evidence is forbidden: {path}")
+                  text = clean(payload.decode("utf-8", errors="strict"))
+                  path.write_text(text, encoding="utf-8")
+          Path("physical-test-evidence/privacy-scan-passed.txt").write_text(
+              "privacy-scan=passed\n", encoding="utf-8")
+          PY
+          rm -f physical-test-evidence/diagnostic-run.raw.log
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload exact artifact physical evidence
+        if: always() && steps.privacy.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-test-MacVitals-0.0.601-notch-hud
+          path: |
+            physical-test-evidence/
+            app-lifetime-evidence/
+            dist/BUILD_MANIFEST.json
+            dist/BUILD_STATUS.txt
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Clean generated workspace data
+        if: always()
+        shell: bash
+        run: |
+          rm -rf candidate-download dist physical-test-app physical-test-evidence app-lifetime-evidence build MacVitals.xcodeproj MacVitals/Resources/AppIcon.icns
+          git clean -ffdX || true
+
+      - name: Enforce physical test result
+        if: always()
+        shell: bash
+        env:
+          HUD_STATUS: ${{ steps.hud.outputs.status }}
+          LIFETIME_STATUS: ${{ steps.lifetime.outputs.status }}
+          PRIVACY_READY: ${{ steps.privacy.outputs.ready }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${HUD_STATUS:-}" == "0" ]] || { echo "Physical HUD panel verification failed" >&2; exit 1; }
+          [[ "${LIFETIME_STATUS:-}" == "0" ]] || { echo "10-minute physical app lifetime test failed" >&2; exit 1; }
+          [[ "${PRIVACY_READY:-}" == "true" ]] || { echo "Physical evidence privacy gate failed" >&2; exit 1; }
+          echo "Exact MacVitals 0.0.601 Notch HUD physical test passed"
