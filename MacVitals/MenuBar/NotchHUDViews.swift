@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class NotchHUDState: ObservableObject {
   @Published var snapshot: SystemSnapshot = .empty
-  @Published var configuration: NotchHUDConfiguration = .balanced
+  @Published var configuration: NotchHUDConfiguration = .minimal
 }
 
 @MainActor
@@ -29,11 +29,12 @@ struct NotchHUDSideContentView: View {
   var body: some View {
     HStack(spacing: CGFloat(configuration.density.itemSpacing)) {
       ForEach(Array(metrics.enumerated()), id: \.element) { index, metric in
+        let tile = configuration.tileConfiguration(for: metric)
         NotchHUDCompactMetricView(
           metric: metric,
-          label: label(for: metric),
-          value: value(for: metric),
-          configuration: configuration)
+          rawValue: rawValue(for: metric),
+          configuration: configuration,
+          tileConfiguration: tile)
 
         if configuration.showSeparators, index < metrics.count - 1 {
           Rectangle()
@@ -71,28 +72,13 @@ struct NotchHUDSideContentView: View {
   }
 
   private func isAvailable(_ metric: MenuMetric) -> Bool {
-    let rendered = value(for: metric).trimmingCharacters(in: .whitespacesAndNewlines)
+    let rendered = rawValue(for: metric).trimmingCharacters(in: .whitespacesAndNewlines)
     return rendered != "—"
       && rendered != "-"
       && !rendered.localizedCaseInsensitiveContains("unavailable")
   }
 
-  private func label(for metric: MenuMetric) -> String? {
-    guard configuration.showLabels else { return nil }
-    switch metric {
-    case .cpu: return "CPU"
-    case .gpu: return "GPU"
-    case .memory: return "RAM"
-    case .temperature: return "TEMP"
-    case .battery: return "BAT"
-    case .fans: return "FAN"
-    case .systemPower: return "PWR"
-    case .adapterPower: return "AC"
-    case .powerStatus: return "LOAD"
-    }
-  }
-
-  private func value(for metric: MenuMetric) -> String {
+  private func rawValue(for metric: MenuMetric) -> String {
     MenuBarStatusTitleRenderer.segments(
       snapshot: snapshot,
       metrics: [metric])
@@ -103,55 +89,157 @@ struct NotchHUDSideContentView: View {
 @MainActor
 private struct NotchHUDCompactMetricView: View {
   let metric: MenuMetric
-  let label: String?
-  let value: String
+  let rawValue: String
   let configuration: NotchHUDConfiguration
+  let tileConfiguration: NotchHUDTileConfiguration
 
   var body: some View {
     HStack(spacing: metricSpacing) {
-      Image(systemName: symbolName)
-        .font(.system(size: iconSize, weight: .semibold))
-        .foregroundStyle(Color.white.opacity(0.90))
-        .frame(width: iconFrameWidth)
+      if showsIcon {
+        Image(systemName: tileConfiguration.symbolName)
+          .font(.system(size: iconSize, weight: .semibold))
+          .foregroundStyle(foregroundColor.opacity(0.92))
+          .frame(width: iconFrameWidth)
+      }
 
-      if let label {
+      if showsLabel {
         Text(label)
           .font(.system(size: labelSize, weight: .semibold))
-          .foregroundStyle(Color.white.opacity(0.58))
+          .foregroundStyle(foregroundColor.opacity(0.62))
+          .lineLimit(1)
       }
 
       Text(value)
-        .font(.system(size: valueSize, weight: .semibold, design: .rounded).monospacedDigit())
-        .foregroundStyle(.white)
+        .font(
+          .system(
+            size: valueSize,
+            weight: valueWeight,
+            design: .rounded)
+            .monospacedDigit())
+        .foregroundStyle(foregroundColor)
         .lineLimit(1)
-        .minimumScaleFactor(0.68)
+        .minimumScaleFactor(0.62)
     }
-    .fixedSize(horizontal: label == nil, vertical: true)
+    .padding(.horizontal, tileHorizontalPadding)
+    .frame(
+      minWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
+      maxWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
+      maxHeight: .infinity,
+      alignment: frameAlignment)
+    .background(
+      RoundedRectangle(cornerRadius: tileCornerRadius)
+        .fill(backgroundColor))
+    .overlay(
+      RoundedRectangle(cornerRadius: tileCornerRadius)
+        .stroke(outlineColor, lineWidth: tileConfiguration.backgroundStyle == .outline ? 0.8 : 0))
+    .contentShape(Rectangle())
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(label ?? metric.displayName)
+    .accessibilityLabel(label)
     .accessibilityValue(value)
+    .accessibilityIdentifier("notchHUDTile.\(metric.rawValue)")
   }
 
-  private var scale: CGFloat { CGFloat(configuration.textSize.scale) }
+  private var value: String {
+    NotchHUDTileValueFormatter.renderedValue(
+      from: rawValue,
+      configuration: tileConfiguration)
+  }
+
+  private var label: String {
+    tileConfiguration.customLabel.isEmpty
+      ? metric.notchHUDShortLabel
+      : tileConfiguration.customLabel
+  }
+
+  private var showsIcon: Bool {
+    tileConfiguration.contentStyle.showsIcon(globalShowsLabels: configuration.showLabels)
+  }
+
+  private var showsLabel: Bool {
+    tileConfiguration.contentStyle.showsLabel(globalShowsLabels: configuration.showLabels)
+  }
+
+  private var scale: CGFloat {
+    CGFloat(configuration.textSize.scale * tileConfiguration.emphasis.scale)
+  }
+
   private var iconSize: CGFloat { 10.5 * scale }
-  private var labelSize: CGFloat { 8.5 * scale }
+  private var labelSize: CGFloat { 8.5 * CGFloat(configuration.textSize.scale) }
   private var valueSize: CGFloat { 10.5 * scale }
   private var iconFrameWidth: CGFloat { 13 * scale }
-  private var metricSpacing: CGFloat {
-    configuration.density == .compact ? 3 : 4
+  private var metricSpacing: CGFloat { configuration.density == .compact ? 3 : 4 }
+  private var tileCornerRadius: CGFloat { max(5, CGFloat(configuration.density.panelHeight) * 0.28) }
+  private var tileHorizontalPadding: CGFloat {
+    tileConfiguration.backgroundStyle == .none ? 0 : 4
   }
 
-  private var symbolName: String {
-    switch metric {
-    case .cpu: return "cpu"
-    case .gpu: return "display"
-    case .memory: return "memorychip"
-    case .temperature: return "thermometer.medium"
-    case .battery: return "battery.100"
-    case .fans: return "fan"
-    case .systemPower: return "bolt"
-    case .adapterPower: return "powerplug"
-    case .powerStatus: return "gauge.with.dots.needle.50percent"
+  private var valueWeight: Font.Weight {
+    switch tileConfiguration.emphasis {
+    case .muted: return .medium
+    case .normal: return .semibold
+    case .prominent: return .bold
+    }
+  }
+
+  private var frameAlignment: Alignment {
+    switch tileConfiguration.alignment {
+    case .leading: return .leading
+    case .center: return .center
+    case .trailing: return .trailing
+    }
+  }
+
+  private var foregroundColor: Color {
+    switch tileConfiguration.colorMode {
+    case .inherited, .monochrome:
+      return .white
+    case .accent:
+      return .accentColor
+    case .custom:
+      return tileConfiguration.accent.color
+    case .semantic:
+      switch NotchHUDTileConfigurationPolicy.semanticState(
+        renderedValue: rawValue,
+        configuration: tileConfiguration)
+      {
+      case .normal: return .green
+      case .warning: return .orange
+      case .critical: return .red
+      case .unavailable: return Color.white.opacity(0.45)
+      }
+    }
+  }
+
+  private var backgroundColor: Color {
+    switch tileConfiguration.backgroundStyle {
+    case .none, .outline:
+      return .clear
+    case .subtle:
+      return foregroundColor.opacity(tileConfiguration.backgroundOpacity * 0.45)
+    case .filled:
+      return foregroundColor.opacity(tileConfiguration.backgroundOpacity)
+    }
+  }
+
+  private var outlineColor: Color {
+    tileConfiguration.backgroundStyle == .outline
+      ? foregroundColor.opacity(max(0.18, tileConfiguration.backgroundOpacity))
+      : .clear
+  }
+}
+
+private extension NotchHUDTileAccent {
+  var color: Color {
+    switch self {
+    case .white: return .white
+    case .blue: return .blue
+    case .cyan: return .cyan
+    case .green: return .green
+    case .yellow: return .yellow
+    case .orange: return .orange
+    case .red: return .red
+    case .pink: return .pink
+    case .purple: return .purple
     }
   }
 }
