@@ -1,218 +1,139 @@
 import Foundation
 
+nonisolated enum NotchIndicatorColorMode: String, Codable, CaseIterable, Identifiable, Sendable {
+  case automatic
+  case accent
+  case custom
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .automatic: return L10n.string("Automatic")
+    case .accent: return L10n.string("System accent")
+    case .custom: return L10n.string("Custom color")
+    }
+  }
+}
+
+nonisolated enum NotchIndicatorAccent: String, Codable, CaseIterable, Identifiable, Sendable {
+  case blue, cyan, mint, green, yellow, orange, red, pink, purple, white
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .blue: return L10n.string("Blue")
+    case .cyan: return L10n.string("Cyan")
+    case .mint: return L10n.string("Mint")
+    case .green: return L10n.string("Green")
+    case .yellow: return L10n.string("Yellow")
+    case .orange: return L10n.string("Orange")
+    case .red: return L10n.string("Red")
+    case .pink: return L10n.string("Pink")
+    case .purple: return L10n.string("Purple")
+    case .white: return L10n.string("White")
+    }
+  }
+}
+
+nonisolated struct NotchIndicatorThresholds: Codable, Equatable, Sendable {
+  var warning: Double
+  var critical: Double
+}
+
+extension MenuMetric {
+  nonisolated static var notchIndicatorMetrics: [MenuMetric] {
+    allCases.filter { $0 != .powerStatus }
+  }
+
+  nonisolated var notchIndicatorRange: ClosedRange<Double> {
+    switch self {
+    case .cpu, .gpu, .memory, .temperature, .battery:
+      return 0...100
+    case .fans:
+      return 0...6_000
+    case .systemPower:
+      return 0...120
+    case .adapterPower:
+      return 0...160
+    case .powerStatus:
+      return 0...1
+    }
+  }
+
+  nonisolated var notchIndicatorDefaultThresholds: NotchIndicatorThresholds {
+    switch self {
+    case .cpu, .gpu:
+      return NotchIndicatorThresholds(warning: 75, critical: 90)
+    case .memory:
+      return NotchIndicatorThresholds(warning: 80, critical: 92)
+    case .temperature:
+      return NotchIndicatorThresholds(warning: 75, critical: 90)
+    case .battery:
+      return NotchIndicatorThresholds(warning: 25, critical: 10)
+    case .fans:
+      return NotchIndicatorThresholds(warning: 4_500, critical: 5_500)
+    case .systemPower:
+      return NotchIndicatorThresholds(warning: 60, critical: 90)
+    case .adapterPower:
+      return NotchIndicatorThresholds(warning: 100, critical: 140)
+    case .powerStatus:
+      return NotchIndicatorThresholds(warning: 1, critical: 1)
+    }
+  }
+
+  nonisolated var notchIndicatorLowerIsWorse: Bool {
+    self == .battery
+  }
+}
+
+nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
+  var metric: MenuMetric
+  var showValueText: Bool
+  var showSensorName: Bool
+  var colorMode: NotchIndicatorColorMode
+  var accent: NotchIndicatorAccent
+  var lineThickness: Double
+  var horizontalExtension: Double
+  var trackOpacity: Double
+  var glowIntensity: Double
+  var warningThreshold: Double
+  var criticalThreshold: Double
+  var animateChanges: Bool
+  var showOnDisplaysWithoutNotch: Bool
+
+  static let minimal = configuration(for: .cpu)
+  static let balanced = minimal
+  static let detailed = minimal
+
+  static func configuration(for metric: MenuMetric) -> NotchHUDConfiguration {
+    let resolvedMetric = MenuMetric.notchIndicatorMetrics.contains(metric) ? metric : .cpu
+    let thresholds = resolvedMetric.notchIndicatorDefaultThresholds
+    return NotchHUDConfiguration(
+      metric: resolvedMetric,
+      showValueText: true,
+      showSensorName: true,
+      colorMode: .automatic,
+      accent: .cyan,
+      lineThickness: 2.5,
+      horizontalExtension: 72,
+      trackOpacity: 0.18,
+      glowIntensity: 0.62,
+      warningThreshold: thresholds.warning,
+      criticalThreshold: thresholds.critical,
+      animateChanges: true,
+      showOnDisplaysWithoutNotch: false)
+  }
+}
+
+// Compatibility shims keep existing SettingsStore call sites source-compatible while the
+// former two-panel HUD is replaced by one contour indicator.
 nonisolated enum NotchHUDSide: String, Codable, CaseIterable, Identifiable, Sendable {
   case left
   case right
 
   var id: String { rawValue }
-
-  var displayName: String {
-    switch self {
-    case .left: return L10n.string("Left panel")
-    case .right: return L10n.string("Right panel")
-    }
-  }
-}
-
-nonisolated enum NotchHUDDensity: String, Codable, CaseIterable, Identifiable, Sendable {
-  case compact
-  case balanced
-  case spacious
-
-  var id: String { rawValue }
-
-  var displayName: String {
-    switch self {
-    case .compact: return L10n.string("Compact")
-    case .balanced: return L10n.string("Balanced")
-    case .spacious: return L10n.string("Spacious")
-    }
-  }
-
-  var panelHeight: Double {
-    switch self {
-    case .compact: return 24
-    case .balanced: return 28
-    case .spacious: return 32
-    }
-  }
-
-  var horizontalPadding: Double {
-    switch self {
-    case .compact: return 7
-    case .balanced: return 10
-    case .spacious: return 12
-    }
-  }
-
-  var itemSpacing: Double {
-    switch self {
-    case .compact: return 5
-    case .balanced: return 8
-    case .spacious: return 10
-    }
-  }
-
-  var metricWidth: Double {
-    switch self {
-    case .compact: return 54
-    case .balanced: return 62
-    case .spacious: return 70
-    }
-  }
-
-  var labeledMetricWidth: Double {
-    switch self {
-    case .compact: return 68
-    case .balanced: return 76
-    case .spacious: return 84
-    }
-  }
-}
-
-nonisolated enum NotchHUDTextSize: String, Codable, CaseIterable, Identifiable, Sendable {
-  case small
-  case medium
-  case large
-
-  var id: String { rawValue }
-
-  var displayName: String {
-    switch self {
-    case .small: return L10n.string("Small")
-    case .medium: return L10n.string("Medium")
-    case .large: return L10n.string("Large")
-    }
-  }
-
-  var scale: Double {
-    switch self {
-    case .small: return 0.88
-    case .medium: return 1
-    case .large: return 1.12
-    }
-  }
-}
-
-nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
-  var leftMetrics: [MenuMetric]
-  var rightMetrics: [MenuMetric]
-  var leftVisibleCount: Int
-  var rightVisibleCount: Int
-  var showLeftPanel: Bool
-  var showRightPanel: Bool
-  var density: NotchHUDDensity
-  var textSize: NotchHUDTextSize
-  var backgroundOpacity: Double
-  var showLabels: Bool
-  var showSeparators: Bool
-  var hideUnavailableMetrics: Bool
-  var showOnDisplaysWithoutNotch: Bool
-  var tileConfigurations: [MenuMetric: NotchHUDTileConfiguration]
-
-  init(
-    leftMetrics: [MenuMetric],
-    rightMetrics: [MenuMetric],
-    leftVisibleCount: Int,
-    rightVisibleCount: Int,
-    showLeftPanel: Bool,
-    showRightPanel: Bool,
-    density: NotchHUDDensity,
-    textSize: NotchHUDTextSize,
-    backgroundOpacity: Double,
-    showLabels: Bool,
-    showSeparators: Bool,
-    hideUnavailableMetrics: Bool,
-    showOnDisplaysWithoutNotch: Bool,
-    tileConfigurations: [MenuMetric: NotchHUDTileConfiguration] = Self.defaultTiles
-  ) {
-    self.leftMetrics = leftMetrics
-    self.rightMetrics = rightMetrics
-    self.leftVisibleCount = leftVisibleCount
-    self.rightVisibleCount = rightVisibleCount
-    self.showLeftPanel = showLeftPanel
-    self.showRightPanel = showRightPanel
-    self.density = density
-    self.textSize = textSize
-    self.backgroundOpacity = backgroundOpacity
-    self.showLabels = showLabels
-    self.showSeparators = showSeparators
-    self.hideUnavailableMetrics = hideUnavailableMetrics
-    self.showOnDisplaysWithoutNotch = showOnDisplaysWithoutNotch
-    self.tileConfigurations = tileConfigurations
-  }
-
-  static let balanced = NotchHUDConfiguration(
-    leftMetrics: [.cpu, .gpu, .memory],
-    rightMetrics: [.fans, .temperature, .battery, .systemPower],
-    leftVisibleCount: 3,
-    rightVisibleCount: 4,
-    showLeftPanel: true,
-    showRightPanel: true,
-    density: .balanced,
-    textSize: .medium,
-    backgroundOpacity: 0.62,
-    showLabels: true,
-    showSeparators: true,
-    hideUnavailableMetrics: false,
-    showOnDisplaysWithoutNotch: true)
-
-  static let minimal = NotchHUDConfiguration(
-    leftMetrics: [.cpu],
-    rightMetrics: [.temperature],
-    leftVisibleCount: 1,
-    rightVisibleCount: 1,
-    showLeftPanel: true,
-    showRightPanel: true,
-    density: .compact,
-    textSize: .small,
-    backgroundOpacity: 0.52,
-    showLabels: false,
-    showSeparators: false,
-    hideUnavailableMetrics: true,
-    showOnDisplaysWithoutNotch: false)
-
-  static let detailed = NotchHUDConfiguration(
-    leftMetrics: [.cpu, .gpu, .memory, .temperature],
-    rightMetrics: [.fans, .battery, .systemPower, .adapterPower, .powerStatus],
-    leftVisibleCount: 4,
-    rightVisibleCount: 5,
-    showLeftPanel: true,
-    showRightPanel: true,
-    density: .spacious,
-    textSize: .medium,
-    backgroundOpacity: 0.72,
-    showLabels: true,
-    showSeparators: true,
-    hideUnavailableMetrics: false,
-    showOnDisplaysWithoutNotch: true)
-
-  static var defaultTiles: [MenuMetric: NotchHUDTileConfiguration] {
-    Dictionary(uniqueKeysWithValues: MenuMetric.allCases.map {
-      ($0, NotchHUDTileConfiguration.defaultConfiguration(for: $0))
-    })
-  }
-
-  func metrics(for side: NotchHUDSide) -> [MenuMetric] {
-    switch side {
-    case .left:
-      guard showLeftPanel else { return [] }
-      return Array(leftMetrics.prefix(leftVisibleCount))
-    case .right:
-      guard showRightPanel else { return [] }
-      return Array(rightMetrics.prefix(rightVisibleCount))
-    }
-  }
-
-  func placement(of metric: MenuMetric) -> NotchHUDSide? {
-    if leftMetrics.contains(metric) { return .left }
-    if rightMetrics.contains(metric) { return .right }
-    return nil
-  }
-
-  func tileConfiguration(for metric: MenuMetric) -> NotchHUDTileConfiguration {
-    tileConfigurations[metric] ?? .defaultConfiguration(for: metric)
-  }
 }
 
 nonisolated enum NotchHUDPreset: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -225,142 +146,73 @@ nonisolated enum NotchHUDPreset: String, Codable, CaseIterable, Identifiable, Se
 
   var displayName: String {
     switch self {
-    case .minimal: return L10n.string("Minimal")
-    case .balanced: return L10n.string("Balanced")
-    case .detailed: return L10n.string("Detailed")
+    case .minimal: return L10n.string("Default")
+    case .balanced: return L10n.string("Default")
+    case .detailed: return L10n.string("Default")
     case .custom: return L10n.string("Custom")
     }
   }
 
-  var configuration: NotchHUDConfiguration {
-    switch self {
-    case .minimal: return .minimal
-    case .balanced: return .balanced
-    case .detailed: return .detailed
-    case .custom: return .minimal
-    }
-  }
+  var configuration: NotchHUDConfiguration { .minimal }
 }
 
 nonisolated enum NotchHUDConfigurationPolicy {
-  static let maximumMetricsPerSide = 5
-
   static func normalized(_ configuration: NotchHUDConfiguration) -> NotchHUDConfiguration {
     var result = configuration
-    result.leftMetrics = unique(result.leftMetrics)
-    result.rightMetrics = unique(result.rightMetrics).filter { !result.leftMetrics.contains($0) }
-    result.leftMetrics = Array(result.leftMetrics.prefix(maximumMetricsPerSide))
-    result.rightMetrics = Array(result.rightMetrics.prefix(maximumMetricsPerSide))
-
-    if result.leftMetrics.isEmpty { result.showLeftPanel = false }
-    if result.rightMetrics.isEmpty { result.showRightPanel = false }
-
-    result.leftVisibleCount = clampedVisibleCount(
-      result.leftVisibleCount,
-      available: result.leftMetrics.count)
-    result.rightVisibleCount = clampedVisibleCount(
-      result.rightVisibleCount,
-      available: result.rightMetrics.count)
-    result.backgroundOpacity = min(max(result.backgroundOpacity, 0.2), 0.95)
-
-    var normalizedTiles: [MenuMetric: NotchHUDTileConfiguration] = [:]
-    for metric in MenuMetric.allCases {
-      normalizedTiles[metric] = NotchHUDTileConfigurationPolicy.normalized(
-        result.tileConfiguration(for: metric),
-        for: metric)
+    if !MenuMetric.notchIndicatorMetrics.contains(result.metric) {
+      result.metric = .cpu
     }
-    result.tileConfigurations = normalizedTiles
+
+    result.lineThickness = min(max(result.lineThickness, 1), 6)
+    result.horizontalExtension = min(max(result.horizontalExtension, 36), 180)
+    result.trackOpacity = min(max(result.trackOpacity, 0.05), 0.55)
+    result.glowIntensity = min(max(result.glowIntensity, 0), 1)
+
+    let range = result.metric.notchIndicatorRange
+    result.warningThreshold = min(max(result.warningThreshold, range.lowerBound), range.upperBound)
+    result.criticalThreshold = min(
+      max(result.criticalThreshold, range.lowerBound), range.upperBound)
+
+    if result.metric.notchIndicatorLowerIsWorse {
+      if result.warningThreshold < result.criticalThreshold {
+        swap(&result.warningThreshold, &result.criticalThreshold)
+      }
+    } else if result.warningThreshold > result.criticalThreshold {
+      swap(&result.warningThreshold, &result.criticalThreshold)
+    }
+
     return result
   }
 
   static func setting(
     _ metric: MenuMetric,
-    side: NotchHUDSide?,
+    side _: NotchHUDSide?,
     in configuration: NotchHUDConfiguration
   ) -> NotchHUDConfiguration {
     var result = configuration
-    result.leftMetrics.removeAll { $0 == metric }
-    result.rightMetrics.removeAll { $0 == metric }
-
-    switch side {
-    case .left:
-      result.leftMetrics.append(metric)
-      result.showLeftPanel = true
-      result.leftVisibleCount = min(
-        max(result.leftVisibleCount, 1),
-        min(result.leftMetrics.count, maximumMetricsPerSide))
-    case .right:
-      result.rightMetrics.append(metric)
-      result.showRightPanel = true
-      result.rightVisibleCount = min(
-        max(result.rightVisibleCount, 1),
-        min(result.rightMetrics.count, maximumMetricsPerSide))
-    case nil:
-      break
-    }
-
+    let resolvedMetric = MenuMetric.notchIndicatorMetrics.contains(metric) ? metric : .cpu
+    result.metric = resolvedMetric
+    let thresholds = resolvedMetric.notchIndicatorDefaultThresholds
+    result.warningThreshold = thresholds.warning
+    result.criticalThreshold = thresholds.critical
     return normalized(result)
   }
 
   static func moving(
-    _ metric: MenuMetric,
-    towardStart: Bool,
+    _: MenuMetric,
+    towardStart _: Bool,
     in configuration: NotchHUDConfiguration
   ) -> NotchHUDConfiguration {
-    var result = configuration
-    if let index = result.leftMetrics.firstIndex(of: metric) {
-      let destination = towardStart ? index - 1 : index + 1
-      guard result.leftMetrics.indices.contains(destination) else { return result }
-      result.leftMetrics.swapAt(index, destination)
-    } else if let index = result.rightMetrics.firstIndex(of: metric) {
-      let destination = towardStart ? index - 1 : index + 1
-      guard result.rightMetrics.indices.contains(destination) else { return result }
-      result.rightMetrics.swapAt(index, destination)
-    }
-    return normalized(result)
-  }
-
-  static func settingTile(
-    _ tile: NotchHUDTileConfiguration,
-    for metric: MenuMetric,
-    in configuration: NotchHUDConfiguration
-  ) -> NotchHUDConfiguration {
-    var result = configuration
-    result.tileConfigurations[metric] = NotchHUDTileConfigurationPolicy.normalized(tile, for: metric)
-    return normalized(result)
-  }
-
-  static func resettingTile(
-    _ metric: MenuMetric,
-    in configuration: NotchHUDConfiguration
-  ) -> NotchHUDConfiguration {
-    var result = configuration
-    result.tileConfigurations[metric] = .defaultConfiguration(for: metric)
-    return normalized(result)
+    normalized(configuration)
   }
 
   static func resolvedPreset(for configuration: NotchHUDConfiguration) -> NotchHUDPreset {
-    let normalizedConfiguration = normalized(configuration)
-    for preset in [NotchHUDPreset.minimal, .balanced, .detailed]
-    where normalized(preset.configuration) == normalizedConfiguration {
-      return preset
-    }
-    return .custom
-  }
-
-  private static func unique(_ metrics: [MenuMetric]) -> [MenuMetric] {
-    var seen = Set<MenuMetric>()
-    return metrics.filter { seen.insert($0).inserted }
-  }
-
-  private static func clampedVisibleCount(_ count: Int, available: Int) -> Int {
-    guard available > 0 else { return 1 }
-    return min(max(count, 1), min(available, maximumMetricsPerSide))
+    normalized(configuration) == .minimal ? .minimal : .custom
   }
 }
 
 nonisolated enum NotchHUDConfigurationPersistence {
-  static let currentSchemaVersion = 2
+  static let currentSchemaVersion = 3
 
   private struct VersionEnvelope: Decodable {
     let schemaVersion: Int
@@ -377,35 +229,13 @@ nonisolated enum NotchHUDConfigurationPersistence {
   }
 
   private struct LegacyConfiguration: Decodable {
-    let leftMetrics: [MenuMetric]
-    let rightMetrics: [MenuMetric]
-    let leftVisibleCount: Int
-    let rightVisibleCount: Int
-    let showLeftPanel: Bool
-    let showRightPanel: Bool
-    let density: NotchHUDDensity
-    let textSize: NotchHUDTextSize
-    let backgroundOpacity: Double
-    let showLabels: Bool
-    let showSeparators: Bool
-    let hideUnavailableMetrics: Bool
-    let showOnDisplaysWithoutNotch: Bool
+    let leftMetrics: [MenuMetric]?
+    let rightMetrics: [MenuMetric]?
 
     var migrated: NotchHUDConfiguration {
-      NotchHUDConfiguration(
-        leftMetrics: leftMetrics,
-        rightMetrics: rightMetrics,
-        leftVisibleCount: leftVisibleCount,
-        rightVisibleCount: rightVisibleCount,
-        showLeftPanel: showLeftPanel,
-        showRightPanel: showRightPanel,
-        density: density,
-        textSize: textSize,
-        backgroundOpacity: backgroundOpacity,
-        showLabels: showLabels,
-        showSeparators: showSeparators,
-        hideUnavailableMetrics: hideUnavailableMetrics,
-        showOnDisplaysWithoutNotch: showOnDisplaysWithoutNotch)
+      let candidate = (leftMetrics ?? []) + (rightMetrics ?? [])
+      let metric = candidate.first(where: { MenuMetric.notchIndicatorMetrics.contains($0) }) ?? .cpu
+      return .configuration(for: metric)
     }
   }
 
@@ -427,8 +257,9 @@ nonisolated enum NotchHUDConfigurationPersistence {
         return nil
       }
       return NotchHUDConfigurationPolicy.normalized(stored.configuration)
-    case 1:
-      guard let stored = try? JSONDecoder().decode(LegacyStoredConfiguration.self, from: data) else {
+    case 1, 2:
+      guard let stored = try? JSONDecoder().decode(LegacyStoredConfiguration.self, from: data)
+      else {
         return nil
       }
       return NotchHUDConfigurationPolicy.normalized(stored.configuration.migrated)
