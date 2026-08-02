@@ -4,6 +4,7 @@ private enum PreferencesSection: String, CaseIterable, Identifiable {
   case general
   case alerts
   case menuBar
+  case statusBarHUD
   case fans
   case diagnostics
   case privacy
@@ -15,6 +16,7 @@ private enum PreferencesSection: String, CaseIterable, Identifiable {
     case .general: return L10n.string("General")
     case .alerts: return L10n.string("Alerts")
     case .menuBar: return L10n.string("Menu Bar")
+    case .statusBarHUD: return L10n.string("Around Status Bar")
     case .fans: return L10n.string("Fans")
     case .diagnostics: return L10n.string("Diagnostics")
     case .privacy: return L10n.string("Privacy")
@@ -26,6 +28,7 @@ private enum PreferencesSection: String, CaseIterable, Identifiable {
     case .general: return L10n.string("Sampling and application behavior")
     case .alerts: return L10n.string("Local warnings and thresholds")
     case .menuBar: return L10n.string("Choose what is always visible")
+    case .statusBarHUD: return L10n.string("Compact metrics beside the camera notch")
     case .fans: return L10n.string("Monitoring and safe cooling control")
     case .diagnostics: return L10n.string("Sensor health and support bundle")
     case .privacy: return L10n.string("Local-only data policy")
@@ -37,6 +40,7 @@ private enum PreferencesSection: String, CaseIterable, Identifiable {
     case .general: return "slider.horizontal.3"
     case .alerts: return "bell.badge.fill"
     case .menuBar: return "menubar.rectangle"
+    case .statusBarHUD: return "macbook"
     case .fans: return "fan.fill"
     case .diagnostics: return "stethoscope"
     case .privacy: return "hand.raised.fill"
@@ -150,6 +154,7 @@ struct PreferencesView: View {
         case .general: generalTab
         case .alerts: alertsTab
         case .menuBar: menuBarTab
+        case .statusBarHUD: statusBarHUDTab
         case .fans: fansTab
         case .diagnostics:
           DiagnosticsView(
@@ -411,6 +416,50 @@ struct PreferencesView: View {
         }
         .padding(24)
       }
+    }
+  }
+
+  private var statusBarHUDTab: some View {
+    ScrollView {
+      VStack(spacing: 14) {
+        SettingsCard(
+          title: L10n.string("Around the camera notch"),
+          subtitle: L10n.string("Show one compact metric capsule on each side of the camera."),
+          symbol: "macbook") {
+            VStack(spacing: 12) {
+              preferenceToggle(
+                title: L10n.string("Show around status bar"),
+                detail: L10n.string("Display compact performance and power metrics directly beside the notch."),
+                symbol: "menubar.rectangle",
+                isOn: $settings.showAroundStatusBar)
+                .accessibilityIdentifier("showAroundStatusBarToggle")
+
+              Divider()
+
+              HStack(spacing: 12) {
+                Label(L10n.string("CPU, GPU and memory on the left"), systemImage: "cpu")
+                Spacer()
+                Label(L10n.string("Fans, temperature, battery and power on the right"), systemImage: "fan")
+              }
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            }
+          }
+
+        SettingsCard(
+          title: L10n.string("Compact layout"),
+          subtitle: L10n.string("The panels sit inside the menu-bar height without a lower floating dashboard."),
+          symbol: "rectangle.split.2x1") {
+            HStack(spacing: 10) {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.green)
+              Text(L10n.string("Changes apply immediately and persist after restarting MacVitals."))
+                .font(.subheadline)
+              Spacer()
+            }
+          }
+      }
+      .padding(24)
     }
   }
 

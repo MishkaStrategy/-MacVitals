@@ -1,42 +1,48 @@
 import AppKit
 
-nonisolated enum NotchHUDLayout {
-  static let railHeight: CGFloat = 38
-  static let detailSize = NSSize(width: 348, height: 176)
-  static let detailGap: CGFloat = 7
+nonisolated struct NotchHUDSideFrames: Equatable {
+  let left: NSRect
+  let right: NSRect
+}
 
-  static func railFrame(
+nonisolated enum NotchHUDLayout {
+  static let panelHeight: CGFloat = 28
+  static let leftPanelWidth: CGFloat = 250
+  static let rightPanelWidth: CGFloat = 322
+  static let notchHalfWidth: CGFloat = 106
+  static let notchGap: CGFloat = 4
+  static let edgeMargin: CGFloat = 8
+
+  static func sideFrames(
     for screenFrame: NSRect,
     safeAreaTop: CGFloat
-  ) -> NSRect {
-    let horizontalMargin = min(max(screenFrame.width * 0.035, 28), 72)
-    let width = max(560, min(1_240, screenFrame.width - horizontalMargin * 2))
-    let topInset = max(railHeight, safeAreaTop)
+  ) -> NotchHUDSideFrames {
+    let menuBarHeight = safeAreaTop > 0
+      ? min(max(safeAreaTop, panelHeight), 40)
+      : 30
+    let y = screenFrame.maxY - menuBarHeight
+      + max(0, (menuBarHeight - panelHeight) / 2)
 
-    return NSRect(
-      x: screenFrame.midX - width / 2,
-      y: screenFrame.maxY - topInset,
-      width: width,
-      height: railHeight)
-  }
+    let halfClearance = safeAreaTop > 0 ? notchHalfWidth : 8
+    let leftBoundary = screenFrame.midX - halfClearance - notchGap
+    let rightBoundary = screenFrame.midX + halfClearance + notchGap
 
-  static func detailFrame(
-    below railFrame: NSRect,
-    screenFrame: NSRect
-  ) -> NSRect {
-    let proposed = NSRect(
-      x: railFrame.midX - detailSize.width / 2,
-      y: railFrame.minY - detailSize.height - detailGap,
-      width: detailSize.width,
-      height: detailSize.height)
+    let maximumLeftWidth = max(96, leftBoundary - screenFrame.minX - edgeMargin)
+    let maximumRightWidth = max(112, screenFrame.maxX - edgeMargin - rightBoundary)
+    let resolvedLeftWidth = min(leftPanelWidth, maximumLeftWidth)
+    let resolvedRightWidth = min(rightPanelWidth, maximumRightWidth)
 
-    let minimumX = screenFrame.minX + 12
-    let maximumX = screenFrame.maxX - detailSize.width - 12
+    let left = NSRect(
+      x: max(screenFrame.minX + edgeMargin, leftBoundary - resolvedLeftWidth),
+      y: y,
+      width: resolvedLeftWidth,
+      height: panelHeight)
+    let right = NSRect(
+      x: min(rightBoundary, screenFrame.maxX - edgeMargin - resolvedRightWidth),
+      y: y,
+      width: resolvedRightWidth,
+      height: panelHeight)
 
-    return NSRect(
-      x: min(max(proposed.minX, minimumX), maximumX),
-      y: max(proposed.minY, screenFrame.minY + 12),
-      width: detailSize.width,
-      height: detailSize.height)
+    return NotchHUDSideFrames(left: left, right: right)
   }
 }

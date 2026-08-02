@@ -163,6 +163,11 @@ final class SettingsStore: ObservableObject {
       UserDefaults.standard.set(showInDock, forKey: Keys.showInDock)
     }
   }
+  @Published var showAroundStatusBar: Bool {
+    didSet {
+      UserDefaults.standard.set(showAroundStatusBar, forKey: Keys.showAroundStatusBar)
+    }
+  }
   @Published var notificationsEnabled: Bool {
     didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
   }
@@ -213,6 +218,7 @@ final class SettingsStore: ObservableObject {
     samplingInterval = SamplingIntervalPolicy.normalized(
       defaults.double(forKey: Keys.samplingInterval))
     showInDock = defaults.bool(forKey: Keys.showInDock)
+    showAroundStatusBar = defaults.bool(forKey: Keys.showAroundStatusBar)
     notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
     memoryAlertsEnabled = defaults.object(forKey: Keys.memoryAlertsEnabled) == nil
       ? true
@@ -307,6 +313,7 @@ final class SettingsStore: ObservableObject {
     static let selectedPreset = "selectedPreset"
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
+    static let showAroundStatusBar = NotchHUDController.defaultsKey
     static let notificationsEnabled = "notificationsEnabled"
     static let memoryAlertsEnabled = "memoryAlertsEnabled"
     static let lowBatteryAlertsEnabled = "lowBatteryAlertsEnabled"

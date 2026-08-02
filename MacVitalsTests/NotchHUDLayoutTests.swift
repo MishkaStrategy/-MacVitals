@@ -3,61 +3,57 @@ import XCTest
 @testable import MacVitals
 
 final class NotchHUDLayoutTests: XCTestCase {
-  func testRailFrameStaysCompactAndCentered() {
+  func testSidePanelsHugNotchInsideMenuBarHeight() {
     let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
-    let frame = NotchHUDLayout.railFrame(for: screen, safeAreaTop: 38)
+    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 38)
 
-    XCTAssertEqual(frame.height, 38)
-    XCTAssertLessThanOrEqual(frame.width, 1_240)
-    XCTAssertGreaterThanOrEqual(frame.minX, screen.minX)
-    XCTAssertLessThanOrEqual(frame.maxX, screen.maxX)
-    XCTAssertEqual(frame.midX, screen.midX, accuracy: 0.5)
-    XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.5)
+    XCTAssertEqual(frames.left.height, NotchHUDLayout.panelHeight)
+    XCTAssertEqual(frames.right.height, NotchHUDLayout.panelHeight)
+    XCTAssertEqual(frames.left.minY, frames.right.minY, accuracy: 0.5)
+    XCTAssertGreaterThanOrEqual(frames.left.minY, screen.maxY - 40)
+    XCTAssertLessThanOrEqual(frames.left.maxY, screen.maxY)
+    XCTAssertLessThan(frames.left.maxX, screen.midX)
+    XCTAssertGreaterThan(frames.right.minX, screen.midX)
+    XCTAssertEqual(
+      screen.midX - frames.left.maxX,
+      NotchHUDLayout.notchHalfWidth + NotchHUDLayout.notchGap,
+      accuracy: 0.5)
+    XCTAssertEqual(
+      frames.right.minX - screen.midX,
+      NotchHUDLayout.notchHalfWidth + NotchHUDLayout.notchGap,
+      accuracy: 0.5)
   }
 
-  func testDetailPanelIsCenteredImmediatelyBelowRail() {
+  func testLayoutContainsOnlyOneCompactPanelPerSide() {
     let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
-    let rail = NotchHUDLayout.railFrame(for: screen, safeAreaTop: 38)
-    let detail = NotchHUDLayout.detailFrame(below: rail, screenFrame: screen)
+    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 38)
 
-    XCTAssertEqual(detail.size, NotchHUDLayout.detailSize)
-    XCTAssertEqual(detail.midX, rail.midX, accuracy: 0.5)
-    XCTAssertEqual(
-      rail.minY - detail.maxY,
-      NotchHUDLayout.detailGap,
-      accuracy: 0.5)
+    XCTAssertEqual(frames.left.width, NotchHUDLayout.leftPanelWidth)
+    XCTAssertEqual(frames.right.width, NotchHUDLayout.rightPanelWidth)
+    XCTAssertFalse(frames.left.intersects(frames.right))
+    XCTAssertLessThanOrEqual(frames.left.maxX, screen.midX - NotchHUDLayout.notchHalfWidth)
+    XCTAssertGreaterThanOrEqual(frames.right.minX, screen.midX + NotchHUDLayout.notchHalfWidth)
   }
 
   func testSmallExternalDisplayFallbackRemainsOnScreen() {
     let screen = NSRect(x: 320, y: 100, width: 700, height: 500)
-    let rail = NotchHUDLayout.railFrame(for: screen, safeAreaTop: 0)
-    let detail = NotchHUDLayout.detailFrame(below: rail, screenFrame: screen)
+    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 0)
 
-    XCTAssertGreaterThanOrEqual(rail.minX, screen.minX)
-    XCTAssertLessThanOrEqual(rail.maxX, screen.maxX)
-    XCTAssertGreaterThanOrEqual(detail.minX, screen.minX)
-    XCTAssertLessThanOrEqual(detail.maxX, screen.maxX)
-    XCTAssertGreaterThanOrEqual(detail.minY, screen.minY)
+    XCTAssertGreaterThanOrEqual(frames.left.minX, screen.minX)
+    XCTAssertLessThanOrEqual(frames.left.maxX, screen.maxX)
+    XCTAssertGreaterThanOrEqual(frames.right.minX, screen.minX)
+    XCTAssertLessThanOrEqual(frames.right.maxX, screen.maxX)
+    XCTAssertGreaterThanOrEqual(frames.left.minY, screen.minY)
+    XCTAssertLessThanOrEqual(frames.right.maxY, screen.maxY)
+    XCTAssertFalse(frames.left.intersects(frames.right))
   }
 
   @MainActor
   func testDisabledHUDDoesNotAllocateAppKitPanelsDuringSampling() {
-    let defaults = UserDefaults.standard
-    let key = NotchHUDController.defaultsKey
-    let previous = defaults.object(forKey: key)
-    defer {
-      if let previous {
-        defaults.set(previous, forKey: key)
-      } else {
-        defaults.removeObject(forKey: key)
-      }
-    }
-
-    defaults.set(false, forKey: key)
     let controller = NotchHUDController()
 
     XCTAssertFalse(controller.hasAllocatedPanelsForTesting)
-    controller.update(snapshot: .empty, preferredScreen: nil)
+    controller.update(snapshot: .empty, preferredScreen: nil, enabled: false)
     XCTAssertFalse(controller.hasAllocatedPanelsForTesting)
   }
 }

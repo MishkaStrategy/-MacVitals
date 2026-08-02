@@ -1,0 +1,12 @@
+"Around Status Bar" = "Вокруг строки меню";
+"Compact metrics beside the camera notch" = "Компактные показатели рядом с вырезом камеры";
+"Around the camera notch" = "Вокруг выреза камеры";
+"Show one compact metric capsule on each side of the camera." = "Показывать по одной компактной панели показателей с каждой стороны камеры.";
+"Show around status bar" = "Показывать вокруг строки меню";
+"Hide around status bar" = "Скрыть вокруг строки меню";
+"Display compact performance and power metrics directly beside the notch." = "Показывать компактные показатели производительности и питания прямо рядом с вырезом.";
+"CPU, GPU and memory on the left" = "CPU, GPU и память слева";
+"Fans, temperature, battery and power on the right" = "Вентиляторы, температура, батарея и мощность справа";
+"Compact layout" = "Компактная компоновка";
+"The panels sit inside the menu-bar height without a lower floating dashboard." = "Панели размещаются в высоте строки меню без нижней плавающей панели.";
+"Changes apply immediately and persist after restarting MacVitals." = "Изменения применяются сразу и сохраняются после перезапуска MacVitals.";
