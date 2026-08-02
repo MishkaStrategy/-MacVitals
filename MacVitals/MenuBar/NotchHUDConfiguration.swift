@@ -1,5 +1,19 @@
 import Foundation
 
+nonisolated enum NotchIndicatorCount: String, Codable, CaseIterable, Identifiable, Sendable {
+  case one
+  case two
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .one: return L10n.string("One indicator")
+    case .two: return L10n.string("Two indicators")
+    }
+  }
+}
+
 nonisolated enum NotchIndicatorColorMode: String, Codable, CaseIterable, Identifiable, Sendable {
   case automatic
   case accent
@@ -90,6 +104,7 @@ extension MenuMetric {
 
 nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
   var metric: MenuMetric
+  var secondaryMetric: MenuMetric?
   var showValueText: Bool
   var showSensorName: Bool
   var colorMode: NotchIndicatorColorMode
@@ -100,8 +115,14 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
   var glowIntensity: Double
   var warningThreshold: Double
   var criticalThreshold: Double
+  var secondaryWarningThreshold: Double?
+  var secondaryCriticalThreshold: Double?
   var animateChanges: Bool
   var showOnDisplaysWithoutNotch: Bool
+
+  var indicatorCount: NotchIndicatorCount {
+    secondaryMetric == nil ? .one : .two
+  }
 
   static let minimal = configuration(for: .cpu)
   static let balanced = minimal
@@ -112,6 +133,7 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
     let thresholds = resolvedMetric.notchIndicatorDefaultThresholds
     return NotchHUDConfiguration(
       metric: resolvedMetric,
+      secondaryMetric: nil,
       showValueText: true,
       showSensorName: true,
       colorMode: .automatic,
@@ -122,6 +144,8 @@ nonisolated struct NotchHUDConfiguration: Codable, Equatable, Sendable {
       glowIntensity: 0.62,
       warningThreshold: thresholds.warning,
       criticalThreshold: thresholds.critical,
+      secondaryWarningThreshold: nil,
+      secondaryCriticalThreshold: nil,
       animateChanges: true,
       showOnDisplaysWithoutNotch: false)
   }
@@ -168,33 +192,82 @@ nonisolated enum NotchHUDConfigurationPolicy {
     result.trackOpacity = min(max(result.trackOpacity, 0.05), 0.55)
     result.glowIntensity = min(max(result.glowIntensity, 0), 1)
 
-    let range = result.metric.notchIndicatorRange
-    result.warningThreshold = min(max(result.warningThreshold, range.lowerBound), range.upperBound)
-    result.criticalThreshold = min(
-      max(result.criticalThreshold, range.lowerBound), range.upperBound)
+    let primaryThresholds = normalizedThresholds(
+      metric: result.metric,
+      warning: result.warningThreshold,
+      critical: result.criticalThreshold)
+    result.warningThreshold = primaryThresholds.warning
+    result.criticalThreshold = primaryThresholds.critical
 
-    if result.metric.notchIndicatorLowerIsWorse {
-      if result.warningThreshold < result.criticalThreshold {
-        swap(&result.warningThreshold, &result.criticalThreshold)
-      }
-    } else if result.warningThreshold > result.criticalThreshold {
-      swap(&result.warningThreshold, &result.criticalThreshold)
+    if let requestedSecondary = result.secondaryMetric {
+      let secondary = resolvedSecondaryMetric(requestedSecondary, excluding: result.metric)
+      let defaults = secondary.notchIndicatorDefaultThresholds
+      let secondaryThresholds = normalizedThresholds(
+        metric: secondary,
+        warning: result.secondaryWarningThreshold ?? defaults.warning,
+        critical: result.secondaryCriticalThreshold ?? defaults.critical)
+      result.secondaryMetric = secondary
+      result.secondaryWarningThreshold = secondaryThresholds.warning
+      result.secondaryCriticalThreshold = secondaryThresholds.critical
+    } else {
+      result.secondaryWarningThreshold = nil
+      result.secondaryCriticalThreshold = nil
     }
 
     return result
   }
 
-  static func setting(
-    _ metric: MenuMetric,
-    side _: NotchHUDSide?,
+  static func settingIndicatorCount(
+    _ count: NotchIndicatorCount,
     in configuration: NotchHUDConfiguration
   ) -> NotchHUDConfiguration {
     var result = configuration
-    let resolvedMetric = MenuMetric.notchIndicatorMetrics.contains(metric) ? metric : .cpu
-    result.metric = resolvedMetric
+    switch count {
+    case .one:
+      result.secondaryMetric = nil
+      result.secondaryWarningThreshold = nil
+      result.secondaryCriticalThreshold = nil
+    case .two:
+      if result.secondaryMetric == nil {
+        let metric = defaultSecondaryMetric(excluding: result.metric)
+        let thresholds = metric.notchIndicatorDefaultThresholds
+        result.secondaryMetric = metric
+        result.secondaryWarningThreshold = thresholds.warning
+        result.secondaryCriticalThreshold = thresholds.critical
+      }
+    }
+    return normalized(result)
+  }
+
+  static func setting(
+    _ metric: MenuMetric,
+    side: NotchHUDSide?,
+    in configuration: NotchHUDConfiguration
+  ) -> NotchHUDConfiguration {
+    switch side {
+    case .right:
+      return settingSecondaryMetric(metric, in: configuration)
+    case .left, nil:
+      var result = configuration
+      let resolvedMetric = resolvedMetric(metric)
+      result.metric = resolvedMetric
+      let thresholds = resolvedMetric.notchIndicatorDefaultThresholds
+      result.warningThreshold = thresholds.warning
+      result.criticalThreshold = thresholds.critical
+      return normalized(result)
+    }
+  }
+
+  static func settingSecondaryMetric(
+    _ metric: MenuMetric,
+    in configuration: NotchHUDConfiguration
+  ) -> NotchHUDConfiguration {
+    var result = configuration
+    let resolvedMetric = resolvedSecondaryMetric(metric, excluding: result.metric)
     let thresholds = resolvedMetric.notchIndicatorDefaultThresholds
-    result.warningThreshold = thresholds.warning
-    result.criticalThreshold = thresholds.critical
+    result.secondaryMetric = resolvedMetric
+    result.secondaryWarningThreshold = thresholds.warning
+    result.secondaryCriticalThreshold = thresholds.critical
     return normalized(result)
   }
 
@@ -209,10 +282,51 @@ nonisolated enum NotchHUDConfigurationPolicy {
   static func resolvedPreset(for configuration: NotchHUDConfiguration) -> NotchHUDPreset {
     normalized(configuration) == .minimal ? .minimal : .custom
   }
+
+  private static func resolvedMetric(_ metric: MenuMetric) -> MenuMetric {
+    MenuMetric.notchIndicatorMetrics.contains(metric) ? metric : .cpu
+  }
+
+  private static func resolvedSecondaryMetric(
+    _ metric: MenuMetric,
+    excluding primaryMetric: MenuMetric
+  ) -> MenuMetric {
+    let resolved = resolvedMetric(metric)
+    return resolved == primaryMetric ? defaultSecondaryMetric(excluding: primaryMetric) : resolved
+  }
+
+  private static func defaultSecondaryMetric(excluding primaryMetric: MenuMetric) -> MenuMetric {
+    let preferred: [MenuMetric] = [.temperature, .memory, .battery, .gpu, .fans]
+    return preferred.first(where: { $0 != primaryMetric })
+      ?? MenuMetric.notchIndicatorMetrics.first(where: { $0 != primaryMetric })
+      ?? .cpu
+  }
+
+  private static func normalizedThresholds(
+    metric: MenuMetric,
+    warning: Double,
+    critical: Double
+  ) -> NotchIndicatorThresholds {
+    let range = metric.notchIndicatorRange
+    var normalizedWarning = min(max(warning, range.lowerBound), range.upperBound)
+    var normalizedCritical = min(max(critical, range.lowerBound), range.upperBound)
+
+    if metric.notchIndicatorLowerIsWorse {
+      if normalizedWarning < normalizedCritical {
+        swap(&normalizedWarning, &normalizedCritical)
+      }
+    } else if normalizedWarning > normalizedCritical {
+      swap(&normalizedWarning, &normalizedCritical)
+    }
+
+    return NotchIndicatorThresholds(
+      warning: normalizedWarning,
+      critical: normalizedCritical)
+  }
 }
 
 nonisolated enum NotchHUDConfigurationPersistence {
-  static let currentSchemaVersion = 3
+  static let currentSchemaVersion = 4
 
   private struct VersionEnvelope: Decodable {
     let schemaVersion: Int
@@ -252,7 +366,7 @@ nonisolated enum NotchHUDConfigurationPersistence {
     }
 
     switch envelope.schemaVersion {
-    case currentSchemaVersion:
+    case currentSchemaVersion, 3:
       guard let stored = try? JSONDecoder().decode(StoredConfiguration.self, from: data) else {
         return nil
       }
