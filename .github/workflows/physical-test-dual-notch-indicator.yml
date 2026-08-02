@@ -26,6 +26,7 @@ jobs:
       APP_ARTIFACT_ID: '8837073314'
       APP_ARTIFACT_DIGEST: '04d07981b7da667287219ac37609ff8e61bad6081187f3b009f07728730d3b7e'
       FEATURE_HEAD_SHA: '745d3dbe953c89e92f6d91cc77f497f64dab4e84'
+      SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -33,275 +34,63 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Validate physical single and dual indicator modes
+      - name: Materialize portable physical script
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]]
-          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
-          launchctl print "gui/$(id -u)" >/dev/null
-
-          rm -rf physical-app physical-artifact physical-evidence physical-tools
-          mkdir -p physical-app physical-artifact physical-evidence/profiles physical-tools
-
-          archive="physical-artifact/candidate.zip"
           curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
             -H 'Accept: application/vnd.github+json' \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -o "${archive}" \
-            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${APP_ARTIFACT_ID}/zip"
-          [[ "$(shasum -a 256 "${archive}" | awk '{print $1}')" == "${APP_ARTIFACT_DIGEST}" ]]
-          ditto -x -k "${archive}" physical-artifact/content
-          inner="$(find physical-artifact/content -type f -name 'MacVitals-*.zip' -print -quit)"
-          [[ -n "${inner}" ]]
-          python3 scripts/validate_app_zip.py "${inner}"
-          ditto -x -k "${inner}" physical-app
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/contents/.github/workflows/physical-test-dual-notch-indicator.yml?ref=${SOURCE_WORKFLOW_COMMIT}" \
+            > /tmp/source-workflow.json
 
-          app="${PWD}/physical-app/MacVitals.app"
-          executable="${app}/Contents/MacOS/MacVitals"
-          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
-          [[ -x "${executable}" && "$(lipo -archs "${executable}")" == arm64 ]]
-          [[ -z "$(pgrep -x MacVitals || true)" ]]
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
 
-          cat > physical-tools/Preferences.swift <<'SWIFT'
-          import CoreFoundation
-          import Foundation
-
-          let enabledKey = "experimentalNotchHUDEnabled" as CFString
-          let configurationKey = "notchHUDConfiguration.v1" as CFString
-
-          func synchronize(_ bundle: CFString) {
-            guard CFPreferencesAppSynchronize(bundle) else { exit(20) }
+          payload = json.loads(Path('/tmp/source-workflow.json').read_text(encoding='utf-8'))
+          source = base64.b64decode(payload['content']).decode('utf-8').splitlines()
+          step = next(
+              index for index, line in enumerate(source)
+              if line.strip() == '- name: Validate physical single and dual indicator modes')
+          run_line = next(
+              index for index in range(step + 1, len(source))
+              if source[index].strip() == 'run: |')
+          end = next(
+              index for index in range(run_line + 1, len(source))
+              if source[index].startswith('      - name:'))
+          body = [
+              line[10:] if line.startswith('          ') else line
+              for line in source[run_line + 1:end]
+          ]
+          script = '\n'.join(body) + '\n'
+          replacements = {
+              "printf 'timestamp,cpu_percent,rss_kib,threads\\n'":
+                  "printf 'timestamp,cpu_percent,rss_kib\\n'",
+              'ps -p "${app_pid}" -o lstart=,%cpu=,rss=,thcount=':
+                  'ps -p "${app_pid}" -o lstart=,%cpu=,rss=',
+              '.rsplit(" ",3)': '.rsplit(" ",2)',
           }
-
-          func snapshot(bundle: CFString, path: String) throws {
-            let enabledValue = CFPreferencesCopyAppValue(enabledKey, bundle)
-            let configurationValue = CFPreferencesCopyAppValue(configurationKey, bundle)
-            var payload: [String: Any] = [
-              "enabledExists": enabledValue != nil,
-              "enabledValue": enabledValue as? Bool ?? false,
-              "configurationExists": configurationValue != nil,
-            ]
-            if let data = configurationValue as? Data {
-              payload["configurationBase64"] = data.base64EncodedString()
-            }
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-          }
-
-          func configuration(profile: String) -> [String: Any] {
-            let dual = profile.hasPrefix("dual-")
-            let labels = profile.hasSuffix("labels") && !profile.hasSuffix("no-labels")
-            return [
-              "schemaVersion": 4,
-              "configuration": [
-                "metric": "cpu",
-                "secondaryMetric": dual ? "temperature" : NSNull(),
-                "showValueText": labels,
-                "showSensorName": true,
-                "colorMode": "automatic",
-                "accent": "cyan",
-                "lineThickness": 2.5,
-                "horizontalExtension": 72.0,
-                "trackOpacity": 0.18,
-                "glowIntensity": 0.62,
-                "warningThreshold": 75.0,
-                "criticalThreshold": 90.0,
-                "secondaryWarningThreshold": dual ? 75.0 : NSNull(),
-                "secondaryCriticalThreshold": dual ? 90.0 : NSNull(),
-                "animateChanges": true,
-                "showOnDisplaysWithoutNotch": false,
-              ],
-            ]
-          }
-
-          func apply(bundle: CFString, profile: String) throws {
-            let object = configuration(profile: profile)
-            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-            CFPreferencesSetAppValue(enabledKey, true as CFBoolean, bundle)
-            CFPreferencesSetAppValue(configurationKey, data as CFData, bundle)
-            synchronize(bundle)
-            guard let storedEnabled = CFPreferencesCopyAppValue(enabledKey, bundle) as? Bool,
-                  storedEnabled,
-                  let storedData = CFPreferencesCopyAppValue(configurationKey, bundle) as? Data,
-                  storedData == data else { exit(21) }
-          }
-
-          func restore(bundle: CFString, path: String) throws {
-            let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            let payload = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-            if payload["enabledExists"] as? Bool == true {
-              CFPreferencesSetAppValue(enabledKey, (payload["enabledValue"] as? Bool ?? false) as CFBoolean, bundle)
-            } else {
-              CFPreferencesSetAppValue(enabledKey, nil, bundle)
-            }
-            if payload["configurationExists"] as? Bool == true,
-               let encoded = payload["configurationBase64"] as? String,
-               let original = Data(base64Encoded: encoded) {
-              CFPreferencesSetAppValue(configurationKey, original as CFData, bundle)
-            } else {
-              CFPreferencesSetAppValue(configurationKey, nil, bundle)
-            }
-            synchronize(bundle)
-          }
-
-          guard CommandLine.arguments.count >= 4 else { exit(2) }
-          let command = CommandLine.arguments[1]
-          let bundle = CommandLine.arguments[2] as CFString
-          let argument = CommandLine.arguments[3]
-          switch command {
-          case "snapshot": try snapshot(bundle: bundle, path: argument)
-          case "apply": try apply(bundle: bundle, profile: argument)
-          case "restore": try restore(bundle: bundle, path: argument)
-          default: exit(3)
-          }
-          SWIFT
-          xcrun swiftc -O -target arm64-apple-macos13.0 physical-tools/Preferences.swift -o physical-tools/preferences
-
-          preferences_snapshot="${PWD}/physical-evidence/preferences-before.json"
-          physical-tools/preferences snapshot "${bundle_id}" "${preferences_snapshot}"
-          app_pid=""
-          cleanup() {
-            set +e
-            launchctl unsetenv MACVITALS_NOTCH_DIAGNOSTICS_PATH 2>/dev/null || true
-            if [[ -n "${app_pid:-}" ]]; then
-              kill -TERM "${app_pid}" 2>/dev/null || true
-              for _ in {1..50}; do
-                kill -0 "${app_pid}" 2>/dev/null || break
-                sleep .1
-              done
-              kill -KILL "${app_pid}" 2>/dev/null || true
-            fi
-            physical-tools/preferences restore "${bundle_id}" "${preferences_snapshot}" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          run_profile() {
-            local profile="$1"
-            local expected_count="$2"
-            local expected_labels="$3"
-            local diagnostics="${PWD}/physical-evidence/profiles/${profile}-controller.json"
-            local validation="${PWD}/physical-evidence/profiles/${profile}-validation.json"
-
-            echo "Testing profile: ${profile}"
-            physical-tools/preferences apply "${bundle_id}" "${profile}"
-            rm -f "${diagnostics}"
-            launchctl setenv MACVITALS_NOTCH_DIAGNOSTICS_PATH "${diagnostics}"
-            /usr/bin/open -na "${app}" --args -ApplePersistenceIgnoreState YES
-            app_pid=""
-            for _ in {1..150}; do
-              app_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
-              [[ -n "${app_pid}" && -s "${diagnostics}" ]] && break
-              sleep .1
-            done
-            [[ -n "${app_pid}" && -s "${diagnostics}" ]]
-
-            sleep 4
-            [[ -s "${diagnostics}" ]]
-            DIAGNOSTICS="${diagnostics}" VALIDATION="${validation}" PROFILE="${profile}" \
-            EXPECTED_COUNT="${expected_count}" EXPECTED_LABELS="${expected_labels}" \
-            FEATURE_HEAD_SHA="${FEATURE_HEAD_SHA}" APP_PID="${app_pid}" python3 - <<'PY'
-          import json, math, os
-
-          d = json.load(open(os.environ['DIAGNOSTICS'], encoding='utf-8'))
-          expected_count = os.environ['EXPECTED_COUNT']
-          expected_labels = os.environ['EXPECTED_LABELS'] == 'true'
-          assert d['event'] in ('ordered', 'ordered-next-run-loop'), d
-          assert d['enabled'] is True, d
-          assert d['panelAllocated'] is True and d['panelVisible'] is True, d
-          assert d['panelWindowNumber'] > 0, d
-          assert d['safeAreaTop'] > 0, d
-          assert d['indicatorCount'] == expected_count, d
-          assert d['primaryMetric'] == 'cpu', d
-          assert d['showValueText'] is expected_labels, d
-          assert d['showSensorName'] is True, d
-          assert 0 <= d['primaryProgress'] <= 1, d
-          assert 0 <= d['secondaryProgress'] <= 1, d
-
-          resolved_safe_area = min(max(d['safeAreaTop'], 30), 44)
-          expected_height = resolved_safe_area + (30 if expected_labels else 8)
-          assert abs(d['frameWidth'] - 356) <= 3, d
-          assert abs(d['frameHeight'] - expected_height) <= 3, d
-          expected_x = d['screenX'] + (d['screenWidth'] - d['frameWidth']) / 2
-          assert abs(d['frameX'] - expected_x) <= 3, d
-          assert abs((d['frameY'] + d['frameHeight']) - (d['screenY'] + d['screenHeight'])) <= 3, d
-
-          if expected_count == 'one':
-              assert d['secondaryMetric'] is None, d
-              assert math.isclose(d['primaryTrimStart'], 0, abs_tol=1e-6), d
-              assert math.isclose(d['primaryTrimEnd'], d['primaryProgress'], abs_tol=1e-6), d
-          else:
-              assert d['secondaryMetric'] == 'temperature', d
-              split_start, split_end = 0.492, 0.508
-              expected_primary_start = split_start * (1 - d['primaryProgress'])
-              expected_secondary_end = split_end + (1 - split_end) * d['secondaryProgress']
-              assert math.isclose(d['primaryTrimStart'], expected_primary_start, abs_tol=1e-6), d
-              assert math.isclose(d['primaryTrimEnd'], split_start, abs_tol=1e-6), d
-              assert math.isclose(d['secondaryTrimStart'], split_end, abs_tol=1e-6), d
-              assert math.isclose(d['secondaryTrimEnd'], expected_secondary_end, abs_tol=1e-6), d
-              assert d['primaryTrimEnd'] < d['secondaryTrimStart'], d
-
-          result = {
-              'result': 'passed',
-              'profile': os.environ['PROFILE'],
-              'featureHead': os.environ['FEATURE_HEAD_SHA'],
-              'processPID': int(os.environ['APP_PID']),
-              'physicalSafeAreaTop': d['safeAreaTop'],
-              'overlayWindowCount': 1,
-              'oldTwoPanelLayoutAbsent': True,
-              'appKitPanel': d,
-          }
-          json.dump(result, open(os.environ['VALIDATION'], 'w', encoding='utf-8'), indent=2, sort_keys=True)
+          for old, new in replacements.items():
+              if script.count(old) != 1:
+                  raise SystemExit(f'expected one runtime sampling target: {old!r}')
+              script = script.replace(old, new, 1)
+          Path('/tmp/run-physical-dual-notch.sh').write_text(script, encoding='utf-8')
           PY
+          grep -F "timestamp,cpu_percent,rss_kib" /tmp/run-physical-dual-notch.sh
+          grep -F 'ps -p "${app_pid}" -o lstart=,%cpu=,rss=' /tmp/run-physical-dual-notch.sh
+          bash -n /tmp/run-physical-dual-notch.sh
 
-            if [[ "${profile}" == dual-labels ]]; then
-              printf 'timestamp,cpu_percent,rss_kib,threads\n' > physical-evidence/dual-runtime.csv
-              for _ in {1..15}; do
-                kill -0 "${app_pid}"
-                ps -p "${app_pid}" -o lstart=,%cpu=,rss=,thcount= \
-                  | awk '{$1=$1; print}' \
-                  | python3 -c 'import sys; p=sys.stdin.read().strip().rsplit(" ",3); print(",".join(p))' \
-                  >> physical-evidence/dual-runtime.csv
-                sleep 2
-              done
-              kill -0 "${app_pid}"
-              printf 'dual-process-alive-after-30s=true\n' > physical-evidence/runtime-result.txt
-            else
-              sleep 2
-              kill -0 "${app_pid}"
-            fi
-
-            kill -TERM "${app_pid}"
-            for _ in {1..50}; do
-              kill -0 "${app_pid}" 2>/dev/null || break
-              sleep .1
-            done
-            kill -KILL "${app_pid}" 2>/dev/null || true
-            app_pid=""
-            launchctl unsetenv MACVITALS_NOTCH_DIAGNOSTICS_PATH
-          }
-
-          run_profile single-labels one true
-          run_profile single-no-labels one false
-          run_profile dual-labels two true
-          run_profile dual-no-labels two false
-
-          physical-tools/preferences restore "${bundle_id}" "${preferences_snapshot}"
-          python3 - <<'PY' > physical-evidence/summary.json
-          import glob, json
-          profiles = [json.load(open(path, encoding='utf-8')) for path in sorted(glob.glob('physical-evidence/profiles/*-validation.json'))]
-          assert len(profiles) == 4, profiles
-          print(json.dumps({
-              'result': 'passed',
-              'profiles': profiles,
-              'preferencesRestored': True,
-              'captureScope': 'instrumented AppKit state only; no desktop capture',
-          }, indent=2, sort_keys=True))
-          PY
-          printf 'preferences-restored=true\nprivacy-scan=passed\n' > physical-evidence/final-result.txt
+      - name: Validate physical single and dual indicator modes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash /tmp/run-physical-dual-notch.sh
 
       - name: Upload physical evidence
         if: always()
