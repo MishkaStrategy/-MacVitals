@@ -115,6 +115,45 @@ final class MenuLayoutRulesTests: XCTestCase {
         hasValidStoredConfiguration: false))
   }
 
+  func testCustomPresetRestoresItsSavedLayout() {
+    let custom: [MenuMetric] = [.battery, .cpu, .temperature]
+    XCTAssertEqual(
+      MenuPresetApplication.metrics(for: .custom, customMetrics: custom),
+      custom)
+  }
+
+  func testNamedPresetDoesNotOverwriteSavedCustomLayout() {
+    let custom: [MenuMetric] = [.battery, .cpu]
+    XCTAssertEqual(
+      MenuPresetApplication.metrics(for: .power, customMetrics: custom),
+      MenuPreset.power.metrics)
+    XCTAssertEqual(
+      MenuPresetApplication.metrics(for: .custom, customMetrics: custom),
+      custom)
+  }
+
+  func testInterruptedCustomSelectionPromotesActiveLayout() {
+    let active: [MenuMetric] = [.memory, .battery, .cpu]
+    XCTAssertEqual(
+      MenuPresetApplication.initialCustomMetrics(
+        storedCustomMetrics: [.cpu],
+        storedPreset: .performance,
+        resolvedPreset: .custom,
+        activeMetrics: active),
+      active)
+  }
+
+  func testExplicitCustomPresetUsesStoredCustomLayout() {
+    let saved: [MenuMetric] = [.temperature, .fans, .battery]
+    XCTAssertEqual(
+      MenuPresetApplication.initialCustomMetrics(
+        storedCustomMetrics: saved,
+        storedPreset: .custom,
+        resolvedPreset: .custom,
+        activeMetrics: MenuPreset.performance.metrics),
+      saved)
+  }
+
   func testMenuConfigurationRoundTripNormalizesMetrics() throws {
     let encoded = try XCTUnwrap(
       MenuConfigurationPersistence.encode([.cpu, .memory, .cpu, .battery]))

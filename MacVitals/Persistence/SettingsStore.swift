@@ -107,6 +107,30 @@ nonisolated enum MenuPresetResolution {
   }
 }
 
+nonisolated enum MenuPresetApplication {
+  static func metrics(
+    for preset: MenuPreset,
+    customMetrics: [MenuMetric]
+  ) -> [MenuMetric] {
+    preset == .custom
+      ? MenuLayoutRules.normalized(customMetrics)
+      : preset.metrics
+  }
+
+  static func initialCustomMetrics(
+    storedCustomMetrics: [MenuMetric]?,
+    storedPreset: MenuPreset,
+    resolvedPreset: MenuPreset,
+    activeMetrics: [MenuMetric]
+  ) -> [MenuMetric] {
+    let normalizedActive = MenuLayoutRules.normalized(activeMetrics)
+    if resolvedPreset == .custom, storedPreset != .custom {
+      return normalizedActive
+    }
+    return MenuLayoutRules.normalized(storedCustomMetrics ?? normalizedActive)
+  }
+}
+
 nonisolated enum MenuConfigurationPersistence {
   static let currentSchemaVersion = 2
 
@@ -199,6 +223,8 @@ final class SettingsStore: ObservableObject {
     .unknown
 
   private let launchAtLoginManager: any LaunchAtLoginManaging
+  private var customMetrics: [MenuMetric] = []
+  private var hasSavedCustomMetrics = false
 
   var launchAtLogin: Bool { launchAtLoginState.isEnabled }
 
@@ -238,16 +264,36 @@ final class SettingsStore: ObservableObject {
     let storedConfigurationData = defaults.data(forKey: Keys.menuConfiguration)
     let storedMetrics: [MenuMetric]? =
       storedConfigurationData.flatMap { MenuConfigurationPersistence.decode($0) }
-    let initialMetrics =
+    let initialActiveMetrics =
       storedMetrics
       ?? (storedPreset == .custom ? MenuPreset.performance.metrics : storedPreset.metrics)
     let initialPreset = MenuPresetResolution.resolve(
       storedPreset: storedPreset,
-      metrics: initialMetrics,
+      metrics: initialActiveMetrics,
       preserveExplicitCustom: storedMetrics != nil)
 
+    let storedCustomMetrics = defaults.data(forKey: Keys.customMenuConfiguration)
+      .flatMap { MenuConfigurationPersistence.decode($0) }
+    let resolvedCustomMetrics = MenuPresetApplication.initialCustomMetrics(
+      storedCustomMetrics: storedCustomMetrics,
+      storedPreset: storedPreset,
+      resolvedPreset: initialPreset,
+      activeMetrics: initialActiveMetrics)
+    let shouldPersistCustomRecovery =
+      initialPreset == .custom
+      && storedCustomMetrics != Optional(resolvedCustomMetrics)
+
+    customMetrics = resolvedCustomMetrics
+    hasSavedCustomMetrics = storedCustomMetrics != nil || initialPreset == .custom
     selectedPreset = initialPreset
-    enabledMetrics = initialMetrics
+    enabledMetrics =
+      initialPreset == .custom ? resolvedCustomMetrics : initialActiveMetrics
+
+    if shouldPersistCustomRecovery,
+      let data = MenuConfigurationPersistence.encode(resolvedCustomMetrics)
+    {
+      defaults.set(data, forKey: Keys.customMenuConfiguration)
+    }
     if MenuPresetResolution.shouldPersistCorrection(
       storedRawValue: storedPresetRawValue,
       resolvedPreset: initialPreset,
@@ -259,18 +305,31 @@ final class SettingsStore: ObservableObject {
   }
 
   func applyPreset(_ preset: MenuPreset) {
-    guard preset != .custom else { return }
+    if preset == .custom {
+      if !hasSavedCustomMetrics {
+        saveCustomMetrics(enabledMetrics)
+      }
+      enabledMetrics = MenuPresetApplication.metrics(
+        for: preset,
+        customMetrics: customMetrics)
+      return
+    }
     enabledMetrics = preset.metrics
   }
 
   func setMetric(_ metric: MenuMetric, enabled: Bool) {
-    enabledMetrics = MenuLayoutRules.setting(metric, enabled: enabled, in: enabledMetrics)
+    let updated = MenuLayoutRules.setting(
+      metric,
+      enabled: enabled,
+      in: enabledMetrics)
+    saveCustomMetrics(updated)
     selectedPreset = .custom
   }
 
   func move(from source: IndexSet, to destination: Int) {
-    enabledMetrics.move(fromOffsets: source, toOffset: destination)
-    enabledMetrics = MenuLayoutRules.normalized(enabledMetrics)
+    var updated = enabledMetrics
+    updated.move(fromOffsets: source, toOffset: destination)
+    saveCustomMetrics(updated)
     selectedPreset = .custom
   }
 
@@ -296,6 +355,14 @@ final class SettingsStore: ObservableObject {
     selectedPreset = .performance
   }
 
+  private func saveCustomMetrics(_ metrics: [MenuMetric]) {
+    customMetrics = MenuLayoutRules.normalized(metrics)
+    hasSavedCustomMetrics = true
+    if let data = MenuConfigurationPersistence.encode(customMetrics) {
+      UserDefaults.standard.set(data, forKey: Keys.customMenuConfiguration)
+    }
+  }
+
   private func persistMenuConfiguration() {
     if let data = MenuConfigurationPersistence.encode(enabledMetrics) {
       UserDefaults.standard.set(data, forKey: Keys.menuConfiguration)
@@ -304,6 +371,7 @@ final class SettingsStore: ObservableObject {
 
   private enum Keys {
     static let menuConfiguration = "menuConfiguration.v1"
+    static let customMenuConfiguration = "customMenuConfiguration.v1"
     static let selectedPreset = "selectedPreset"
     static let samplingInterval = "samplingInterval"
     static let showInDock = "showInDock"
