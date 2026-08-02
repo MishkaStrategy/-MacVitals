@@ -1,13 +1,8 @@
 import Foundation
 
 nonisolated enum NotchHUDTileSize: String, Codable, CaseIterable, Identifiable, Sendable {
-  case automatic
-  case compact
-  case regular
-  case wide
-
+  case automatic, compact, regular, wide
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .automatic: return L10n.string("Automatic")
@@ -19,14 +14,8 @@ nonisolated enum NotchHUDTileSize: String, Codable, CaseIterable, Identifiable, 
 }
 
 nonisolated enum NotchHUDTileContentStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-  case automatic
-  case iconValue
-  case labelValue
-  case iconLabelValue
-  case valueOnly
-
+  case automatic, iconValue, labelValue, iconLabelValue, valueOnly
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .automatic: return L10n.string("Automatic")
@@ -37,7 +26,7 @@ nonisolated enum NotchHUDTileContentStyle: String, Codable, CaseIterable, Identi
     }
   }
 
-  func showsIcon(globalShowsLabels: Bool) -> Bool {
+  func showsIcon(globalShowsLabels _: Bool) -> Bool {
     switch self {
     case .automatic, .iconValue, .iconLabelValue: return true
     case .labelValue, .valueOnly: return false
@@ -54,12 +43,8 @@ nonisolated enum NotchHUDTileContentStyle: String, Codable, CaseIterable, Identi
 }
 
 nonisolated enum NotchHUDTileAlignment: String, Codable, CaseIterable, Identifiable, Sendable {
-  case leading
-  case center
-  case trailing
-
+  case leading, center, trailing
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .leading: return L10n.string("Leading")
@@ -70,12 +55,8 @@ nonisolated enum NotchHUDTileAlignment: String, Codable, CaseIterable, Identifia
 }
 
 nonisolated enum NotchHUDTileEmphasis: String, Codable, CaseIterable, Identifiable, Sendable {
-  case muted
-  case normal
-  case prominent
-
+  case muted, normal, prominent
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .muted: return L10n.string("Muted")
@@ -83,7 +64,6 @@ nonisolated enum NotchHUDTileEmphasis: String, Codable, CaseIterable, Identifiab
     case .prominent: return L10n.string("Prominent")
     }
   }
-
   var scale: Double {
     switch self {
     case .muted: return 0.92
@@ -94,13 +74,8 @@ nonisolated enum NotchHUDTileEmphasis: String, Codable, CaseIterable, Identifiab
 }
 
 nonisolated enum NotchHUDTilePrecision: String, Codable, CaseIterable, Identifiable, Sendable {
-  case automatic
-  case zero
-  case one
-  case two
-
+  case automatic, zero, one, two
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .automatic: return L10n.string("Automatic")
@@ -109,7 +84,6 @@ nonisolated enum NotchHUDTilePrecision: String, Codable, CaseIterable, Identifia
     case .two: return L10n.string("2 decimals")
     }
   }
-
   var fractionDigits: Int? {
     switch self {
     case .automatic: return nil
@@ -121,14 +95,8 @@ nonisolated enum NotchHUDTilePrecision: String, Codable, CaseIterable, Identifia
 }
 
 nonisolated enum NotchHUDTileColorMode: String, Codable, CaseIterable, Identifiable, Sendable {
-  case inherited
-  case monochrome
-  case accent
-  case semantic
-  case custom
-
+  case inherited, monochrome, accent, semantic, custom
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .inherited: return L10n.string("Inherited")
@@ -141,18 +109,8 @@ nonisolated enum NotchHUDTileColorMode: String, Codable, CaseIterable, Identifia
 }
 
 nonisolated enum NotchHUDTileAccent: String, Codable, CaseIterable, Identifiable, Sendable {
-  case white
-  case blue
-  case cyan
-  case green
-  case yellow
-  case orange
-  case red
-  case pink
-  case purple
-
+  case white, blue, cyan, green, yellow, orange, red, pink, purple
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .white: return L10n.string("White")
@@ -169,13 +127,8 @@ nonisolated enum NotchHUDTileAccent: String, Codable, CaseIterable, Identifiable
 }
 
 nonisolated enum NotchHUDTileBackgroundStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-  case none
-  case subtle
-  case filled
-  case outline
-
+  case none, subtle, filled, outline
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .none: return L10n.string("None")
@@ -187,11 +140,8 @@ nonisolated enum NotchHUDTileBackgroundStyle: String, Codable, CaseIterable, Ide
 }
 
 nonisolated enum NotchHUDThresholdDirection: String, Codable, CaseIterable, Identifiable, Sendable {
-  case highIsCritical
-  case lowIsCritical
-
+  case highIsCritical, lowIsCritical
   var id: String { rawValue }
-
   var displayName: String {
     switch self {
     case .highIsCritical: return L10n.string("Higher is worse")
@@ -201,10 +151,7 @@ nonisolated enum NotchHUDThresholdDirection: String, Codable, CaseIterable, Iden
 }
 
 nonisolated enum NotchHUDTileSemanticState: Sendable {
-  case normal
-  case warning
-  case critical
-  case unavailable
+  case normal, warning, critical, unavailable
 }
 
 nonisolated struct NotchHUDTileConfiguration: Codable, Equatable, Sendable {
@@ -225,24 +172,16 @@ nonisolated struct NotchHUDTileConfiguration: Codable, Equatable, Sendable {
   var thresholdDirection: NotchHUDThresholdDirection
 
   static func defaultConfiguration(for metric: MenuMetric) -> NotchHUDTileConfiguration {
-    let thresholds: (warning: Double, critical: Double, direction: NotchHUDThresholdDirection)
+    let thresholds: (Double, Double, NotchHUDThresholdDirection)
     switch metric {
-    case .cpu, .gpu:
-      thresholds = (70, 90, .highIsCritical)
-    case .memory:
-      thresholds = (75, 90, .highIsCritical)
-    case .temperature:
-      thresholds = (75, 90, .highIsCritical)
-    case .battery:
-      thresholds = (25, 10, .lowIsCritical)
-    case .fans:
-      thresholds = (4_000, 6_000, .highIsCritical)
-    case .systemPower:
-      thresholds = (40, 80, .highIsCritical)
-    case .adapterPower:
-      thresholds = (45, 90, .highIsCritical)
-    case .powerStatus:
-      thresholds = (70, 90, .highIsCritical)
+    case .cpu, .gpu: thresholds = (70, 90, .highIsCritical)
+    case .memory: thresholds = (75, 90, .highIsCritical)
+    case .temperature: thresholds = (75, 90, .highIsCritical)
+    case .battery: thresholds = (25, 10, .lowIsCritical)
+    case .fans: thresholds = (4_000, 6_000, .highIsCritical)
+    case .systemPower: thresholds = (40, 80, .highIsCritical)
+    case .adapterPower: thresholds = (45, 90, .highIsCritical)
+    case .powerStatus: thresholds = (70, 90, .highIsCritical)
     }
 
     return NotchHUDTileConfiguration(
@@ -258,9 +197,9 @@ nonisolated struct NotchHUDTileConfiguration: Codable, Equatable, Sendable {
       accent: .blue,
       backgroundStyle: .none,
       backgroundOpacity: 0.18,
-      warningThreshold: thresholds.warning,
-      criticalThreshold: thresholds.critical,
-      thresholdDirection: thresholds.direction)
+      warningThreshold: thresholds.0,
+      criticalThreshold: thresholds.1,
+      thresholdDirection: thresholds.2)
   }
 }
 
@@ -271,9 +210,7 @@ nonisolated enum NotchHUDTileConfigurationPolicy {
   ) -> NotchHUDTileConfiguration {
     var result = configuration
     result.customLabel = String(
-      result.customLabel
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .prefix(12))
+      result.customLabel.trimmingCharacters(in: .whitespacesAndNewlines).prefix(12))
     result.symbolName = result.symbolName.trimmingCharacters(in: .whitespacesAndNewlines)
     if result.symbolName.isEmpty { result.symbolName = metric.defaultSymbol }
     result.backgroundOpacity = min(max(result.backgroundOpacity, 0), 1)
@@ -281,14 +218,16 @@ nonisolated enum NotchHUDTileConfigurationPolicy {
     result.criticalThreshold = min(max(result.criticalThreshold, -999), 99_999)
 
     switch result.thresholdDirection {
-    case .highIsCritical:
-      if result.warningThreshold > result.criticalThreshold {
-        swap(&result.warningThreshold, &result.criticalThreshold)
-      }
-    case .lowIsCritical:
-      if result.criticalThreshold > result.warningThreshold {
-        swap(&result.warningThreshold, &result.criticalThreshold)
-      }
+    case .highIsCritical where result.warningThreshold > result.criticalThreshold:
+      let previousWarning = result.warningThreshold
+      result.warningThreshold = result.criticalThreshold
+      result.criticalThreshold = previousWarning
+    case .lowIsCritical where result.criticalThreshold > result.warningThreshold:
+      let previousCritical = result.criticalThreshold
+      result.criticalThreshold = result.warningThreshold
+      result.warningThreshold = previousCritical
+    default:
+      break
     }
     return result
   }
@@ -300,7 +239,6 @@ nonisolated enum NotchHUDTileConfigurationPolicy {
     guard let value = NotchHUDTileValueFormatter.numericValue(from: renderedValue) else {
       return .unavailable
     }
-
     switch configuration.thresholdDirection {
     case .highIsCritical:
       if value >= configuration.criticalThreshold { return .critical }
@@ -323,8 +261,7 @@ nonisolated enum NotchHUDTileValueFormatter {
   ) -> String {
     let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let match = numericMatch(in: trimmed) else { return trimmed }
-
-    let numericString = String(trimmed[match.range])
+    let numericString = String(trimmed[match])
     guard let numericValue = Double(numericString.replacingOccurrences(of: ",", with: ".")) else {
       return trimmed
     }
@@ -342,14 +279,13 @@ nonisolated enum NotchHUDTileValueFormatter {
     }
 
     guard configuration.showsUnit else { return formattedNumber }
-    let suffix = String(trimmed[match.upperBound...])
-    return formattedNumber + suffix
+    return formattedNumber + String(trimmed[match.upperBound...])
   }
 
   static func numericValue(from renderedValue: String) -> Double? {
     let trimmed = renderedValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let match = numericMatch(in: trimmed) else { return nil }
-    return Double(String(trimmed[match.range]).replacingOccurrences(of: ",", with: "."))
+    return Double(String(trimmed[match]).replacingOccurrences(of: ",", with: "."))
   }
 
   private static func numericMatch(in value: String) -> Range<String.Index>? {
@@ -385,7 +321,8 @@ extension MenuMetric {
     case .fans: return ["fan", "wind", "tornado"]
     case .systemPower: return ["bolt", "bolt.horizontal.fill", "waveform.path.ecg"]
     case .adapterPower: return ["powerplug", "powerplug.fill", "cable.connector"]
-    case .powerStatus: return ["gauge.with.dots.needle.50percent", "speedometer", "chart.line.uptrend.xyaxis"]
+    case .powerStatus:
+      return ["gauge.with.dots.needle.50percent", "speedometer", "chart.line.uptrend.xyaxis"]
     }
   }
 }
