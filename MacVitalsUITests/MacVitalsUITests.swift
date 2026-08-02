@@ -98,6 +98,7 @@ final class MacVitalsUITests: XCTestCase {
     assertElementExists("lowBatteryAlertThresholdSlider", in: app, file: file, line: line)
 
     selectTab(labels.menuBar, language: language, in: app, file: file, line: line)
+    assertModernMenuBarPreview(in: app, file: file, line: line)
     assertElementExists("menuPresetPicker", in: app, file: file, line: line)
     assertElementExists("menuMetricLayoutList", in: app, file: file, line: line)
     assertElementExists("restoreDefaultsButton", in: app, file: file, line: line)
@@ -115,6 +116,30 @@ final class MacVitalsUITests: XCTestCase {
     assertElementExists("privacySupportBundleSummary", in: app, file: file, line: line)
 
     app.terminate()
+  }
+
+  private func assertModernMenuBarPreview(
+    in app: XCUIApplication,
+    file: StaticString,
+    line: UInt
+  ) {
+    let preview = app.descendants(matching: .any)
+      .matching(identifier: "menuBarLivePreview")
+      .firstMatch
+    XCTAssertTrue(
+      preview.waitForExistence(timeout: 3),
+      "Missing accessibility element: menuBarLivePreview",
+      file: file,
+      line: line)
+
+    let value = preview.value as? String ?? ""
+    for legacyToken in ["CPU", "GPU", "RAM", "🌡", "🔋", "⚡", "🔌"] {
+      XCTAssertFalse(
+        value.contains(legacyToken),
+        "Legacy menu-bar preview token is still exposed: \(legacyToken)",
+        file: file,
+        line: line)
+    }
   }
 
   private func assertThemeLaunch(
