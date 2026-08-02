@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 @MainActor
@@ -23,9 +24,10 @@ final class NotchHUDController {
     configuration: NotchHUDConfiguration = .minimal
   ) {
     self.enabled = enabled
+    writeDiagnostics(event: "update", screen: preferredScreen)
 
     guard enabled else {
-      hide()
+      hide(event: "disabled")
       return
     }
 
@@ -35,30 +37,39 @@ final class NotchHUDController {
   }
 
   func hide() {
+    hide(event: "hidden")
+  }
+
+  private func hide(event: String) {
     panel?.orderOut(nil)
     activeScreenNumber = nil
+    writeDiagnostics(event: event)
   }
 
   private func applyVisibility(preferredScreen: NSScreen?) {
     guard enabled else {
-      hide()
+      hide(event: "disabled-before-visibility")
       return
     }
 
     guard let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else {
-      hide()
+      hide(event: "no-screen")
       return
     }
 
     let configuration = state.configuration
     let safeAreaTop = screen.safeAreaInsets.top
     guard configuration.showOnDisplaysWithoutNotch || safeAreaTop > 0 else {
-      hide()
+      hide(event: "screen-without-notch")
+      writeDiagnostics(event: "screen-without-notch", screen: screen)
       return
     }
 
     ensurePanel()
-    guard let panel else { return }
+    guard let panel else {
+      writeDiagnostics(event: "panel-allocation-failed", screen: screen)
+      return
+    }
 
     activeScreenNumber = screen.deviceDescription[
       NSDeviceDescriptionKey("NSScreenNumber")
@@ -71,6 +82,11 @@ final class NotchHUDController {
       configuration: configuration)
     panel.setFrame(frame, display: true)
     panel.orderFrontRegardless()
+    writeDiagnostics(event: "ordered", screen: screen, frame: frame)
+
+    DispatchQueue.main.async { [weak self, weak screen] in
+      self?.writeDiagnostics(event: "ordered-next-run-loop", screen: screen, frame: frame)
+    }
   }
 
   private func ensurePanel() {
@@ -80,6 +96,50 @@ final class NotchHUDController {
     indicatorPanel.contentViewController = NSHostingController(
       rootView: NotchHUDIndicatorView(state: state))
     panel = indicatorPanel
+  }
+
+  private func writeDiagnostics(
+    event: String,
+    screen: NSScreen? = nil,
+    frame: NSRect? = nil
+  ) {
+    guard let path = ProcessInfo.processInfo.environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
+      !path.isEmpty
+    else {
+      return
+    }
+
+    var payload: [String: Any] = [
+      "event": event,
+      "enabled": enabled,
+      "panelAllocated": panel != nil,
+      "panelVisible": panel?.isVisible ?? false,
+      "panelWindowNumber": panel?.windowNumber ?? 0,
+      "screenCount": NSScreen.screens.count,
+    ]
+
+    if let screen {
+      payload["safeAreaTop"] = screen.safeAreaInsets.top
+      payload["screenX"] = screen.frame.minX
+      payload["screenY"] = screen.frame.minY
+      payload["screenWidth"] = screen.frame.width
+      payload["screenHeight"] = screen.frame.height
+    }
+
+    if let frame {
+      payload["frameX"] = frame.minX
+      payload["frameY"] = frame.minY
+      payload["frameWidth"] = frame.width
+      payload["frameHeight"] = frame.height
+    }
+
+    guard let data = try? JSONSerialization.data(
+      withJSONObject: payload,
+      options: [.prettyPrinted, .sortedKeys])
+    else {
+      return
+    }
+    try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
   }
 
   private static func makePanel() -> NSPanel {
