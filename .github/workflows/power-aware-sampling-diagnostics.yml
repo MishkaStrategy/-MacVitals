@@ -1,0 +1,78 @@
+name: Diagnose Power-Aware Sampling Build
+
+on:
+  push:
+    branches: [validation/power-aware-sampling-intervals]
+    paths:
+      - .github/workflows/power-aware-sampling-diagnostics.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    env:
+      PRODUCT_SHA: 44ddcc72d32f60c921d0f520110dac41025322f2
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Build and capture compiler errors
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source_dir="${RUNNER_TEMP}/macvitals-power-aware-diagnostics"
+          log_file="${RUNNER_TEMP}/macvitals-power-aware-diagnostics.log"
+          rm -rf -- "${source_dir}" "${log_file}"
+          mkdir -p "${source_dir}"
+          cd "${source_dir}"
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64)"
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --no-tags --depth=1 origin "${PRODUCT_SHA}"
+          git checkout -q --detach FETCH_HEAD
+          export DEVELOPER_DIR="$(xcode-select -p)"
+          xcodegen_path="$(command -v xcodegen 2>/dev/null || true)"
+          [[ -x "${xcodegen_path}" ]] || xcodegen_path=/opt/homebrew/bin/xcodegen
+          python3 scripts/materialize_app_icon.py
+          "${xcodegen_path}" generate
+          set +e
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/power-aware-diagnostics \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build > "${log_file}" 2>&1
+          status=$?
+          set -e
+
+          errors="$(grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)|The following build commands failed' "${log_file}" | tail -n 240 || true)"
+          printf '%s\n' "${errors}"
+
+          status_repo="${RUNNER_TEMP}/macvitals-power-aware-diagnostics-status"
+          rm -rf "${status_repo}"
+          git clone -q --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "${status_repo}"
+          cd "${status_repo}"
+          mkdir -p build-status
+          STATUS="${status}" PRODUCT_SHA="${PRODUCT_SHA}" ERRORS="${errors}" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "schemaVersion": 1,
+              "productSourceSha": os.environ["PRODUCT_SHA"],
+              "result": "success" if os.environ["STATUS"] == "0" else "failure",
+              "diagnostics": os.environ.get("ERRORS", ""),
+          }
+          Path("build-status/power-aware-sampling-diagnostics.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-status/power-aware-sampling-diagnostics.json
+          git commit -m "ci: record power-aware sampling diagnostics [skip ci]"
+          git push -q origin "HEAD:${GITHUB_REF_NAME}"
+          exit ${status}
