@@ -10,16 +10,13 @@ final class NotchHUDState: ObservableObject {
 @MainActor
 struct NotchHUDSideView: View {
   @ObservedObject var state: NotchHUDState
-  @ObservedObject var caffeinate: CaffeinateController
   let side: NotchHUDSide
 
   var body: some View {
     NotchHUDSideContentView(
       snapshot: state.snapshot,
       configuration: state.configuration,
-      side: side,
-      isCaffeinateActive: caffeinate.isActive,
-      onToggleCaffeinate: caffeinate.toggle)
+      side: side)
   }
 }
 
@@ -28,8 +25,6 @@ struct NotchHUDSideContentView: View {
   let snapshot: SystemSnapshot
   let configuration: NotchHUDConfiguration
   let side: NotchHUDSide
-  var isCaffeinateActive = false
-  var onToggleCaffeinate: (() -> Void)? = nil
 
   var body: some View {
     HStack(spacing: CGFloat(configuration.density.itemSpacing)) {
@@ -45,10 +40,6 @@ struct NotchHUDSideContentView: View {
             .fill(Color.white.opacity(0.14))
             .frame(width: 1, height: separatorHeight)
         }
-      }
-
-      if showsCaffeinateButton {
-        caffeinateButton
       }
     }
     .padding(.horizontal, CGFloat(configuration.density.horizontalPadding))
@@ -73,40 +64,6 @@ struct NotchHUDSideContentView: View {
     guard configuration.hideUnavailableMetrics else { return configuredMetrics }
     let available = configuredMetrics.filter { isAvailable($0) }
     return available.isEmpty ? Array(configuredMetrics.prefix(1)) : available
-  }
-
-  private var showsCaffeinateButton: Bool {
-    guard onToggleCaffeinate != nil else { return false }
-    return NotchHUDLayout.caffeinateButtonSide(in: configuration) == side
-  }
-
-  private var caffeinateButton: some View {
-    let diameter = NotchHUDLayout.caffeinateButtonDiameter(configuration: configuration)
-    let actionTitle = isCaffeinateActive ? "Allow Mac to sleep" : "Keep Mac awake"
-    let stateTitle = isCaffeinateActive ? "Awake mode is on" : "Awake mode is off"
-
-    return Button {
-      onToggleCaffeinate?()
-    } label: {
-      Image(systemName: "cup.and.saucer.fill")
-        .font(.system(size: diameter * 0.47, weight: .semibold))
-        .foregroundStyle(isCaffeinateActive ? Color.white : Color.white.opacity(0.88))
-        .frame(width: diameter, height: diameter)
-        .background(
-          isCaffeinateActive ? Color.accentColor : Color.white.opacity(0.12),
-          in: Circle())
-        .overlay(
-          Circle()
-            .stroke(
-              isCaffeinateActive ? Color.white.opacity(0.34) : Color.white.opacity(0.18),
-              lineWidth: 0.7))
-        .contentShape(Circle())
-    }
-    .buttonStyle(.plain)
-    .help(L10n.string(actionTitle))
-    .accessibilityLabel(L10n.string(actionTitle))
-    .accessibilityValue(L10n.string(stateTitle))
-    .accessibilityIdentifier("notchHUDCaffeinateButton")
   }
 
   private var separatorHeight: CGFloat {
