@@ -7,7 +7,10 @@ final class StatusItemController: NSObject {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let popover = NSPopover()
   private let notchHUD = NotchHUDController()
+  private let statusBarPet = StatusBarPetController()
+  private let statusBarPetSettings = StatusBarPetSettingsStore()
   private let caffeinate = CaffeinateController()
+  private var statusBarPetSettingsWindow: StatusBarPetSettingsWindowController?
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
@@ -22,6 +25,9 @@ final class StatusItemController: NSObject {
     self.settings = settings
     self.fanControl = fanControl
     super.init()
+
+    statusBarPetSettingsWindow = StatusBarPetSettingsWindowController(
+      settings: statusBarPetSettings)
 
     let root = ThemedOverviewRoot {
       OverviewView()
@@ -65,6 +71,17 @@ final class StatusItemController: NSObject {
       }
       .store(in: &cancellables)
 
+    statusBarPetSettings.$configuration
+      .receive(on: RunLoop.main)
+      .sink { [weak self] configuration in
+        guard let self else { return }
+        statusBarPet.update(
+          preferredScreen: statusItem.button?.window?.screen,
+          anchorFrame: statusItem.button?.window?.frame,
+          configuration: configuration)
+      }
+      .store(in: &cancellables)
+
     renderCurrentState()
     DispatchQueue.main.async { [weak self] in
       self?.renderCurrentState()
@@ -103,6 +120,17 @@ final class StatusItemController: NSObject {
 
     menu.addItem(.separator())
     menu.addItem(
+      withTitle: StatusBarPetL10n.string(
+        statusBarPetSettings.configuration.isEnabled
+          ? "Hide electric dragon"
+          : "Show electric dragon"),
+      action: #selector(toggleStatusBarPet), keyEquivalent: "")
+    menu.addItem(
+      withTitle: StatusBarPetL10n.string("Dragon Settings…"),
+      action: #selector(openStatusBarPetSettings), keyEquivalent: "")
+
+    menu.addItem(.separator())
+    menu.addItem(
       withTitle: NSLocalizedString("Quit MacVitals", comment: ""),
       action: #selector(quit), keyEquivalent: "q")
     for item in menu.items { item.target = self }
@@ -135,6 +163,14 @@ final class StatusItemController: NSObject {
     }
   }
 
+  @objc private func toggleStatusBarPet() {
+    statusBarPetSettings.toggleEnabled()
+  }
+
+  @objc private func openStatusBarPetSettings() {
+    statusBarPetSettingsWindow?.present()
+  }
+
   @objc private func openPreferences() {
     NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     NSApp.activate(ignoringOtherApps: true)
@@ -143,6 +179,7 @@ final class StatusItemController: NSObject {
   @objc private func quit() {
     caffeinate.stop()
     notchHUD.hide()
+    statusBarPet.hide()
     NSApp.terminate(nil)
   }
 
@@ -162,12 +199,18 @@ final class StatusItemController: NSObject {
   ) {
     let normalized = MenuLayoutRules.normalized(metrics)
     let preferredScreen = statusItem.button?.window?.screen
+    let anchorFrame = statusItem.button?.window?.frame
 
     notchHUD.update(
       snapshot: snapshot,
       preferredScreen: preferredScreen,
       enabled: showAroundStatusBar,
       configuration: notchHUDConfiguration)
+
+    statusBarPet.update(
+      preferredScreen: preferredScreen,
+      anchorFrame: anchorFrame,
+      configuration: statusBarPetSettings.configuration)
 
     if let button = statusItem.button {
       button.title = ""
