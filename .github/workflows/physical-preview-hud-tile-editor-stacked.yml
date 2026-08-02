@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Build and capture physical HUD editor
+      - name: Build and capture complete physical HUD editor
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,8 +39,8 @@ jobs:
           [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
           launchctl print "gui/$(id -u)" >/dev/null
 
-          rm -rf preview-derived preview-evidence preview-tools
-          mkdir -p preview-evidence preview-tools
+          rm -rf preview-derived preview-evidence
+          mkdir -p preview-evidence
 
           python3 - <<'PY'
           from pathlib import Path
@@ -82,17 +82,56 @@ jobs:
               }
               DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let view = self?.window?.contentView else { return }
-                let bounds = view.bounds
-                guard !bounds.isEmpty,
-                  let representation = view.bitmapImageRepForCachingDisplay(in: bounds)
-                else { return }
-                view.cacheDisplay(in: bounds, to: representation)
-                guard let data = representation.representation(using: .png, properties: [:]) else {
+
+                func capture(_ path: String) {
+                  let bounds = view.bounds
+                  guard !bounds.isEmpty,
+                    let representation = view.bitmapImageRepForCachingDisplay(in: bounds)
+                  else { return }
+                  view.cacheDisplay(in: bounds, to: representation)
+                  guard let data = representation.representation(using: .png, properties: [:]) else {
+                    return
+                  }
+                  try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
+
+                func findScrollView(in root: NSView) -> NSScrollView? {
+                  if let scrollView = root as? NSScrollView { return scrollView }
+                  for subview in root.subviews {
+                    if let result = findScrollView(in: subview) { return result }
+                  }
+                  return nil
+                }
+
+                let baseURL = URL(fileURLWithPath: outputPath)
+                let stem = baseURL.deletingPathExtension().path
+                let detailsPath = stem + "-details.png"
+                let bottomPath = stem + "-bottom.png"
+                capture(outputPath)
+
+                guard let scrollView = findScrollView(in: view),
+                  let documentView = scrollView.documentView
+                else {
+                  capture(detailsPath)
+                  capture(bottomPath)
                   return
                 }
-                try? data.write(
-                  to: URL(fileURLWithPath: outputPath),
-                  options: .atomic)
+
+                let maximumY = max(
+                  0,
+                  documentView.bounds.height - scrollView.contentView.bounds.height)
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: maximumY * 0.48))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                  capture(detailsPath)
+                  scrollView.contentView.scroll(to: NSPoint(x: 0, y: maximumY))
+                  scrollView.reflectScrolledClipView(scrollView.contentView)
+
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    capture(bottomPath)
+                  }
+                }
               }
             }'''
           if settings_needle not in settings:
@@ -120,57 +159,9 @@ jobs:
             exit ${build_status}
           fi
 
-          app="${PWD}/preview-derived/Build/Products/Debug/MacVitals.app"
-          executable="${app}/Contents/MacOS/MacVitals"
+          executable="${PWD}/preview-derived/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
           [[ -x "${executable}" ]]
           [[ "$(lipo -archs "${executable}")" == arm64 ]]
-
-          cat > preview-tools/WindowTools.swift <<'SWIFT'
-          import AppKit
-          import CoreGraphics
-          import Foundation
-
-          guard CommandLine.arguments.count >= 3 else { exit(2) }
-          let command = CommandLine.arguments[1]
-          guard let targetPID = Int32(CommandLine.arguments[2]) else { exit(2) }
-          let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-          var windows: [[String: Any]] = []
-          for info in raw {
-            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == targetPID,
-                  let number = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
-                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
-                  let height = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
-            windows.append([
-              "id": number,
-              "name": info[kCGWindowName as String] as? String ?? "",
-              "width": width,
-              "height": height,
-              "layer": (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1,
-            ])
-          }
-
-          if command == "list" {
-            let data = try JSONSerialization.data(withJSONObject: windows, options: [.prettyPrinted, .sortedKeys])
-            FileHandle.standardOutput.write(data)
-            exit(0)
-          }
-
-          guard command == "capture", CommandLine.arguments.count == 5,
-                let rawID = UInt32(CommandLine.arguments[3]) else { exit(2) }
-          let output = URL(fileURLWithPath: CommandLine.arguments[4])
-          guard let image = CGWindowListCreateImage(
-            .null,
-            .optionIncludingWindow,
-            CGWindowID(rawID),
-            [.boundsIgnoreFraming, .bestResolution]) else { exit(3) }
-          let representation = NSBitmapImageRep(cgImage: image)
-          guard let data = representation.representation(using: .png, properties: [:]) else { exit(4) }
-          try data.write(to: output, options: .atomic)
-          SWIFT
-          xcrun swiftc -O -target arm64-apple-macos13.0 \
-            -framework AppKit -framework CoreGraphics \
-            preview-tools/WindowTools.swift -o preview-tools/window-tools
 
           cleanup() {
             set +e
@@ -186,6 +177,8 @@ jobs:
           trap cleanup EXIT
 
           output="${PWD}/preview-evidence/hud-tile-editor.png"
+          details="${PWD}/preview-evidence/hud-tile-editor-details.png"
+          bottom="${PWD}/preview-evidence/hud-tile-editor-bottom.png"
           MACVITALS_PHYSICAL_PREVIEW_HUD_EDITOR=1 \
           MACVITALS_PHYSICAL_PREVIEW_OUTPUT="${output}" \
           "${executable}" \
@@ -195,38 +188,21 @@ jobs:
             2> preview-evidence/app.stderr.log &
           app_pid=$!
 
-          for _ in {1..150}; do
+          for _ in {1..180}; do
             kill -0 "${app_pid}" 2>/dev/null || {
-              echo 'MacVitals exited before creating the preview' >&2
+              echo 'MacVitals exited before creating the previews' >&2
               cat preview-evidence/app.stderr.log >&2 || true
               exit 1
             }
-            [[ -s "${output}" ]] && break
+            [[ -s "${output}" && -s "${details}" && -s "${bottom}" ]] && break
             sleep 0.2
           done
-          [[ -s "${output}" ]]
-          /usr/bin/sips -Z 1800 "${output}" >/dev/null
-          /usr/bin/sips -g pixelWidth -g pixelHeight "${output}" \
-            > preview-evidence/image-dimensions.txt
+          [[ -s "${output}" && -s "${details}" && -s "${bottom}" ]]
 
-          preview-tools/window-tools list "${app_pid}" > preview-evidence/windows.json
-          WINDOWS_JSON="preview-evidence/windows.json" python3 - <<'PY' > preview-evidence/hud-window-ids.txt
-          import json, os
-          windows = json.load(open(os.environ['WINDOWS_JSON'], encoding='utf-8'))
-          hud = [w for w in windows if 20 <= w['height'] <= 60 and w['width'] >= 70]
-          hud.sort(key=lambda w: w['width'], reverse=True)
-          for index, window in enumerate(hud[:2], 1):
-              print(f"hud{index}={window['id']}")
-          PY
-          source preview-evidence/hud-window-ids.txt || true
-          if [[ -n "${hud1:-}" ]]; then
-            preview-tools/window-tools capture "${app_pid}" "${hud1}" \
-              preview-evidence/hud-panel-1.png || rm -f preview-evidence/hud-panel-1.png
-          fi
-          if [[ -n "${hud2:-}" ]]; then
-            preview-tools/window-tools capture "${app_pid}" "${hud2}" \
-              preview-evidence/hud-panel-2.png || rm -f preview-evidence/hud-panel-2.png
-          fi
+          for image in "${output}" "${details}" "${bottom}"; do
+            /usr/bin/sips -Z 1800 "${image}" >/dev/null
+            /usr/bin/sips -g pixelWidth -g pixelHeight "${image}"
+          done > preview-evidence/image-dimensions.txt
 
           FEATURE_HEAD_SHA="${FEATURE_HEAD_SHA}" APP_PID="${app_pid}" python3 - <<'PY' \
             > preview-evidence/preview-metadata.json
@@ -236,7 +212,8 @@ jobs:
             'processPID': int(os.environ['APP_PID']),
             'sourceUI': 'PR 37 exact source',
             'previewOnlyRuntimeHook': True,
-            'captureScope': 'MacVitals content view and own windows only',
+            'capturedStates': ['top', 'tile inspector', 'bottom'],
+            'captureScope': 'MacVitals content view only',
             'desktopCaptured': False,
           }, indent=2, sort_keys=True))
           PY
