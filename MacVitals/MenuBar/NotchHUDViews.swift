@@ -6,7 +6,7 @@ final class NotchHUDState: ObservableObject {
   @Published var snapshot: SystemSnapshot = .empty
 }
 
-nonisolated enum NotchHUDSide: Sendable {
+nonisolated enum NotchHUDSide: Sendable, Equatable {
   case left
   case right
 }
