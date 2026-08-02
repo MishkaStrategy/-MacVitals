@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class NotchHUDSettingsWindowController: NSWindowController, NSWindowDelegate {
+final class NotchHUDSettingsWindowController: NSWindowController {
   init(coordinator: MetricsCoordinator, settings: SettingsStore) {
     let rootView = NotchHUDSettingsView()
       .environmentObject(coordinator)
@@ -20,7 +20,6 @@ final class NotchHUDSettingsWindowController: NSWindowController, NSWindowDelega
     window.contentViewController = NSHostingController(rootView: rootView)
 
     super.init(window: window)
-    window.delegate = self
   }
 
   @available(*, unavailable)
@@ -183,14 +182,8 @@ struct NotchHUDSettingsView: View {
       subtitle: L10n.string("Tune density, typography and visual separation."),
       symbol: "paintbrush.fill") {
         VStack(alignment: .leading, spacing: 14) {
-          labeledPicker(
-            title: L10n.string("Density"),
-            selection: configurationBinding(\.density),
-            values: NotchHUDDensity.allCases)
-          labeledPicker(
-            title: L10n.string("Text size"),
-            selection: configurationBinding(\.textSize),
-            values: NotchHUDTextSize.allCases)
+          densityPickerRow
+          textSizePickerRow
 
           VStack(alignment: .leading, spacing: 7) {
             HStack {
@@ -253,6 +246,38 @@ struct NotchHUDSettingsView: View {
         settings.resetNotchHUDConfiguration()
       }
       .accessibilityIdentifier("restoreNotchHUDDefaultsButton")
+    }
+  }
+
+  private var densityPickerRow: some View {
+    HStack {
+      Text(L10n.string("Density"))
+        .font(.subheadline.weight(.semibold))
+      Spacer()
+      Picker(L10n.string("Density"), selection: configurationBinding(\.density)) {
+        ForEach(NotchHUDDensity.allCases) { density in
+          Text(density.displayName).tag(density)
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .frame(width: 320)
+    }
+  }
+
+  private var textSizePickerRow: some View {
+    HStack {
+      Text(L10n.string("Text size"))
+        .font(.subheadline.weight(.semibold))
+      Spacer()
+      Picker(L10n.string("Text size"), selection: configurationBinding(\.textSize)) {
+        ForEach(NotchHUDTextSize.allCases) { textSize in
+          Text(textSize.displayName).tag(textSize)
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .frame(width: 320)
     }
   }
 
@@ -332,30 +357,6 @@ struct NotchHUDSettingsView: View {
       .accessibilityIdentifier("notchHUDPlacement.\(metric.rawValue)")
     }
     .padding(.vertical, 8)
-  }
-
-  private func labeledPicker<Value: Identifiable & Hashable>(
-    title: String,
-    selection: Binding<Value>,
-    values: [Value]
-  ) -> some View where Value.ID == String {
-    HStack {
-      Text(title)
-        .font(.subheadline.weight(.semibold))
-      Spacer()
-      Picker(title, selection: selection) {
-        ForEach(values) { value in
-          if let density = value as? NotchHUDDensity {
-            Text(density.displayName).tag(value)
-          } else if let textSize = value as? NotchHUDTextSize {
-            Text(textSize.displayName).tag(value)
-          }
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.segmented)
-      .frame(width: 320)
-    }
   }
 
   private var presetBinding: Binding<NotchHUDPreset> {
@@ -446,13 +447,9 @@ private struct NotchHUDPreview: View {
               .frame(width: leftWidth, height: CGFloat(normalized.density.panelHeight))
           }
 
-          UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 10,
-            bottomTrailingRadius: 10,
-            topTrailingRadius: 0)
+          RoundedRectangle(cornerRadius: 9)
             .fill(Color.black)
-            .frame(width: notchWidth, height: 30)
+            .frame(width: notchWidth, height: 28)
             .accessibilityHidden(true)
 
           if normalized.showRightPanel {
