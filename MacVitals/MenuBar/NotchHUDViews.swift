@@ -4,11 +4,7 @@ import SwiftUI
 @MainActor
 final class NotchHUDState: ObservableObject {
   @Published var snapshot: SystemSnapshot = .empty
-}
-
-nonisolated enum NotchHUDSide: Sendable, Equatable {
-  case left
-  case right
+  @Published var configuration: NotchHUDConfiguration = .balanced
 }
 
 @MainActor
@@ -17,52 +13,88 @@ struct NotchHUDSideView: View {
   let side: NotchHUDSide
 
   var body: some View {
-    HStack(spacing: 8) {
+    NotchHUDSideContentView(
+      snapshot: state.snapshot,
+      configuration: state.configuration,
+      side: side)
+  }
+}
+
+@MainActor
+struct NotchHUDSideContentView: View {
+  let snapshot: SystemSnapshot
+  let configuration: NotchHUDConfiguration
+  let side: NotchHUDSide
+
+  var body: some View {
+    HStack(spacing: CGFloat(configuration.density.itemSpacing)) {
       ForEach(Array(metrics.enumerated()), id: \.element) { index, metric in
         NotchHUDCompactMetricView(
           metric: metric,
           label: label(for: metric),
-          value: value(for: metric))
+          value: value(for: metric),
+          configuration: configuration)
 
-        if index < metrics.count - 1 {
+        if configuration.showSeparators, index < metrics.count - 1 {
           Rectangle()
             .fill(Color.white.opacity(0.14))
-            .frame(width: 1, height: 14)
+            .frame(width: 1, height: separatorHeight)
         }
       }
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, CGFloat(configuration.density.horizontalPadding))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(.ultraThinMaterial, in: Capsule())
+    .background(
+      Color.black.opacity(configuration.backgroundOpacity * 0.55),
+      in: Capsule())
     .overlay(
       Capsule()
-        .stroke(Color.white.opacity(0.18), lineWidth: 0.7))
+        .stroke(Color.white.opacity(0.14 + configuration.backgroundOpacity * 0.08), lineWidth: 0.7))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(
       side == .left ? "experimentalNotchHUDLeft" : "experimentalNotchHUDRight")
   }
 
+  private var configuredMetrics: [MenuMetric] {
+    NotchHUDConfigurationPolicy.normalized(configuration).metrics(for: side)
+  }
+
   private var metrics: [MenuMetric] {
-    switch side {
-    case .left:
-      return [.cpu, .gpu, .memory]
-    case .right:
-      return [.fans, .temperature, .battery, .systemPower]
-    }
+    guard configuration.hideUnavailableMetrics else { return configuredMetrics }
+    let available = configuredMetrics.filter { isAvailable($0) }
+    return available.isEmpty ? Array(configuredMetrics.prefix(1)) : available
+  }
+
+  private var separatorHeight: CGFloat {
+    CGFloat(configuration.density.panelHeight * 0.5)
+  }
+
+  private func isAvailable(_ metric: MenuMetric) -> Bool {
+    let rendered = value(for: metric).trimmingCharacters(in: .whitespacesAndNewlines)
+    return rendered != "—"
+      && rendered != "-"
+      && !rendered.localizedCaseInsensitiveContains("unavailable")
   }
 
   private func label(for metric: MenuMetric) -> String? {
+    guard configuration.showLabels else { return nil }
     switch metric {
     case .cpu: return "CPU"
     case .gpu: return "GPU"
     case .memory: return "RAM"
-    default: return nil
+    case .temperature: return "TEMP"
+    case .battery: return "BAT"
+    case .fans: return "FAN"
+    case .systemPower: return "PWR"
+    case .adapterPower: return "AC"
+    case .powerStatus: return "LOAD"
     }
   }
 
   private func value(for metric: MenuMetric) -> String {
     MenuBarStatusTitleRenderer.segments(
-      snapshot: state.snapshot,
+      snapshot: snapshot,
       metrics: [metric])
       .first?.value ?? "—"
   }
@@ -73,30 +105,40 @@ private struct NotchHUDCompactMetricView: View {
   let metric: MenuMetric
   let label: String?
   let value: String
+  let configuration: NotchHUDConfiguration
 
   var body: some View {
-    HStack(spacing: 4) {
+    HStack(spacing: metricSpacing) {
       Image(systemName: symbolName)
-        .font(.system(size: 10.5, weight: .semibold))
+        .font(.system(size: iconSize, weight: .semibold))
         .foregroundStyle(Color.white.opacity(0.90))
-        .frame(width: 13)
+        .frame(width: iconFrameWidth)
 
       if let label {
         Text(label)
-          .font(.system(size: 8.5, weight: .semibold))
+          .font(.system(size: labelSize, weight: .semibold))
           .foregroundStyle(Color.white.opacity(0.58))
       }
 
       Text(value)
-        .font(.system(size: 10.5, weight: .semibold, design: .rounded).monospacedDigit())
+        .font(.system(size: valueSize, weight: .semibold, design: .rounded).monospacedDigit())
         .foregroundStyle(.white)
         .lineLimit(1)
-        .minimumScaleFactor(0.78)
+        .minimumScaleFactor(0.68)
     }
     .fixedSize(horizontal: label == nil, vertical: true)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(label ?? metric.displayName)
     .accessibilityValue(value)
+  }
+
+  private var scale: CGFloat { CGFloat(configuration.textSize.scale) }
+  private var iconSize: CGFloat { 10.5 * scale }
+  private var labelSize: CGFloat { 8.5 * scale }
+  private var valueSize: CGFloat { 10.5 * scale }
+  private var iconFrameWidth: CGFloat { 13 * scale }
+  private var metricSpacing: CGFloat {
+    configuration.density == .compact ? 3 : 4
   }
 
   private var symbolName: String {
