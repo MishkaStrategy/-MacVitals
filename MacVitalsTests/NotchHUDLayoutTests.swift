@@ -39,4 +39,25 @@ final class NotchHUDLayoutTests: XCTestCase {
     XCTAssertLessThanOrEqual(detail.maxX, screen.maxX)
     XCTAssertGreaterThanOrEqual(detail.minY, screen.minY)
   }
+
+  @MainActor
+  func testDisabledHUDDoesNotAllocateAppKitPanelsDuringSampling() {
+    let defaults = UserDefaults.standard
+    let key = NotchHUDController.defaultsKey
+    let previous = defaults.object(forKey: key)
+    defer {
+      if let previous {
+        defaults.set(previous, forKey: key)
+      } else {
+        defaults.removeObject(forKey: key)
+      }
+    }
+
+    defaults.set(false, forKey: key)
+    let controller = NotchHUDController()
+
+    XCTAssertFalse(controller.hasAllocatedPanelsForTesting)
+    controller.update(snapshot: .empty, preferredScreen: nil)
+    XCTAssertFalse(controller.hasAllocatedPanelsForTesting)
+  }
 }
