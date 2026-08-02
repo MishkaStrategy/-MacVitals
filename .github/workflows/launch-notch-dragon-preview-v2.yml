@@ -3,6 +3,9 @@ name: Launch Corrected Notch Dragon Preview
 on:
   push:
     branches: [agent/notch-dragon-preview-v2]
+  pull_request:
+    branches: [agent/status-bar-electric-dragon]
+    types: [opened, synchronize, reopened]
 
 concurrency:
   group: launch-corrected-notch-dragon-preview
@@ -14,7 +17,12 @@ permissions:
 
 jobs:
   launch-preview:
-    if: github.actor == 'mishkacher' && github.ref == 'refs/heads/agent/notch-dragon-preview-v2'
+    if: >-
+      github.actor == 'mishkacher' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/agent/notch-dragon-preview-v2') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.ref == 'agent/notch-dragon-preview-v2'))
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
