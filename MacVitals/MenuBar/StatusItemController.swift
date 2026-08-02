@@ -6,6 +6,7 @@ import SwiftUI
 final class StatusItemController: NSObject {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let popover = NSPopover()
+  private let notchHUD = NotchHUDController()
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
@@ -44,6 +45,7 @@ final class StatusItemController: NSObject {
       button.imageScaling = .scaleNone
       button.imageHugsTitle = true
       button.contentTintColor = nil
+      button.setAccessibilityIdentifier("macVitalsStatusItem")
     }
 
     coordinator.$snapshot.combineLatest(settings.$enabledMetrics)
@@ -75,6 +77,13 @@ final class StatusItemController: NSObject {
     menu.addItem(
       withTitle: NSLocalizedString("Preferences…", comment: ""),
       action: #selector(openPreferences), keyEquivalent: ",")
+
+    let powerFlow = NSLocalizedString("Power flow", comment: "")
+    let toggleFormat = NSLocalizedString(notchHUD.isEnabled ? "Hide %@" : "Show %@", comment: "")
+    menu.addItem(
+      withTitle: String(format: toggleFormat, powerFlow),
+      action: #selector(toggleNotchHUD), keyEquivalent: "")
+
     menu.addItem(.separator())
     menu.addItem(
       withTitle: NSLocalizedString("Quit MacVitals", comment: ""),
@@ -97,12 +106,18 @@ final class StatusItemController: NSObject {
     NSApp.activate(ignoringOtherApps: true)
   }
 
+  @objc private func toggleNotchHUD() {
+    let screen = statusItem.button?.window?.screen
+    notchHUD.toggle(preferredScreen: screen)
+  }
+
   @objc private func openPreferences() {
     NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
   @objc private func quit() {
+    notchHUD.hide()
     NSApp.terminate(nil)
   }
 
@@ -121,6 +136,10 @@ final class StatusItemController: NSObject {
       button.setAccessibilityLabel("MacVitals")
       button.setAccessibilityValue(
         MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
+
+      notchHUD.update(
+        snapshot: snapshot,
+        preferredScreen: button.window?.screen)
     }
     statusItem.length = NSStatusItem.variableLength
   }
