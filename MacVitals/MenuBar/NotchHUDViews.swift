@@ -165,7 +165,8 @@ private struct NotchHUDCompactMetricView: View {
     }
     .padding(.horizontal, tileHorizontalPadding)
     .frame(
-      width: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
+      minWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
+      maxWidth: NotchHUDLayout.preferredTileWidth(metric: metric, configuration: configuration),
       maxHeight: .infinity,
       alignment: frameAlignment)
     .background(
