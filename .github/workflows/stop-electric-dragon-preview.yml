@@ -1,0 +1,43 @@
+name: Stop Obsolete Electric Dragon Preview
+
+on:
+  pull_request:
+    branches: [agent/status-bar-electric-dragon]
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  stop-preview:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/status-bar-electric-dragon-preview'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - name: Stop only Dragon Preview
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          preview_app="${HOME}/Applications/MacVitals Dragon Preview.app"
+          preview_executable="${preview_app}/Contents/MacOS/MacVitals"
+
+          while IFS= read -r pid; do
+            [[ -n "${pid}" ]] || continue
+            command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+            if [[ "${command}" == "${preview_executable}"* ]]; then
+              kill -TERM "${pid}" 2>/dev/null || true
+              for _ in {1..50}; do
+                kill -0 "${pid}" 2>/dev/null || break
+                sleep 0.1
+              done
+              kill -KILL "${pid}" 2>/dev/null || true
+            fi
+          done < <(pgrep -x MacVitals || true)
+
+          rm -rf "${preview_app}"
+          defaults delete com.mishkacher.MacVitals.DragonPreview 2>/dev/null || true
+          echo "obsolete-preview-stopped=true"
