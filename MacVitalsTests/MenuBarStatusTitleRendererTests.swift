@@ -66,37 +66,104 @@ final class MenuBarStatusTitleRendererTests: XCTestCase {
   }
 
   @MainActor
-  func testDarkMenuBarAppearanceUsesLightForeground() throws {
-    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
-    let color = MenuBarStatusTitleRenderer.statusBarForegroundColor(for: appearance)
-    let rgb = try XCTUnwrap(color.usingColorSpace(.deviceRGB))
+  func testCompleteStatusSurfaceContainsOnlyWhiteOpaquePixels() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
+      snapshot: .empty,
+      metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
 
-    XCTAssertGreaterThan(rgb.redComponent, 0.9)
-    XCTAssertGreaterThan(rgb.greenComponent, 0.9)
-    XCTAssertGreaterThan(rgb.blueComponent, 0.9)
-    XCTAssertGreaterThan(rgb.alphaComponent, 0.9)
+    XCTAssertFalse(image.isTemplate)
+    XCTAssertEqual(image.size.height, 18)
+    XCTAssertGreaterThan(image.size.width, 12)
+
+    let representation = try bitmapRepresentation(of: image)
+    let statistics = try opaquePixelStatistics(in: representation)
+
+    XCTAssertGreaterThan(statistics.count, 100)
+    XCTAssertGreaterThan(
+      statistics.minimumRGB,
+      0.92,
+      "Every visible icon and value pixel must be physically white")
   }
 
   @MainActor
-  func testDarkMenuBarAttachmentsArePreTintedInsteadOfTemplateBlack() throws {
-    let appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
-    let title = MenuBarStatusTitleRenderer.attributedTitle(
+  func testSingleMetricValuePixelsCannotRemainBlack() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
       snapshot: .empty,
-      metrics: [.cpu, .temperature, .fans, .battery],
-      appearance: appearance)
-    var images: [NSImage] = []
+      metrics: [.cpu])
+    let representation = try bitmapRepresentation(of: image)
+    let statistics = try opaquePixelStatistics(in: representation)
 
-    title.enumerateAttribute(
-      .attachment,
-      in: NSRange(location: 0, length: title.length)
-    ) { value, _, _ in
-      guard let attachment = value as? NSTextAttachment,
-        let image = attachment.image
-      else { return }
-      images.append(image)
+    XCTAssertGreaterThan(statistics.count, 20)
+    XCTAssertGreaterThan(
+      statistics.minimumRGB,
+      0.92,
+      "The compact value glyph must be recolored together with its icon")
+  }
+
+  @MainActor
+  func testLightSurfaceExpandsForAdditionalMetrics() {
+    let singleMetric = MenuBarStatusTitleRenderer.lightImage(
+      snapshot: .empty,
+      metrics: [.cpu])
+    let multipleMetrics = MenuBarStatusTitleRenderer.lightImage(
+      snapshot: .empty,
+      metrics: [.cpu, .gpu, .memory, .temperature, .battery, .fans])
+
+    XCTAssertFalse(singleMetric.isTemplate)
+    XCTAssertFalse(multipleMetrics.isTemplate)
+    XCTAssertGreaterThan(multipleMetrics.size.width, singleMetric.size.width)
+  }
+
+  @MainActor
+  func testEmptyMetricSelectionStillProducesAVisibleWhiteSymbol() throws {
+    let image = MenuBarStatusTitleRenderer.lightImage(
+      snapshot: .empty,
+      metrics: [])
+
+    XCTAssertFalse(image.isTemplate)
+    XCTAssertGreaterThanOrEqual(image.size.width, 12)
+
+    let representation = try bitmapRepresentation(of: image)
+    let statistics = try opaquePixelStatistics(in: representation)
+    XCTAssertGreaterThan(statistics.count, 0)
+    XCTAssertGreaterThan(statistics.minimumRGB, 0.92)
+  }
+
+  private func bitmapRepresentation(of image: NSImage) throws -> NSBitmapImageRep {
+    let data = try XCTUnwrap(image.tiffRepresentation)
+    return try XCTUnwrap(NSBitmapImageRep(data: data))
+  }
+
+  private func opaquePixelStatistics(
+    in representation: NSBitmapImageRep
+  ) throws -> (count: Int, minimumRGB: CGFloat) {
+    var count = 0
+    var minimumRGB: CGFloat = 1
+
+    for y in 0..<representation.pixelsHigh {
+      for x in 0..<representation.pixelsWide {
+        guard
+          let color = representation.colorAt(x: x, y: y),
+          color.alphaComponent > 0.8,
+          let rgb = color.usingColorSpace(.deviceRGB)
+        else {
+          continue
+        }
+
+        count += 1
+        minimumRGB = min(
+          minimumRGB,
+          rgb.redComponent,
+          rgb.greenComponent,
+          rgb.blueComponent)
+      }
     }
 
-    XCTAssertEqual(images.count, 4)
-    XCTAssertTrue(images.allSatisfy { !$0.isTemplate })
+    guard count > 0 else {
+      XCTFail("Expected at least one mostly opaque status-bar pixel")
+      throw NSError(domain: "MenuBarStatusTitleRendererTests", code: 1)
+    }
+
+    return (count, minimumRGB)
   }
 }
