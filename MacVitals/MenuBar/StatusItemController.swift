@@ -7,6 +7,7 @@ final class StatusItemController: NSObject {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let popover = NSPopover()
   private let notchHUD = NotchHUDController()
+  private let caffeinate = CaffeinateController()
   private var hudSettingsWindowController: NotchHUDSettingsWindowController?
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
@@ -28,6 +29,7 @@ final class StatusItemController: NSObject {
         .environmentObject(coordinator)
         .environmentObject(settings)
         .environmentObject(fanControl)
+        .environmentObject(caffeinate)
     }
     popover.contentViewController = NSHostingController(rootView: root)
     popover.behavior = .transient
@@ -95,15 +97,6 @@ final class StatusItemController: NSObject {
       withTitle: L10n.string("HUD Settings…"),
       action: #selector(openNotchHUDSettings), keyEquivalent: "")
 
-    let caffeinateItem = menu.addItem(
-      withTitle: L10n.string(
-        notchHUD.isCaffeinateActive ? "Allow Mac to sleep" : "Keep Mac awake"),
-      action: #selector(toggleCaffeinate), keyEquivalent: "")
-    caffeinateItem.state = notchHUD.isCaffeinateActive ? .on : .off
-    caffeinateItem.image = NSImage(
-      systemSymbolName: "cup.and.saucer.fill",
-      accessibilityDescription: L10n.string("Keep Mac awake"))
-
     menu.addItem(.separator())
     menu.addItem(
       withTitle: NSLocalizedString("Quit MacVitals", comment: ""),
@@ -135,10 +128,6 @@ final class StatusItemController: NSObject {
       configuration: settings.notchHUDConfiguration)
   }
 
-  @objc private func toggleCaffeinate() {
-    notchHUD.toggleCaffeinate()
-  }
-
   @objc private func openNotchHUDSettings() {
     let controller: NotchHUDSettingsWindowController
     if let existing = hudSettingsWindowController {
@@ -158,7 +147,8 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func quit() {
-    notchHUD.shutdown()
+    caffeinate.stop()
+    notchHUD.hide()
     NSApp.terminate(nil)
   }
 
