@@ -5,10 +5,14 @@ import XCTest
 final class NotchHUDLayoutTests: XCTestCase {
   func testSidePanelsHugNotchInsideMenuBarHeight() {
     let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
-    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 38)
+    let configuration = NotchHUDConfiguration.balanced
+    let frames = NotchHUDLayout.sideFrames(
+      for: screen,
+      safeAreaTop: 38,
+      configuration: configuration)
 
-    XCTAssertEqual(frames.left.height, NotchHUDLayout.panelHeight)
-    XCTAssertEqual(frames.right.height, NotchHUDLayout.panelHeight)
+    XCTAssertEqual(frames.left.height, CGFloat(configuration.density.panelHeight))
+    XCTAssertEqual(frames.right.height, CGFloat(configuration.density.panelHeight))
     XCTAssertEqual(frames.left.minY, frames.right.minY, accuracy: 0.5)
     XCTAssertGreaterThanOrEqual(frames.left.minY, screen.maxY - 40)
     XCTAssertLessThanOrEqual(frames.left.maxY, screen.maxY)
@@ -24,20 +28,53 @@ final class NotchHUDLayoutTests: XCTestCase {
       accuracy: 0.5)
   }
 
-  func testLayoutContainsOnlyOneCompactPanelPerSide() {
+  func testPanelWidthsFollowVisibleSensorCounts() {
     let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
-    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 38)
+    var configuration = NotchHUDConfiguration.balanced
+    configuration.leftVisibleCount = 1
+    configuration.rightVisibleCount = 2
+    let frames = NotchHUDLayout.sideFrames(
+      for: screen,
+      safeAreaTop: 38,
+      configuration: configuration)
 
-    XCTAssertEqual(frames.left.width, NotchHUDLayout.leftPanelWidth)
-    XCTAssertEqual(frames.right.width, NotchHUDLayout.rightPanelWidth)
+    XCTAssertEqual(
+      frames.left.width,
+      NotchHUDLayout.preferredPanelWidth(
+        metricCount: 1,
+        configuration: configuration),
+      accuracy: 0.5)
+    XCTAssertEqual(
+      frames.right.width,
+      NotchHUDLayout.preferredPanelWidth(
+        metricCount: 2,
+        configuration: configuration),
+      accuracy: 0.5)
     XCTAssertFalse(frames.left.intersects(frames.right))
+  }
+
+  func testDetailedPresetFitsOnNotchedMacBookScreen() {
+    let screen = NSRect(x: 0, y: 0, width: 1_728, height: 1_117)
+    let configuration = NotchHUDConfiguration.detailed
+    let frames = NotchHUDLayout.sideFrames(
+      for: screen,
+      safeAreaTop: 38,
+      configuration: configuration)
+
+    XCTAssertGreaterThan(frames.left.width, NotchHUDLayout.minimumPanelWidth)
+    XCTAssertGreaterThan(frames.right.width, frames.left.width)
     XCTAssertLessThanOrEqual(frames.left.maxX, screen.midX - NotchHUDLayout.notchHalfWidth)
     XCTAssertGreaterThanOrEqual(frames.right.minX, screen.midX + NotchHUDLayout.notchHalfWidth)
+    XCTAssertGreaterThanOrEqual(frames.left.minX, screen.minX + NotchHUDLayout.edgeMargin)
+    XCTAssertLessThanOrEqual(frames.right.maxX, screen.maxX - NotchHUDLayout.edgeMargin)
   }
 
   func testSmallExternalDisplayFallbackRemainsOnScreen() {
     let screen = NSRect(x: 320, y: 100, width: 700, height: 500)
-    let frames = NotchHUDLayout.sideFrames(for: screen, safeAreaTop: 0)
+    let frames = NotchHUDLayout.sideFrames(
+      for: screen,
+      safeAreaTop: 0,
+      configuration: .detailed)
 
     XCTAssertGreaterThanOrEqual(frames.left.minX, screen.minX)
     XCTAssertLessThanOrEqual(frames.left.maxX, screen.maxX)
