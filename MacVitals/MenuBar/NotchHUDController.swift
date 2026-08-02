@@ -20,7 +20,8 @@ final class NotchHUDController {
   func update(
     snapshot: SystemSnapshot,
     preferredScreen: NSScreen?,
-    enabled: Bool
+    enabled: Bool,
+    configuration: NotchHUDConfiguration = .balanced
   ) {
     self.enabled = enabled
 
@@ -30,6 +31,7 @@ final class NotchHUDController {
     }
 
     state.snapshot = snapshot
+    state.configuration = NotchHUDConfigurationPolicy.normalized(configuration)
     applyVisibility(preferredScreen: preferredScreen)
   }
 
@@ -50,6 +52,16 @@ final class NotchHUDController {
       return
     }
 
+    let configuration = state.configuration
+    guard configuration.showLeftPanel || configuration.showRightPanel else {
+      hide()
+      return
+    }
+    guard configuration.showOnDisplaysWithoutNotch || screen.safeAreaInsets.top > 0 else {
+      hide()
+      return
+    }
+
     ensurePanels()
     guard let leftPanel, let rightPanel else { return }
 
@@ -59,12 +71,22 @@ final class NotchHUDController {
 
     let frames = NotchHUDLayout.sideFrames(
       for: screen.frame,
-      safeAreaTop: screen.safeAreaInsets.top)
-    leftPanel.setFrame(frames.left, display: true)
-    rightPanel.setFrame(frames.right, display: true)
+      safeAreaTop: screen.safeAreaInsets.top,
+      configuration: configuration)
 
-    leftPanel.orderFrontRegardless()
-    rightPanel.orderFrontRegardless()
+    if configuration.showLeftPanel {
+      leftPanel.setFrame(frames.left, display: true)
+      leftPanel.orderFrontRegardless()
+    } else {
+      leftPanel.orderOut(nil)
+    }
+
+    if configuration.showRightPanel {
+      rightPanel.setFrame(frames.right, display: true)
+      rightPanel.orderFrontRegardless()
+    } else {
+      rightPanel.orderOut(nil)
+    }
   }
 
   private func ensurePanels() {
