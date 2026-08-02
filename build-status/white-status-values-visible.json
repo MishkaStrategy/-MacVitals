@@ -1,0 +1,15 @@
+{
+  "architecture": "arm64",
+  "consoleSessionActive": true,
+  "physicalGuiRun": true,
+  "pid": 49971,
+  "productSourceSha": "24363edf8bcf3d078c537cea4427fb76e2f520f0",
+  "requestedDurationSeconds": 900,
+  "result": null,
+  "schemaVersion": 1,
+  "sourceSha": "11d8baa41a189908164d8c074a765a624885c962",
+  "startedAt": "2026-08-02T05:47:40.278847+00:00",
+  "state": "running",
+  "visibleApp": "~/Downloads/MacVitals-white-status-visible-24363edf8bcf.app",
+  "xctestRun": false
+}
