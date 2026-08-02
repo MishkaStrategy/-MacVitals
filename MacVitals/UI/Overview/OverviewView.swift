@@ -104,7 +104,7 @@ struct OverviewView: View {
         .foregroundStyle(caffeinate.isActive ? Color.white : theme.primaryAccent)
         .padding(7)
         .background(
-          caffeinate.isActive ? theme.primaryAccent : Color.quaternary.opacity(0.45),
+          caffeinate.isActive ? theme.primaryAccent : Color.primary.opacity(0.06),
           in: Circle())
         .overlay(
           Circle()
