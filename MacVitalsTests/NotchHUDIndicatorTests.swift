@@ -25,7 +25,7 @@ final class NotchHUDIndicatorTests: XCTestCase {
 
     XCTAssertEqual(geometry.notchRightX - geometry.notchLeftX, 212, accuracy: 0.001)
     XCTAssertLessThanOrEqual(geometry.topY, 1)
-    XCTAssertGreaterThanOrEqual(
+    XCTAssertEqual(
       geometry.bottomY - NotchHUDLayout.maximumIndicatorLineThickness / 2,
       38 + NotchHUDLayout.minimumContourClearance,
       accuracy: 0.001)
