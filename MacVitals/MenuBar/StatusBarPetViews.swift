@@ -24,11 +24,55 @@ final class StatusBarPetState: ObservableObject {
   @Published var perchBlend: CGFloat = 1
 }
 
+/// Shared presentation wrapper used by both the live notch overlay and the settings preview.
+/// It adds contour-aware posture without creating a second visual implementation.
+struct StatusBarPetDragonPresentation: View {
+  let activity: StatusBarPetActivity
+  let time: TimeInterval
+  let sparkIntensity: Double
+  let crawlPhase: CGFloat
+  let travelVelocity: CGFloat
+  let perchBlend: CGFloat
+  let contourProgress: CGFloat
+  let facingRight: Bool
+  let rotationDegrees: Double
+  let size: CGSize
+
+  var body: some View {
+    let drape = centerDrape
+
+    DetailedElectricDragonView(
+      activity: activity,
+      time: time,
+      sparkIntensity: sparkIntensity,
+      crawlPhase: crawlPhase,
+      travelVelocity: travelVelocity,
+      perchBlend: perchBlend)
+      .frame(width: size.width, height: size.height)
+      .scaleEffect(
+        x: facingRight ? 1 : -1,
+        y: 1 - drape * 0.13,
+        anchor: .bottom)
+      .rotationEffect(
+        .degrees(rotationDegrees * Double(1 - drape * 0.24)),
+        anchor: .center)
+      .offset(y: drape * size.height * 0.045)
+  }
+
+  private var centerDrape: CGFloat {
+    let progress = min(max(contourProgress, 0), 1)
+    let centerDistance = abs(progress - 0.5)
+    let centerBlend = max(0, 1 - centerDistance / 0.30)
+    let movementBlend = 0.32 + min(max(perchBlend, 0), 1) * 0.68
+    return centerBlend * movementBlend
+  }
+}
+
 struct StatusBarPetRootView: View {
   @ObservedObject var state: StatusBarPetState
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+    TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
       let time = timeline.date.timeIntervalSinceReferenceDate
       let petSize = CGSize(
         width: state.configuration.size.width,
@@ -55,21 +99,30 @@ struct StatusBarPetRootView: View {
               radius: 3)
         }
 
-        DetailedElectricDragonView(
+        StatusBarPetDragonPresentation(
           activity: state.activity,
           time: time,
           sparkIntensity: state.configuration.sparkIntensity,
           crawlPhase: state.crawlPhase,
           travelVelocity: state.travelVelocity,
-          perchBlend: state.perchBlend)
-          .frame(width: petSize.width, height: petSize.height)
-          .scaleEffect(x: state.facingRight ? 1 : -1, y: 1)
-          .rotationEffect(.degrees(state.bodyRotationDegrees), anchor: .center)
+          perchBlend: state.perchBlend,
+          contourProgress: state.contourProgress,
+          facingRight: state.facingRight,
+          rotationDegrees: state.bodyRotationDegrees,
+          size: petSize)
           .position(petCenter)
       }
     }
     .allowsHitTesting(false)
     .accessibilityHidden(true)
+  }
+
+  private var frameInterval: TimeInterval {
+    switch state.activity {
+    case .idle: return 1.0 / 20.0
+    case .roaming: return 1.0 / 30.0
+    case .playing: return 1.0 / 45.0
+    }
   }
 
   private func microBob(time: TimeInterval) -> CGFloat {
