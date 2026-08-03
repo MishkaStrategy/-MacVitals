@@ -28,19 +28,23 @@ final class StatusBarPetSettingsStore: ObservableObject {
 
   private let defaults: UserDefaults
 
+  nonisolated static func runtimeSmokeRequested() -> Bool {
+    ProcessInfo.processInfo.environment[runtimeSmokeEnvironmentKey] == "1"
+  }
+
   init(
     defaults: UserDefaults = .standard,
-    runtimeSmokeEnabled: Bool = ProcessInfo.processInfo.environment[
-      Self.runtimeSmokeEnvironmentKey
-    ] == "1"
+    runtimeSmokeEnabled: Bool? = nil
   ) {
     self.defaults = defaults
 
-    var resolvedConfiguration = defaults.data(forKey: Self.defaultsKey)
+    var resolvedConfiguration = defaults.data(forKey: StatusBarPetSettingsStore.defaultsKey)
       .flatMap(StatusBarPetConfigurationPersistence.decode)
       ?? .electricDragon
+    let shouldRunRuntimeSmoke = runtimeSmokeEnabled
+      ?? StatusBarPetSettingsStore.runtimeSmokeRequested()
 
-    if runtimeSmokeEnabled {
+    if shouldRunRuntimeSmoke {
       resolvedConfiguration.isEnabled = true
       resolvedConfiguration.roamEnabled = true
       resolvedConfiguration.cursorInteractionEnabled = false
@@ -63,6 +67,6 @@ final class StatusBarPetSettingsStore: ObservableObject {
 
   private func persist() {
     guard let data = StatusBarPetConfigurationPersistence.encode(configuration) else { return }
-    defaults.set(data, forKey: Self.defaultsKey)
+    defaults.set(data, forKey: StatusBarPetSettingsStore.defaultsKey)
   }
 }
