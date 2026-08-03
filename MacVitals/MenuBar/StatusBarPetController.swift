@@ -12,6 +12,7 @@ final class StatusBarPetController {
   private var targetProgress: Double?
   private var nextRoamDecision = 0.0
   private var crawlPhase = 0.0
+  private var motionSpeedPointsPerSecond = 0.0
   private var smoothedVelocity = 0.0
 
   var isVisibleForTesting: Bool { panel?.isVisible ?? false }
@@ -50,9 +51,12 @@ final class StatusBarPetController {
     panel?.orderOut(nil)
     activeScreen = nil
     targetProgress = nil
+    motionSpeedPointsPerSecond = 0
+    smoothedVelocity = 0
     state.cursorVisible = false
     state.activity = .idle
     state.travelVelocity = 0
+    state.perchBlend = 1
   }
 
   private func ensurePanel() {
@@ -117,6 +121,7 @@ final class StatusBarPetController {
 
     state.contourProgress = CGFloat(progress)
     targetProgress = progress
+    motionSpeedPointsPerSecond = 0
     nextRoamDecision = now + Double.random(in: 0.8...1.8)
     applyContourSample(
       progress: progress,
@@ -188,7 +193,7 @@ final class StatusBarPetController {
       state.cursorVisible = false
 
       if prefersReducedMotion || !configuration.roamEnabled {
-        targetProgress = StatusBarPetContourPath.centerProgress
+        targetProgress = currentProgress
         state.activity = .idle
       } else if state.activity == .playing {
         targetProgress = currentProgress
@@ -208,34 +213,66 @@ final class StatusBarPetController {
 
     guard let targetProgress else { return }
 
-    let pointsPerSecond: Double
-    switch state.activity {
-    case .idle:
-      pointsPerSecond = 18
-    case .roaming:
-      pointsPerSecond = 36
-    case .playing:
-      pointsPerSecond = 88
-    }
-
-    let nextProgress = StatusBarPetContourPath.advancedProgress(
-      current: currentProgress,
-      target: targetProgress,
-      pointsPerSecond: pointsPerSecond * configuration.movementSpeed,
-      deltaTime: deltaTime,
+    let pathLength = StatusBarPetContourPath.pathLength(
       panelWidth: panelWidth,
       safeAreaTop: safeAreaTop,
       petWidth: petWidth,
       petHeight: petHeight)
-    let progressDelta = nextProgress - currentProgress
+    let remainingDistance = abs(targetProgress - currentProgress) * pathLength
 
-    if abs(progressDelta) > 0.000_01 {
-      state.facingRight = progressDelta > 0
-      let pathLength = StatusBarPetContourPath.pathLength(
+    let maximumSpeed: Double
+    let slowdownDistance: Double
+    let acceleration: Double
+    switch state.activity {
+    case .idle:
+      maximumSpeed = 0
+      slowdownDistance = 1
+      acceleration = 150
+    case .roaming:
+      maximumSpeed = 40 * configuration.movementSpeed
+      slowdownDistance = 30
+      acceleration = 115
+    case .playing:
+      maximumSpeed = 92 * configuration.movementSpeed
+      slowdownDistance = 44
+      acceleration = 260
+    }
+
+    let wantsRight = targetProgress > currentProgress
+    let hasDirectionalTarget = abs(targetProgress - currentProgress) > 0.000_1
+    let isReversing = hasDirectionalTarget
+      && wantsRight != state.facingRight
+      && motionSpeedPointsPerSecond > 1
+    let desiredSpeed = isReversing
+      ? 0
+      : StatusBarPetKinematics.targetSpeed(
+        maximumSpeed: maximumSpeed,
+        remainingDistance: remainingDistance,
+        slowdownDistance: slowdownDistance)
+    motionSpeedPointsPerSecond = StatusBarPetKinematics.advancedSpeed(
+      current: motionSpeedPointsPerSecond,
+      target: desiredSpeed,
+      acceleration: acceleration,
+      deltaTime: deltaTime)
+
+    let nextProgress: Double
+    if isReversing {
+      nextProgress = currentProgress
+    } else {
+      nextProgress = StatusBarPetContourPath.advancedProgress(
+        current: currentProgress,
+        target: targetProgress,
+        pointsPerSecond: motionSpeedPointsPerSecond,
+        deltaTime: deltaTime,
         panelWidth: panelWidth,
         safeAreaTop: safeAreaTop,
         petWidth: petWidth,
         petHeight: petHeight)
+    }
+    let progressDelta = nextProgress - currentProgress
+
+    if abs(progressDelta) > 0.000_01 {
+      state.facingRight = progressDelta > 0
       let traveledPoints = abs(progressDelta) * pathLength
       crawlPhase = (crawlPhase + traveledPoints / max(petWidth * 0.44, 1))
         .truncatingRemainder(dividingBy: 1)
