@@ -36,7 +36,9 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           CODE_SIGNING_ALLOWED: NO
         run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
-      - name: Runtime smoke
+      - name: Runtime smoke with detailed electric dragon enabled
+        env:
+          MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE: "1"
         run: bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
 
   repository-safety:
