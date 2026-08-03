@@ -12,8 +12,8 @@ final class StatusBarPetSettingsWindowController: NSWindowController, NSWindowDe
         rootView: StatusBarPetSettingsView(settings: settings)))
     window.title = StatusBarPetL10n.string("Electric Dragon")
     window.styleMask = [.titled, .closable, .miniaturizable]
-    window.setContentSize(NSSize(width: 470, height: 520))
-    window.minSize = NSSize(width: 440, height: 480)
+    window.setContentSize(NSSize(width: 500, height: 590))
+    window.minSize = NSSize(width: 460, height: 520)
     window.isReleasedWhenClosed = false
     window.center()
     super.init(window: window)
@@ -51,7 +51,7 @@ private struct StatusBarPetSettingsView: View {
       }
       .padding(20)
     }
-    .frame(minWidth: 440, minHeight: 480)
+    .frame(minWidth: 460, minHeight: 520)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
@@ -86,39 +86,71 @@ private struct StatusBarPetSettingsView: View {
       TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
         let time = timeline.date.timeIntervalSinceReferenceDate
         GeometryReader { proxy in
-          let notchWidth = min(CGFloat(212), proxy.size.width * 0.58)
+          let notchWidth = min(CGFloat(230), proxy.size.width * 0.56)
           let notchLeft = (proxy.size.width - notchWidth) / 2
-          let travel = notchWidth + 28
-          let phase = CGFloat((sin(time * 0.72) + 1) / 2)
-          let petX = notchLeft - 14 + phase * travel
-          let petY: CGFloat = petX < notchLeft || petX > notchLeft + notchWidth ? 21 : 47
+          let wave = CGFloat((sin(time * 0.62) + 1) * 0.5)
+          let velocity = CGFloat(abs(cos(time * 0.62)))
+          let direction = cos(time * 0.62) >= 0 ? CGFloat(1) : CGFloat(-1)
+          let shoulderDistance = min(abs(wave - 0.5) * 2, 1)
+          let petX = notchLeft + wave * notchWidth
+          let petY = CGFloat(62) - shoulderDistance * 16
+          let rotation = wave < 0.18 ? 8.0 : (wave > 0.82 ? -8.0 : 0.0)
+          let crawlPhase = CGFloat((time * 0.54).truncatingRemainder(dividingBy: 1))
+          let perchBlend = max(0, 1 - velocity * 1.8)
 
           ZStack(alignment: .topLeading) {
             LinearGradient(
-              colors: [Color.indigo.opacity(0.72), Color.blue.opacity(0.34)],
+              colors: [
+                Color(red: 0.025, green: 0.04, blue: 0.075),
+                Color(red: 0.035, green: 0.10, blue: 0.20),
+              ],
               startPoint: .topLeading,
               endPoint: .bottomTrailing)
 
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-              .fill(.black)
-              .frame(width: notchWidth, height: 40)
-              .position(x: proxy.size.width / 2, y: 17)
+            Ellipse()
+              .fill(Color.cyan.opacity(0.07))
+              .frame(width: notchWidth * 1.28, height: 66)
+              .blur(radius: 16)
+              .position(x: proxy.size.width / 2, y: 54)
 
-            NotchDragonPreviewGlyph(
+            UnevenRoundedRectangle(
+              topLeadingRadius: 0,
+              bottomLeadingRadius: 12,
+              bottomTrailingRadius: 12,
+              topTrailingRadius: 0,
+              style: .continuous)
+              .fill(.black)
+              .frame(width: notchWidth, height: 42)
+              .position(x: proxy.size.width / 2, y: 21)
+
+            Circle()
+              .fill(Color.blue.opacity(0.28))
+              .frame(width: 5, height: 5)
+              .overlay(Circle().stroke(Color.cyan.opacity(0.24), lineWidth: 0.5))
+              .position(x: proxy.size.width / 2, y: 18)
+
+            DetailedElectricDragonView(
+              activity: velocity > 0.14 ? .roaming : .idle,
               time: time,
-              sparkIntensity: settings.configuration.sparkIntensity)
+              sparkIntensity: settings.configuration.sparkIntensity,
+              crawlPhase: crawlPhase,
+              travelVelocity: velocity,
+              perchBlend: perchBlend)
               .frame(
                 width: settings.configuration.size.width,
                 height: settings.configuration.size.height)
+              .scaleEffect(x: direction, y: 1)
+              .rotationEffect(.degrees(rotation))
               .position(x: petX, y: petY)
           }
         }
       }
-      .frame(height: 82)
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .frame(height: 142)
+      .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
       .overlay(
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
           .stroke(Color.primary.opacity(0.08), lineWidth: 1))
+      .accessibilityIdentifier("statusBarPetLivePreview")
     }
   }
 
@@ -275,43 +307,5 @@ private struct StatusBarPetSettingsView: View {
     Binding(
       get: { settings.configuration.size },
       set: { settings.configuration.size = $0 })
-  }
-}
-
-private struct NotchDragonPreviewGlyph: View {
-  let time: TimeInterval
-  let sparkIntensity: Double
-
-  var body: some View {
-    ZStack {
-      Circle()
-        .fill(Color.cyan.opacity(0.12 + sparkIntensity * 0.12))
-        .scaleEffect(1 + sin(time * 3.4) * 0.05)
-
-      Capsule()
-        .fill(
-          LinearGradient(
-            colors: [.indigo, .blue],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing))
-        .frame(width: 19, height: 13)
-        .rotationEffect(.degrees(sin(time * 4) * 3))
-
-      Circle()
-        .fill(Color.blue)
-        .frame(width: 14, height: 14)
-        .offset(x: -7, y: -3)
-
-      HStack(spacing: 3) {
-        Circle().fill(.white).frame(width: 3.5, height: 4.5)
-        Circle().fill(.white).frame(width: 3.5, height: 4.5)
-      }
-      .offset(x: -7, y: -4)
-
-      Image(systemName: "bolt.fill")
-        .font(.system(size: 6, weight: .bold))
-        .foregroundStyle(.cyan)
-        .offset(x: 9, y: -7)
-    }
   }
 }
