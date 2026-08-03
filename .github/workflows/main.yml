@@ -1,15 +1,40 @@
-name: Main (disabled)
+name: Main
 
-# GitHub Actions runner usage is intentionally disabled for MacVitals.
-# Build, test, packaging, security and physical validation must run locally on the Mac.
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
-permissions: {}
+concurrency:
+  group: main-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  github-actions-disabled:
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+  verify-arm64:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
     steps:
-      - run: echo "GitHub Actions is disabled for MacVitals"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Validate source and tooling
+        run: |
+          python3 scripts/materialize_app_icon.py --self-test
+          python3 scripts/materialize_app_icon.py
+          python3 scripts/validate_localizations.py
+          python3 -m py_compile scripts/*.py
+      - name: Generate project
+        run: xcodegen generate
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+      - name: Run arm64 tests
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+      - name: Package unsigned arm64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
+      - name: Runtime smoke
+        run: bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
