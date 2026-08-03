@@ -9,8 +9,10 @@ final class StatusBarPetController {
   private var timerCancellable: AnyCancellable?
   private var activeScreen: NSScreen?
   private var lastTick = Date.timeIntervalSinceReferenceDate
-  private var targetX: Double?
+  private var targetProgress: Double?
   private var nextRoamDecision = 0.0
+  private var crawlPhase = 0.0
+  private var smoothedVelocity = 0.0
 
   var isVisibleForTesting: Bool { panel?.isVisible ?? false }
 
@@ -37,7 +39,7 @@ final class StatusBarPetController {
     activeScreen = screen
     ensurePanel()
     layoutPanel(on: screen)
-    seedPositionIfNeeded()
+    seedPositionIfNeeded(now: Date.timeIntervalSinceReferenceDate)
     startTimerIfNeeded()
     panel?.orderFrontRegardless()
   }
@@ -47,9 +49,10 @@ final class StatusBarPetController {
     timerCancellable = nil
     panel?.orderOut(nil)
     activeScreen = nil
-    targetX = nil
+    targetProgress = nil
     state.cursorVisible = false
     state.activity = .idle
+    state.travelVelocity = 0
   }
 
   private func ensurePanel() {
@@ -98,34 +101,29 @@ final class StatusBarPetController {
     panel?.setFrame(frame, display: true)
     state.panelWidth = CGFloat(width)
     state.safeAreaTop = CGFloat(StatusBarPetMotionRules.resolvedSafeAreaTop(safeAreaTop))
-
-    let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: width,
-      petWidth: petSize.width)
-    state.petX = CGFloat(StatusBarPetMotionRules.clamped(Double(state.petX), to: bounds))
-    state.petY = CGFloat(StatusBarPetMotionRules.petY(
-      x: Double(state.petX),
+    applyContourSample(
+      progress: Double(state.contourProgress),
       panelWidth: width,
       safeAreaTop: safeAreaTop,
-      petHeight: petSize.height))
+      petWidth: petSize.width,
+      petHeight: petSize.height)
   }
 
-  private func seedPositionIfNeeded() {
+  private func seedPositionIfNeeded(now: TimeInterval) {
     guard let panel else { return }
     let configuration = state.configuration
     let panelWidth = Double(panel.frame.width)
-    let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: panelWidth,
-      petWidth: configuration.size.width)
+    let progress = StatusBarPetContourPath.normalizedProgress(Double(state.contourProgress))
 
-    guard state.petX <= 0 || !bounds.contains(Double(state.petX)) else { return }
-    state.petX = CGFloat(bounds.lowerBound + (bounds.upperBound - bounds.lowerBound) * 0.18)
-    state.petY = CGFloat(StatusBarPetMotionRules.petY(
-      x: Double(state.petX),
+    state.contourProgress = CGFloat(progress)
+    targetProgress = progress
+    nextRoamDecision = now + Double.random(in: 0.8...1.8)
+    applyContourSample(
+      progress: progress,
       panelWidth: panelWidth,
       safeAreaTop: Double(state.safeAreaTop),
-      petHeight: configuration.size.height))
-    targetX = Double(state.petX)
+      petWidth: configuration.size.width,
+      petHeight: configuration.size.height)
   }
 
   private func startTimerIfNeeded() {
@@ -154,9 +152,8 @@ final class StatusBarPetController {
     let configuration = state.configuration
     let panelWidth = Double(panel.frame.width)
     let safeAreaTop = Double(screen.safeAreaInsets.top)
-    let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: panelWidth,
-      petWidth: configuration.size.width)
+    let petWidth = configuration.size.width
+    let petHeight = configuration.size.height
     let mouse = NSEvent.mouseLocation
     let cursorX = Double(mouse.x - panel.frame.minX)
     let cursorY = Double(panel.frame.maxY - mouse.y)
@@ -172,55 +169,122 @@ final class StatusBarPetController {
         safeAreaTop: safeAreaTop,
         interactionEnabled: configuration.cursorInteractionEnabled)
 
+    let currentProgress = Double(state.contourProgress)
+
     if isPlaying {
-      let offset = cursorX >= Double(state.petX) ? -12.0 : 12.0
-      targetX = StatusBarPetMotionRules.clamped(cursorX + offset, to: bounds)
+      targetProgress = StatusBarPetContourPath.progress(
+        nearestToX: cursorX,
+        panelWidth: panelWidth,
+        safeAreaTop: safeAreaTop,
+        petWidth: petWidth,
+        petHeight: petHeight)
       state.cursorPoint = CGPoint(
         x: CGFloat(cursorX),
         y: CGFloat(min(max(cursorY, 0), Double(panel.frame.height))))
       state.cursorVisible = true
       state.activity = .playing
+      nextRoamDecision = now + 1.3
     } else {
       state.cursorVisible = false
+
       if prefersReducedMotion || !configuration.roamEnabled {
-        targetX = (bounds.lowerBound + bounds.upperBound) / 2
+        targetProgress = StatusBarPetContourPath.centerProgress
         state.activity = .idle
-      } else if targetX == nil || now >= nextRoamDecision {
-        targetX = Double.random(in: bounds)
-        nextRoamDecision = now + Double.random(in: 2.4...4.8)
+      } else if state.activity == .playing {
+        targetProgress = currentProgress
+        state.activity = .idle
+      } else if state.activity == .roaming,
+        let targetProgress,
+        abs(targetProgress - currentProgress) < 0.004
+      {
+        self.targetProgress = currentProgress
+        state.activity = .idle
+        nextRoamDecision = now + Double.random(in: 1.6...4.2)
+      } else if state.activity == .idle, now >= nextRoamDecision {
+        targetProgress = nextAutonomousTarget(from: currentProgress)
         state.activity = .roaming
       }
     }
 
-    guard let targetX else { return }
-    let currentX = Double(state.petX)
+    guard let targetProgress else { return }
+
     let pointsPerSecond: Double
     switch state.activity {
     case .idle:
-      pointsPerSecond = 20
+      pointsPerSecond = 18
     case .roaming:
-      pointsPerSecond = 34
+      pointsPerSecond = 36
     case .playing:
-      pointsPerSecond = 105
+      pointsPerSecond = 88
     }
 
-    let nextX = StatusBarPetMotionRules.advancedX(
-      current: currentX,
-      target: targetX,
+    let nextProgress = StatusBarPetContourPath.advancedProgress(
+      current: currentProgress,
+      target: targetProgress,
       pointsPerSecond: pointsPerSecond * configuration.movementSpeed,
-      deltaTime: deltaTime)
-    if abs(targetX - nextX) < 0.7, state.activity == .roaming {
-      state.activity = .idle
-    }
-    if abs(nextX - currentX) > 0.01 {
-      state.facingRight = nextX > currentX
-    }
-
-    state.petX = CGFloat(nextX)
-    state.petY = CGFloat(StatusBarPetMotionRules.petY(
-      x: nextX,
+      deltaTime: deltaTime,
       panelWidth: panelWidth,
       safeAreaTop: safeAreaTop,
-      petHeight: configuration.size.height))
+      petWidth: petWidth,
+      petHeight: petHeight)
+    let progressDelta = nextProgress - currentProgress
+
+    if abs(progressDelta) > 0.000_01 {
+      state.facingRight = progressDelta > 0
+      let pathLength = StatusBarPetContourPath.pathLength(
+        panelWidth: panelWidth,
+        safeAreaTop: safeAreaTop,
+        petWidth: petWidth,
+        petHeight: petHeight)
+      let traveledPoints = abs(progressDelta) * pathLength
+      crawlPhase = (crawlPhase + traveledPoints / max(petWidth * 0.44, 1))
+        .truncatingRemainder(dividingBy: 1)
+    }
+
+    let instantaneousVelocity = min(
+      1,
+      abs(progressDelta) / max(deltaTime, 0.001) * 2.7)
+    smoothedVelocity += (instantaneousVelocity - smoothedVelocity) * min(deltaTime * 10, 1)
+
+    state.contourProgress = CGFloat(nextProgress)
+    state.crawlPhase = CGFloat(crawlPhase)
+    state.travelVelocity = CGFloat(smoothedVelocity)
+    state.perchBlend = CGFloat(max(0, 1 - smoothedVelocity * 1.8))
+    applyContourSample(
+      progress: nextProgress,
+      panelWidth: panelWidth,
+      safeAreaTop: safeAreaTop,
+      petWidth: petWidth,
+      petHeight: petHeight)
+  }
+
+  private func applyContourSample(
+    progress: Double,
+    panelWidth: Double,
+    safeAreaTop: Double,
+    petWidth: Double,
+    petHeight: Double
+  ) {
+    let sample = StatusBarPetContourPath.sample(
+      progress: progress,
+      panelWidth: panelWidth,
+      safeAreaTop: safeAreaTop,
+      petWidth: petWidth,
+      petHeight: petHeight)
+    state.petX = CGFloat(sample.x)
+    state.petY = CGFloat(sample.y)
+    state.bodyRotationDegrees = sample.tangentDegrees
+  }
+
+  private func nextAutonomousTarget(from current: Double) -> Double {
+    if current < 0.34 {
+      return Double.random(in: 0.58...StatusBarPetContourPath.rightPerchProgress)
+    }
+    if current > 0.66 {
+      return Double.random(in: StatusBarPetContourPath.leftPerchProgress...0.42)
+    }
+    return Bool.random()
+      ? Double.random(in: StatusBarPetContourPath.leftPerchProgress...0.25)
+      : Double.random(in: 0.75...StatusBarPetContourPath.rightPerchProgress)
   }
 }
