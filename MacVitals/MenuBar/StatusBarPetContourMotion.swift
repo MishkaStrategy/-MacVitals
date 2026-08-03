@@ -56,7 +56,9 @@ nonisolated enum StatusBarPetContourPath {
       progress: resolved,
       x: currentPosition.x,
       y: currentPosition.y,
-      tangentDegrees: min(max(angle, -16), 16),
+      tangentDegrees: min(
+        max(angle, -StatusBarPetMotionRules.maximumBodyRotationDegrees),
+        StatusBarPetMotionRules.maximumBodyRotationDegrees),
       shoulderBlend: 1 - shoulderBlend)
   }
 
@@ -148,14 +150,15 @@ nonisolated enum StatusBarPetContourPath {
     let resolved = normalizedProgress(progress)
     let bounds = StatusBarPetMotionRules.roamBounds(
       panelWidth: panelWidth,
-      petWidth: petWidth)
+      petWidth: petWidth,
+      petHeight: petHeight)
     let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
     let resolvedTop = StatusBarPetMotionRules.resolvedSafeAreaTop(safeAreaTop)
     let outerY = max(petHeight * 0.46, resolvedTop * 0.31)
     let bottomY = resolvedTop + petHeight * 0.16 + 2
     let inset = min(petWidth * 0.12, 9)
-    let leftBottomX = edges.left + inset
-    let rightBottomX = edges.right - inset
+    let leftBottomX = max(bounds.lowerBound, edges.left + inset)
+    let rightBottomX = min(bounds.upperBound, edges.right - inset)
 
     if resolved <= leftShoulderProgress {
       let local = smoothStep(resolved / leftShoulderProgress)
