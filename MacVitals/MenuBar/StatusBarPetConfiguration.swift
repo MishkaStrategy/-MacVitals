@@ -17,17 +17,17 @@ nonisolated enum StatusBarPetSize: String, Codable, CaseIterable, Identifiable, 
 
   var width: Double {
     switch self {
-    case .tiny: return 54
-    case .small: return 66
-    case .medium: return 78
+    case .tiny: return 76
+    case .small: return 96
+    case .medium: return 116
     }
   }
 
   var height: Double {
     switch self {
-    case .tiny: return 46
-    case .small: return 56
-    case .medium: return 66
+    case .tiny: return 58
+    case .small: return 72
+    case .medium: return 86
     }
   }
 }
@@ -91,10 +91,10 @@ nonisolated enum StatusBarPetMotionRules {
   static let hardwareNotchWidth = 212.0
   static let minimumSafeAreaTop = 30.0
   static let maximumSafeAreaTop = 44.0
-  static let sidePlayground = 38.0
-  static let cursorInteractionRadius = 86.0
-  static let cursorHorizontalPadding = 36.0
-  static let cursorBottomPadding = 48.0
+  static let sidePlayground = 32.0
+  static let cursorInteractionRadius = 104.0
+  static let cursorHorizontalPadding = 42.0
+  static let cursorBottomPadding = 68.0
 
   static func resolvedSafeAreaTop(_ safeAreaTop: Double) -> Double {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -102,11 +102,11 @@ nonisolated enum StatusBarPetMotionRules {
   }
 
   static func panelWidth(for size: StatusBarPetSize) -> Double {
-    hardwareNotchWidth + sidePlayground * 2 + size.width * 0.35
+    hardwareNotchWidth + sidePlayground * 2 + size.width * 0.30
   }
 
   static func panelHeight(safeAreaTop: Double, size: StatusBarPetSize) -> Double {
-    resolvedSafeAreaTop(safeAreaTop) + size.height + 16
+    resolvedSafeAreaTop(safeAreaTop) + size.height + 18
   }
 
   static func notchEdges(panelWidth: Double) -> (left: Double, right: Double) {
@@ -116,9 +116,9 @@ nonisolated enum StatusBarPetMotionRules {
 
   static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
     let edges = notchEdges(panelWidth: panelWidth)
-    let overshoot = min(sidePlayground * 0.45, petWidth * 0.28)
-    let minimumCenter = petWidth / 2 + 7
-    let maximumCenter = panelWidth - petWidth / 2 - 7
+    let overshoot = min(sidePlayground * 0.42, petWidth * 0.20)
+    let minimumCenter = petWidth / 2 + 6
+    let maximumCenter = panelWidth - petWidth / 2 - 6
     let lower = max(minimumCenter, edges.left - overshoot)
     let upper = min(maximumCenter, edges.right + overshoot)
     return lower...max(lower, upper)
