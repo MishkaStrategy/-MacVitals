@@ -126,6 +126,34 @@ nonisolated enum StatusBarPetMotionRules {
       + abs(sin(radians)) * petHeight / 2
   }
 
+  static func rotatedVerticalHalfExtent(
+    petWidth: Double,
+    petHeight: Double,
+    degrees: Double = maximumBodyRotationDegrees
+  ) -> Double {
+    let radians = abs(degrees) * .pi / 180
+    return abs(sin(radians)) * petWidth / 2
+      + abs(cos(radians)) * petHeight / 2
+  }
+
+  static func shoulderCenterY(petWidth: Double, petHeight: Double) -> Double {
+    rotatedVerticalHalfExtent(
+      petWidth: petWidth,
+      petHeight: petHeight)
+      + modelEdgeMargin
+  }
+
+  static func notchBottomCenterY(
+    safeAreaTop: Double,
+    petWidth: Double,
+    petHeight: Double
+  ) -> Double {
+    let shoulderY = shoulderCenterY(petWidth: petWidth, petHeight: petHeight)
+    let notchAlignedY = resolvedSafeAreaTop(safeAreaTop) + petHeight * 0.30
+    let descent = min(12, petHeight * 0.15)
+    return max(notchAlignedY, shoulderY + descent)
+  }
+
   static func roamBounds(
     panelWidth: Double,
     petWidth: Double,
@@ -166,9 +194,11 @@ nonisolated enum StatusBarPetMotionRules {
       panelWidth: panelWidth,
       petWidth: petWidth,
       petHeight: petHeight)
-    let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
-    let shoulderY = max(petHeight * 0.52, resolvedTop * 0.34)
-    let bottomY = resolvedTop + petHeight * 0.18 + 2
+    let shoulderY = shoulderCenterY(petWidth: petWidth, petHeight: petHeight)
+    let bottomY = notchBottomCenterY(
+      safeAreaTop: safeAreaTop,
+      petWidth: petWidth,
+      petHeight: petHeight)
     let inset = min(petWidth * 0.12, 9)
     let leftBottomX = max(bounds.lowerBound, edges.left + inset)
     let rightBottomX = min(bounds.upperBound, edges.right - inset)
