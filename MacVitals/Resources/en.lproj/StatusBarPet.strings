@@ -1,6 +1,6 @@
 "Electric Dragon" = "Electric Dragon";
-"A tiny animated companion that lives beside MacVitals." = "A tiny friendly dragon that lives only on the hardware notch.";
-"A tiny friendly dragon that lives only on the hardware notch." = "A tiny friendly dragon that lives only on the hardware notch.";
+"A tiny animated companion that lives beside MacVitals." = "A detailed natural electric dragon that coils around the hardware notch.";
+"A tiny friendly dragon that lives only on the hardware notch." = "A detailed natural electric dragon that coils around the hardware notch.";
 "Enable electric dragon" = "Enable electric dragon";
 "Show electric dragon" = "Show electric dragon";
 "Hide electric dragon" = "Hide electric dragon";
@@ -8,9 +8,9 @@
 "Preview" = "Preview";
 "Behavior" = "Behavior";
 "Walk along the status bar" = "Move around the notch";
-"The dragon occasionally explores near the MacVitals item." = "The dragon wraps around the notch and never walks across the menu bar.";
+"The dragon occasionally explores near the MacVitals item." = "The dragon coils around the notch and never walks across the menu bar.";
 "Move around the notch" = "Move around the notch";
-"The dragon wraps around the notch and never walks across the menu bar." = "The dragon wraps around the notch and never walks across the menu bar.";
+"The dragon wraps around the notch and never walks across the menu bar." = "The dragon coils around the notch and never walks across the menu bar.";
 "Play with the cursor" = "Play with the cursor near the notch";
 "Hover nearby and the dragon will chase and spark at the pointer." = "The dragon reacts only when the pointer is directly beside the notch.";
 "Play with the cursor near the notch" = "Play with the cursor near the notch";
