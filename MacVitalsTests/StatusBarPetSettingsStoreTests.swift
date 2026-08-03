@@ -1,26 +1,14 @@
 import XCTest
 @testable import MacVitals
 
-@MainActor
 final class StatusBarPetSettingsStoreTests: XCTestCase {
-  private var suiteName: String!
-  private var defaults: UserDefaults!
-
-  override func setUp() {
-    super.setUp()
-    suiteName = "StatusBarPetSettingsStoreTests.\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suiteName)
-    defaults.removePersistentDomain(forName: suiteName)
-  }
-
-  override func tearDown() {
-    defaults.removePersistentDomain(forName: suiteName)
-    defaults = nil
-    suiteName = nil
-    super.tearDown()
-  }
-
+  @MainActor
   func testRuntimeSmokeModeEnablesDetailedModelWithoutPersistingOverride() throws {
+    let suiteName = "StatusBarPetSettingsStoreTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
     var persisted = StatusBarPetConfiguration.electricDragon
     persisted.isEnabled = false
     persisted.size = .tiny
@@ -47,7 +35,13 @@ final class StatusBarPetSettingsStoreTests: XCTestCase {
     XCTAssertEqual(decoded, persisted)
   }
 
+  @MainActor
   func testNormalModeUsesPersistedConfiguration() throws {
+    let suiteName = "StatusBarPetSettingsStoreTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
     var persisted = StatusBarPetConfiguration.electricDragon
     persisted.isEnabled = true
     persisted.size = .tiny
