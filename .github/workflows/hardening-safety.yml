@@ -1,15 +1,30 @@
-name: Hardened Tooling Safety (disabled)
+name: Hardened Tooling Safety
 
-# GitHub Actions runner usage is intentionally disabled for MacVitals.
-# Build, test, packaging, security and physical validation must run locally on the Mac.
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
-permissions: {}
+concurrency:
+  group: hardened-tooling-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  github-actions-disabled:
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+  hardened-tooling:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
     steps:
-      - run: echo "GitHub Actions is disabled for MacVitals"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Compile Python entrypoints
+        run: python3 -m py_compile scripts/*.py
+      - name: Validate shell entrypoints
+        run: bash -n scripts/*.sh
+      - name: Run hardened self-tests
+        run: |
+          python3 scripts/run_physical_validation_hardened.py self-test
+          python3 scripts/run_physical_validation_guided_hardened.py self-test
+          python3 scripts/prepare_physical_artifact_hardened.py self-test
+          python3 scripts/sign_notarize_release_hardened.py self-test
+          python3 scripts/signed_release_entrypoint_hardened.py self-test
