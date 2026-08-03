@@ -40,13 +40,14 @@ struct StatusBarPetDragonPresentation: View {
 
   var body: some View {
     let drape = centerDrape
+    let safeModelVelocity = min(max(travelVelocity, 0), 0.70)
 
     DetailedElectricDragonView(
       activity: activity,
       time: time,
       sparkIntensity: sparkIntensity,
       crawlPhase: crawlPhase,
-      travelVelocity: travelVelocity,
+      travelVelocity: safeModelVelocity,
       perchBlend: perchBlend)
       .frame(width: size.width, height: size.height)
       .scaleEffect(
