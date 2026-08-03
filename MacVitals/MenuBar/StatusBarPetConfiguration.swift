@@ -95,6 +95,8 @@ nonisolated enum StatusBarPetMotionRules {
   static let cursorInteractionRadius = 104.0
   static let cursorHorizontalPadding = 42.0
   static let cursorBottomPadding = 68.0
+  static let maximumBodyRotationDegrees = 16.0
+  static let modelEdgeMargin = 6.0
 
   static func resolvedSafeAreaTop(_ safeAreaTop: Double) -> Double {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -114,14 +116,38 @@ nonisolated enum StatusBarPetMotionRules {
     return (left, left + hardwareNotchWidth)
   }
 
-  static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
+  static func rotatedHorizontalHalfExtent(
+    petWidth: Double,
+    petHeight: Double,
+    degrees: Double = maximumBodyRotationDegrees
+  ) -> Double {
+    let radians = abs(degrees) * .pi / 180
+    return abs(cos(radians)) * petWidth / 2
+      + abs(sin(radians)) * petHeight / 2
+  }
+
+  static func roamBounds(
+    panelWidth: Double,
+    petWidth: Double,
+    petHeight: Double
+  ) -> ClosedRange<Double> {
     let edges = notchEdges(panelWidth: panelWidth)
     let overshoot = min(sidePlayground * 0.42, petWidth * 0.20)
-    let minimumCenter = petWidth / 2 + 6
-    let maximumCenter = panelWidth - petWidth / 2 - 6
+    let halfExtent = rotatedHorizontalHalfExtent(
+      petWidth: petWidth,
+      petHeight: petHeight)
+    let minimumCenter = halfExtent + modelEdgeMargin
+    let maximumCenter = panelWidth - halfExtent - modelEdgeMargin
     let lower = max(minimumCenter, edges.left - overshoot)
     let upper = min(maximumCenter, edges.right + overshoot)
     return lower...max(lower, upper)
+  }
+
+  static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
+    roamBounds(
+      panelWidth: panelWidth,
+      petWidth: petWidth,
+      petHeight: petWidth * 0.75)
   }
 
   static func clamped(_ x: Double, to bounds: ClosedRange<Double>) -> Double {
@@ -132,26 +158,50 @@ nonisolated enum StatusBarPetMotionRules {
     x: Double,
     panelWidth: Double,
     safeAreaTop: Double,
+    petWidth: Double,
     petHeight: Double
   ) -> Double {
     let edges = notchEdges(panelWidth: panelWidth)
+    let bounds = roamBounds(
+      panelWidth: panelWidth,
+      petWidth: petWidth,
+      petHeight: petHeight)
     let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
     let shoulderY = max(petHeight * 0.52, resolvedTop * 0.34)
     let bottomY = resolvedTop + petHeight * 0.18 + 2
+    let inset = min(petWidth * 0.12, 9)
+    let leftBottomX = max(bounds.lowerBound, edges.left + inset)
+    let rightBottomX = min(bounds.upperBound, edges.right - inset)
 
-    if x < edges.left {
-      let lower = roamBounds(panelWidth: panelWidth, petWidth: petHeight).lowerBound
-      let progress = min(max((x - lower) / max(1, edges.left - lower), 0), 1)
+    if x <= leftBottomX {
+      let progress = min(
+        max((x - bounds.lowerBound) / max(1, leftBottomX - bounds.lowerBound), 0),
+        1)
       return shoulderY + (bottomY - shoulderY) * progress
     }
 
-    if x > edges.right {
-      let upper = roamBounds(panelWidth: panelWidth, petWidth: petHeight).upperBound
-      let progress = min(max((upper - x) / max(1, upper - edges.right), 0), 1)
+    if x >= rightBottomX {
+      let progress = min(
+        max((bounds.upperBound - x) / max(1, bounds.upperBound - rightBottomX), 0),
+        1)
       return shoulderY + (bottomY - shoulderY) * progress
     }
 
     return bottomY
+  }
+
+  static func petY(
+    x: Double,
+    panelWidth: Double,
+    safeAreaTop: Double,
+    petHeight: Double
+  ) -> Double {
+    petY(
+      x: x,
+      panelWidth: panelWidth,
+      safeAreaTop: safeAreaTop,
+      petWidth: petHeight / 0.75,
+      petHeight: petHeight)
   }
 
   static func shouldPlay(
