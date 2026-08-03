@@ -61,20 +61,28 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     XCTAssertLessThan(width, 320)
   }
 
-  func testRoamBoundsHugNotchShouldersAndContainTheWholeModel() {
+  func testRoamBoundsHugNotchShouldersAndContainRotatedModel() {
     for size in StatusBarPetSize.allCases {
       let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
       let bounds = StatusBarPetMotionRules.roamBounds(
         panelWidth: panelWidth,
-        petWidth: size.width)
+        petWidth: size.width,
+        petHeight: size.height)
       let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
+      let halfExtent = StatusBarPetMotionRules.rotatedHorizontalHalfExtent(
+        petWidth: size.width,
+        petHeight: size.height)
 
       XCTAssertLessThan(bounds.lowerBound, panelWidth / 2)
       XCTAssertGreaterThan(bounds.upperBound, panelWidth / 2)
-      XCTAssertLessThanOrEqual(abs(bounds.lowerBound - edges.left), size.width * 0.14)
-      XCTAssertLessThanOrEqual(abs(bounds.upperBound - edges.right), size.width * 0.14)
-      XCTAssertGreaterThanOrEqual(bounds.lowerBound - size.width / 2, 0)
-      XCTAssertLessThanOrEqual(bounds.upperBound + size.width / 2, panelWidth)
+      XCTAssertLessThanOrEqual(abs(bounds.lowerBound - edges.left), size.width / 2)
+      XCTAssertLessThanOrEqual(abs(bounds.upperBound - edges.right), size.width / 2)
+      XCTAssertGreaterThanOrEqual(
+        bounds.lowerBound - halfExtent,
+        StatusBarPetMotionRules.modelEdgeMargin - 0.001)
+      XCTAssertLessThanOrEqual(
+        bounds.upperBound + halfExtent,
+        panelWidth - StatusBarPetMotionRules.modelEdgeMargin + 0.001)
       XCTAssertLessThan(bounds.upperBound - bounds.lowerBound, 270)
     }
   }
@@ -121,16 +129,19 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
     let bounds = StatusBarPetMotionRules.roamBounds(
       panelWidth: panelWidth,
-      petWidth: size.width)
+      petWidth: size.width,
+      petHeight: size.height)
     let centerY = StatusBarPetMotionRules.petY(
       x: panelWidth / 2,
       panelWidth: panelWidth,
       safeAreaTop: 38,
+      petWidth: size.width,
       petHeight: size.height)
     let shoulderY = StatusBarPetMotionRules.petY(
       x: bounds.lowerBound,
       panelWidth: panelWidth,
       safeAreaTop: 38,
+      petWidth: size.width,
       petHeight: size.height)
 
     XCTAssertGreaterThan(centerY, 38)
