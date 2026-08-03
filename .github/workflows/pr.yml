@@ -1,15 +1,54 @@
-name: Pull Request (disabled)
+name: Pull Request
 
-# GitHub Actions runner usage is intentionally disabled for MacVitals.
-# Build, test, packaging, security and physical validation must run locally on the Mac.
 on:
-  workflow_dispatch:
+  pull_request:
 
-permissions: {}
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
-  github-actions-disabled:
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+  apple-silicon:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
     steps:
-      - run: echo "GitHub Actions is disabled for MacVitals"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+      - name: Generate project
+        run: xcodegen generate
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+      - name: Build arm64
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+      - name: Run arm64 unit tests
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
+      - name: Run bilingual UI smoke
+        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches
+      - name: Package unsigned arm64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
+      - name: Runtime smoke
+        run: bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+
+  repository-safety:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Validate repository and localization
+        run: |
+          python3 scripts/materialize_app_icon.py --check-only
+          python3 scripts/validate_localizations.py
+          python3 -m py_compile scripts/*.py
+          ruby -e "require 'yaml'; Dir['.github/workflows/*.{yml,yaml}'].sort.each { |path| YAML.load_file(path) }"
