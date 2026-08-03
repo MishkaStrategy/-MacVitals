@@ -1,183 +1,278 @@
-name: Three-Minute Physical Pet Preview
+name: Pull Request
 
 on:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
-  group: physical-pet-preview-${{ github.event.pull_request.number || github.ref }}
+  group: pull-request-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  physical-pet-preview:
+  apple-silicon:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 12
-    env:
-      DERIVED_DATA: ${{ runner.temp }}/MacVitalsPetPhysicalPreview
-      PREVIEW_SECONDS: "180"
-
+    timeout-minutes: 35
     steps:
-      - name: Checkout exact PR head
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          clean: true
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Validate active physical GUI session
-        shell: bash
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Swift format lint
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Build arm64
         run: |
-          set -Eeuo pipefail
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build > native-build.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' native-build.log | tail -n 300 > native-build-diagnostics.txt || true
+          cat native-build-diagnostics.txt
+          exit $status
 
-          [[ "$(uname -m)" == "arm64" ]] || {
-            echo "Native arm64 is required." >&2
-            exit 1
-          }
-
-          console_user="$(stat -f '%Su' /dev/console)"
-          runner_user="$(id -un)"
-          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]] || {
-            echo "No active macOS GUI session is available." >&2
-            exit 1
-          }
-          [[ "${console_user}" == "${runner_user}" ]] || {
-            echo "Runner user ${runner_user} is not active GUI user ${console_user}." >&2
-            exit 1
-          }
-
-          console_uid="$(id -u)"
-          launchctl print "gui/${console_uid}" >/dev/null
-          command -v xcodegen >/dev/null
-          command -v xcodebuild >/dev/null
-          command -v codesign >/dev/null
-          command -v caffeinate >/dev/null
-
-          echo "CONSOLE_UID=${console_uid}" >> "${GITHUB_ENV}"
-          echo "Physical GUI session validated for ${console_user}."
-
-      - name: Build only MacVitals arm64 app
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          rm -rf -- "${DERIVED_DATA}"
-          python3 scripts/materialize_app_icon.py
-          xcodegen generate
-          xcodebuild \
-            -project MacVitals.xcodeproj \
-            -scheme MacVitals \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            -derivedDataPath "${DERIVED_DATA}" \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-          app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
-          executable="${app_path}/Contents/MacOS/MacVitals"
-          [[ -d "${app_path}" && -x "${executable}" ]] || {
-            echo "MacVitals.app was not produced correctly." >&2
-            exit 1
-          }
-
-          xattr -dr com.apple.quarantine "${app_path}" 2>/dev/null || true
-          codesign --force --deep --sign - --timestamp=none "${app_path}"
-          codesign --verify --deep --strict --verbose=2 "${app_path}"
-
-      - name: Run MacVitals with dragon for three minutes
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
-          executable="${app_path}/Contents/MacOS/MacVitals"
-          metrics="${RUNNER_TEMP}/pet-physical-preview-metrics.txt"
-          app_log="${RUNNER_TEMP}/pet-physical-preview-app.log"
-          pet_pid=""
-          launcher_pid=""
-          caffeinate_pid=""
-
-          cleanup() {
-            if [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1; then
-              kill -TERM "${pet_pid}" >/dev/null 2>&1 || true
-              for _ in {1..20}; do
-                kill -0 "${pet_pid}" >/dev/null 2>&1 || break
-                sleep 0.25
-              done
-              kill -KILL "${pet_pid}" >/dev/null 2>&1 || true
-            fi
-            if [[ -n "${launcher_pid}" ]] && kill -0 "${launcher_pid}" >/dev/null 2>&1; then
-              kill -TERM "${launcher_pid}" >/dev/null 2>&1 || true
-            fi
-            if [[ -n "${caffeinate_pid}" ]] && kill -0 "${caffeinate_pid}" >/dev/null 2>&1; then
-              kill -TERM "${caffeinate_pid}" >/dev/null 2>&1 || true
-            fi
-          }
-          trap cleanup EXIT INT TERM
-
-          pkill -TERM -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
-          pkill -TERM -x MacVitals >/dev/null 2>&1 || true
-          sleep 1
-          pkill -KILL -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
-          pkill -KILL -x MacVitals >/dev/null 2>&1 || true
-
-          : > "${app_log}"
-          launchctl asuser "${CONSOLE_UID}" \
-            /usr/bin/env MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE=1 \
-            "${executable}" \
-            >"${app_log}" 2>&1 &
-          launcher_pid="$!"
-
-          for _ in {1..80}; do
-            pet_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
-            [[ -n "${pet_pid}" ]] && break
-            kill -0 "${launcher_pid}" >/dev/null 2>&1 || break
-            sleep 0.25
-          done
-
-          [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1 || {
-            echo "MacVitals did not start in the active GUI session." >&2
-            cat "${app_log}" >&2 || true
-            exit 1
-          }
-
-          echo "MacVitals physical preview started with PID ${pet_pid}."
-          launchctl asuser "${CONSOLE_UID}" osascript \
-            -e 'display notification "Дракон запущен на 3 минуты" with title "MacVitals"' \
-            >/dev/null 2>&1 || true
-
-          caffeinate -dimsu -t 210 &
-          caffeinate_pid="$!"
-          printf 'timestamp pid elapsed cpu_percent rss_kib command\n' > "${metrics}"
-          finish="$(( $(date +%s) + PREVIEW_SECONDS ))"
-
-          while (( $(date +%s) < finish )); do
-            kill -0 "${pet_pid}" >/dev/null 2>&1 || {
-              echo "MacVitals exited before the physical preview completed." >&2
-              cat "${app_log}" >&2 || true
-              exit 1
-            }
-            printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${metrics}"
-            ps -p "${pet_pid}" -o pid=,etime=,%cpu=,rss=,comm= >> "${metrics}"
-            sleep 5
-          done
-
-          echo "MacVitals remained alive for ${PREVIEW_SECONDS} seconds."
-          launchctl asuser "${CONSOLE_UID}" osascript \
-            -e 'display notification "3-минутный тест завершён" with title "MacVitals"' \
-            >/dev/null 2>&1 || true
-
-      - name: Upload physical preview evidence
+      - name: Upload native build diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pet-physical-preview-evidence
+          name: native-build-diagnostics
           path: |
-            ${{ runner.temp }}/pet-physical-preview-metrics.txt
-            ${{ runner.temp }}/pet-physical-preview-app.log
+            native-build.log
+            native-build-diagnostics.txt
+          if-no-files-found: error
+
+      - name: Run arm64 unit tests
+        run: |
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests > native-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-tests.log | tail -n 400 > native-test-diagnostics.txt || true
+          cat native-test-diagnostics.txt
+          exit $status
+
+      - name: Upload native test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-test-diagnostics
+          path: |
+            native-tests.log
+            native-test-diagnostics.txt
           if-no-files-found: ignore
-          retention-days: 1
+
+      - name: Package and verify arm64 release candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        run: |
+          set +e
+          bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}" > release-package.log 2>&1
+          status=$?
+          tail -n 500 release-package.log > release-package-diagnostics.txt
+          cat release-package-diagnostics.txt
+          exit $status
+
+      - name: Upload release package diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-package-diagnostics
+          path: |
+            release-package.log
+            release-package-diagnostics.txt
+          if-no-files-found: ignore
+
+      - name: Physical validation harness hosted prepare smoke
+        run: |
+          python3 scripts/run_physical_validation_hardened.py prepare \
+            --version "0.0.${GITHUB_RUN_NUMBER}" \
+            --app build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+
+      - name: Guided physical validation prepare smoke
+        run: |
+          printf '6\n' | python3 scripts/run_physical_validation_guided_hardened.py start \
+            --dist dist
+
+      - name: Downloaded artifact staging smoke
+        run: |
+          artifact="${RUNNER_TEMP}/MacVitals-workflow-artifact.zip"
+          (
+            cd dist
+            zip -q "${artifact}" \
+              "MacVitals-0.0.${GITHUB_RUN_NUMBER}.zip" \
+              "MacVitals-0.0.${GITHUB_RUN_NUMBER}.dmg" \
+              BUILD_STATUS.txt BUILD_MANIFEST.json SHA256SUMS.txt
+          )
+          printf '6\n' | python3 scripts/prepare_physical_artifact_hardened.py stage "${artifact}"
+
+      - name: Upload hosted physical harness smoke
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-validation-harness-hosted-smoke-arm64
+          path: physical-validation-results/
+          if-no-files-found: ignore
+
+      - name: Packaged runtime smoke guardrail
+        timeout-minutes: 5
+        run: |
+          set +e
+          bash scripts/run_ci_runtime_smoke.sh \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            > runtime-smoke-run.log 2>&1
+          status=$?
+          cat runtime-smoke-run.log
+          exit $status
+
+      - name: Upload runtime smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runtime-smoke-evidence-arm64
+          path: |
+            runtime-smoke-run.log
+            runtime-smoke-results/
+          if-no-files-found: ignore
+
+      - name: Upload arm64 release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacVitals-0.0.${{ github.run_number }}-arm64-unsigned
+          path: dist/
+          if-no-files-found: error
+
+  ui-smoke:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Bilingual theme accessibility smoke test
+        run: |
+          set +e
+          ui_derived_data="${RUNNER_TEMP}/MacVitals-ui-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${ui_derived_data}"
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${ui_derived_data}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            clean test \
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches \
+            > native-ui-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
+          cat native-ui-test-diagnostics.txt
+          exit $status
+
+      - name: Upload native UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-ui-test-diagnostics
+          path: |
+            native-ui-tests.log
+            native-ui-test-diagnostics.txt
+          if-no-files-found: ignore
+
+  repository-safety:
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate YAML, plist XML, localizations, icon and scripts
+        run: |
+          ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); Dir['.github/workflows/*.yml'].sort.each { |path| YAML.load_file(path) }"
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+          for path in pathlib.Path('.').rglob('*.plist'):
+              ET.parse(path)
+          PY
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_hardened.py scripts/run_physical_validation_guided.py scripts/run_physical_validation_guided_hardened.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
+          python3 scripts/materialize_app_icon.py --self-test
+          python3 scripts/materialize_app_icon.py --check-only
+          python3 scripts/validate_localizations.py
+          python3 scripts/validate_output_path.py --self-test
+          python3 scripts/validate_release_metadata.py --self-test
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/validate_runtime_metrics.py --self-test
+          python3 scripts/run_physical_validation.py self-test
+          python3 scripts/run_physical_validation_hardened.py self-test
+          python3 scripts/run_physical_validation_guided.py self-test
+          python3 scripts/run_physical_validation_guided_hardened.py self-test
+          python3 scripts/prepare_physical_artifact.py self-test
+          python3 scripts/sign_notarize_release.py self-test
+          python3 scripts/signed_release_entrypoint.py self-test
+          bash -n \
+            scripts/package_release.sh \
+            scripts/verify_release.sh \
+            scripts/collect_runtime_metrics.sh \
+            scripts/run_ci_runtime_smoke.sh \
+            scripts/run_ci_physical_validation_hardened.sh
+          bash scripts/run_ci_physical_validation_hardened.sh --self-test
+
+      - name: Install and run Gitleaks CLI
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_DARWIN_ARM64_SHA256: b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/gitleaks-${GITLEAKS_VERSION}"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+          python3 - "${archive}" "${GITLEAKS_DARWIN_ARM64_SHA256}" <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          expected = sys.argv[2]
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"Gitleaks checksum mismatch: expected {expected}, got {actual}")
+          PY
+          mkdir -p "${tool_dir}"
+          tar -xzf "${archive}" -C "${tool_dir}" gitleaks
+          chmod 0755 "${tool_dir}/gitleaks"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            scan_range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            scan_range="--all"
+          fi
+          "${tool_dir}/gitleaks" git \
+            --redact \
+            --verbose \
+            --report-format sarif \
+            --report-path gitleaks-results.sarif \
+            --log-opts="${scan_range}" \
+            .
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gitleaks-results.sarif
+          path: gitleaks-results.sarif
+          if-no-files-found: ignore
