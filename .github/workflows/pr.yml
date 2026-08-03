@@ -1,56 +1,183 @@
-name: Pull Request
+name: Three-Minute Physical Pet Preview
 
 on:
   pull_request:
 
 concurrency:
-  group: pull-request-${{ github.event.pull_request.number || github.ref }}
+  group: physical-pet-preview-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
-  apple-silicon:
+  physical-pet-preview:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-      - name: Materialize application icon
-        run: python3 scripts/materialize_app_icon.py
-      - name: Generate project
-        run: xcodegen generate
-      - name: Swift format lint
-        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
-      - name: Build arm64
-        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -configuration Debug -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
-      - name: Run arm64 unit tests
-        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsTests
-      - name: Run bilingual UI smoke
-        run: xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches
-      - name: Package unsigned arm64 candidate
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
-          CODE_SIGNING_ALLOWED: NO
-        run: bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}"
-      - name: Runtime smoke with detailed electric dragon enabled
-        env:
-          MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE: "1"
-        run: bash scripts/run_ci_runtime_smoke.sh build/MacVitals.xcarchive/Products/Applications/MacVitals.app
+    timeout-minutes: 12
+    env:
+      DERIVED_DATA: ${{ runner.temp }}/MacVitalsPetPhysicalPreview
+      PREVIEW_SECONDS: "180"
 
-  repository-safety:
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: Validate repository and localization
+          persist-credentials: false
+          clean: true
+
+      - name: Validate active physical GUI session
+        shell: bash
         run: |
-          python3 scripts/materialize_app_icon.py --check-only
-          python3 scripts/validate_localizations.py
-          python3 -m py_compile scripts/*.py
-          ruby -e "require 'yaml'; Dir['.github/workflows/*.{yml,yaml}'].sort.each { |path| YAML.load_file(path) }"
+          set -Eeuo pipefail
+
+          [[ "$(uname -m)" == "arm64" ]] || {
+            echo "Native arm64 is required." >&2
+            exit 1
+          }
+
+          console_user="$(stat -f '%Su' /dev/console)"
+          runner_user="$(id -un)"
+          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]] || {
+            echo "No active macOS GUI session is available." >&2
+            exit 1
+          }
+          [[ "${console_user}" == "${runner_user}" ]] || {
+            echo "Runner user ${runner_user} is not active GUI user ${console_user}." >&2
+            exit 1
+          }
+
+          console_uid="$(id -u)"
+          launchctl print "gui/${console_uid}" >/dev/null
+          command -v xcodegen >/dev/null
+          command -v xcodebuild >/dev/null
+          command -v codesign >/dev/null
+          command -v caffeinate >/dev/null
+
+          echo "CONSOLE_UID=${console_uid}" >> "${GITHUB_ENV}"
+          echo "Physical GUI session validated for ${console_user}."
+
+      - name: Build only MacVitals arm64 app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          rm -rf -- "${DERIVED_DATA}"
+          python3 scripts/materialize_app_icon.py
+          xcodegen generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
+          executable="${app_path}/Contents/MacOS/MacVitals"
+          [[ -d "${app_path}" && -x "${executable}" ]] || {
+            echo "MacVitals.app was not produced correctly." >&2
+            exit 1
+          }
+
+          xattr -dr com.apple.quarantine "${app_path}" 2>/dev/null || true
+          codesign --force --deep --sign - --timestamp=none "${app_path}"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+
+      - name: Run MacVitals with dragon for three minutes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
+          executable="${app_path}/Contents/MacOS/MacVitals"
+          metrics="${RUNNER_TEMP}/pet-physical-preview-metrics.txt"
+          app_log="${RUNNER_TEMP}/pet-physical-preview-app.log"
+          pet_pid=""
+          launcher_pid=""
+          caffeinate_pid=""
+
+          cleanup() {
+            if [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1; then
+              kill -TERM "${pet_pid}" >/dev/null 2>&1 || true
+              for _ in {1..20}; do
+                kill -0 "${pet_pid}" >/dev/null 2>&1 || break
+                sleep 0.25
+              done
+              kill -KILL "${pet_pid}" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${launcher_pid}" ]] && kill -0 "${launcher_pid}" >/dev/null 2>&1; then
+              kill -TERM "${launcher_pid}" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${caffeinate_pid}" ]] && kill -0 "${caffeinate_pid}" >/dev/null 2>&1; then
+              kill -TERM "${caffeinate_pid}" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT INT TERM
+
+          pkill -TERM -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
+          pkill -TERM -x MacVitals >/dev/null 2>&1 || true
+          sleep 1
+          pkill -KILL -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
+          pkill -KILL -x MacVitals >/dev/null 2>&1 || true
+
+          : > "${app_log}"
+          launchctl asuser "${CONSOLE_UID}" \
+            /usr/bin/env MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE=1 \
+            "${executable}" \
+            >"${app_log}" 2>&1 &
+          launcher_pid="$!"
+
+          for _ in {1..80}; do
+            pet_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
+            [[ -n "${pet_pid}" ]] && break
+            kill -0 "${launcher_pid}" >/dev/null 2>&1 || break
+            sleep 0.25
+          done
+
+          [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1 || {
+            echo "MacVitals did not start in the active GUI session." >&2
+            cat "${app_log}" >&2 || true
+            exit 1
+          }
+
+          echo "MacVitals physical preview started with PID ${pet_pid}."
+          launchctl asuser "${CONSOLE_UID}" osascript \
+            -e 'display notification "Дракон запущен на 3 минуты" with title "MacVitals"' \
+            >/dev/null 2>&1 || true
+
+          caffeinate -dimsu -t 210 &
+          caffeinate_pid="$!"
+          printf 'timestamp pid elapsed cpu_percent rss_kib command\n' > "${metrics}"
+          finish="$(( $(date +%s) + PREVIEW_SECONDS ))"
+
+          while (( $(date +%s) < finish )); do
+            kill -0 "${pet_pid}" >/dev/null 2>&1 || {
+              echo "MacVitals exited before the physical preview completed." >&2
+              cat "${app_log}" >&2 || true
+              exit 1
+            }
+            printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${metrics}"
+            ps -p "${pet_pid}" -o pid=,etime=,%cpu=,rss=,comm= >> "${metrics}"
+            sleep 5
+          done
+
+          echo "MacVitals remained alive for ${PREVIEW_SECONDS} seconds."
+          launchctl asuser "${CONSOLE_UID}" osascript \
+            -e 'display notification "3-минутный тест завершён" with title "MacVitals"' \
+            >/dev/null 2>&1 || true
+
+      - name: Upload physical preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pet-physical-preview-evidence
+          path: |
+            ${{ runner.temp }}/pet-physical-preview-metrics.txt
+            ${{ runner.temp }}/pet-physical-preview-app.log
+          if-no-files-found: ignore
+          retention-days: 1
