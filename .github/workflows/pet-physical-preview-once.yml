@@ -1,9 +1,10 @@
 name: Pet Physical Preview Once
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/detailed-electric-dragon-model
+      - agent/status-bar-electric-dragon
+    types: [synchronize]
     paths:
       - .github/workflows/pet-physical-preview-once.yml
 
@@ -16,6 +17,9 @@ concurrency:
 
 jobs:
   physical-preview:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/detailed-electric-dragon-model'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 25
     env:
@@ -26,7 +30,7 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
           clean: true
@@ -35,11 +39,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          [[ "$(uname -m)" == "arm64" ]] || {
-            echo "Physical preview requires native arm64." >&2
-            exit 1
-          }
+          [[ "$(uname -m)" == "arm64" ]] || { echo "Native arm64 is required." >&2; exit 1; }
 
           console_user="$(stat -f '%Su' /dev/console)"
           runner_user="$(id -un)"
@@ -48,7 +48,7 @@ jobs:
             exit 1
           }
           [[ "${console_user}" == "${runner_user}" ]] || {
-            echo "Runner user ${runner_user} is not the active GUI user ${console_user}." >&2
+            echo "Runner user ${runner_user} is not active GUI user ${console_user}." >&2
             exit 1
           }
 
@@ -57,9 +57,7 @@ jobs:
           command -v xcodegen >/dev/null
           command -v xcodebuild >/dev/null
           command -v caffeinate >/dev/null
-
           echo "CONSOLE_UID=${console_uid}" >> "${GITHUB_ENV}"
-          echo "Physical GUI session validated for ${console_user}."
 
       - name: Build unsigned arm64 preview
         shell: bash
@@ -82,7 +80,6 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
           executable="${app_path}/Contents/MacOS/MacVitals"
           metrics="${RUNNER_TEMP}/pet-physical-preview-metrics.txt"
@@ -93,10 +90,7 @@ jobs:
             launchctl asuser "${CONSOLE_UID}" launchctl unsetenv MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE >/dev/null 2>&1 || true
             if [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1; then
               kill -TERM "${pet_pid}" >/dev/null 2>&1 || true
-              for _ in {1..20}; do
-                kill -0 "${pet_pid}" >/dev/null 2>&1 || break
-                sleep 0.25
-              done
+              sleep 1
               kill -KILL "${pet_pid}" >/dev/null 2>&1 || true
             fi
             if [[ -n "${caffeinate_pid}" ]] && kill -0 "${caffeinate_pid}" >/dev/null 2>&1; then
@@ -105,16 +99,10 @@ jobs:
           }
           trap cleanup EXIT INT TERM
 
-          [[ -x "${executable}" ]] || {
-            echo "Preview executable is missing." >&2
-            exit 1
-          }
+          [[ -x "${executable}" ]] || { echo "Preview executable is missing." >&2; exit 1; }
 
           pkill -TERM -x MacVitals >/dev/null 2>&1 || true
-          for _ in {1..20}; do
-            pgrep -x MacVitals >/dev/null 2>&1 || break
-            sleep 0.25
-          done
+          sleep 1
           pkill -KILL -x MacVitals >/dev/null 2>&1 || true
 
           launchctl asuser "${CONSOLE_UID}" launchctl setenv MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE 1
@@ -125,7 +113,6 @@ jobs:
             [[ -n "${pet_pid}" ]] && break
             sleep 0.25
           done
-
           [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1 || {
             echo "MacVitals did not start in the active GUI session." >&2
             exit 1
@@ -136,14 +123,12 @@ jobs:
 
           caffeinate -dimsu -t 930 &
           caffeinate_pid="$!"
-
           printf 'timestamp pid elapsed cpu_percent rss_kib command\n' > "${metrics}"
-          started="$(date +%s)"
-          finish="$((started + PREVIEW_SECONDS))"
+          finish="$(( $(date +%s) + PREVIEW_SECONDS ))"
 
           while (( $(date +%s) < finish )); do
             kill -0 "${pet_pid}" >/dev/null 2>&1 || {
-              echo "MacVitals exited before the 15-minute preview completed." >&2
+              echo "MacVitals exited before preview completion." >&2
               exit 1
             }
             printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${metrics}"
@@ -152,7 +137,7 @@ jobs:
           done
 
           launchctl asuser "${CONSOLE_UID}" osascript -e 'display notification "15-минутный тест завершён" with title "MacVitals"' >/dev/null 2>&1 || true
-          echo "Physical pet preview completed for ${PREVIEW_SECONDS} seconds."
+          echo "Physical pet preview completed."
 
       - name: Upload preview metrics
         if: always()
