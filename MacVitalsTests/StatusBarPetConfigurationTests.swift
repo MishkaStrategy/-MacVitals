@@ -61,19 +61,22 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     XCTAssertLessThan(width, 320)
   }
 
-  func testRoamBoundsStayOnNotchContourAndContainTheWholeModel() {
-    let size = StatusBarPetSize.small
-    let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
-    let bounds = StatusBarPetMotionRules.roamBounds(
-      panelWidth: panelWidth,
-      petWidth: size.width)
-    let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
+  func testRoamBoundsHugNotchShouldersAndContainTheWholeModel() {
+    for size in StatusBarPetSize.allCases {
+      let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
+      let bounds = StatusBarPetMotionRules.roamBounds(
+        panelWidth: panelWidth,
+        petWidth: size.width)
+      let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
 
-    XCTAssertLessThan(bounds.lowerBound, edges.left)
-    XCTAssertGreaterThan(bounds.upperBound, edges.right)
-    XCTAssertGreaterThanOrEqual(bounds.lowerBound - size.width / 2, 0)
-    XCTAssertLessThanOrEqual(bounds.upperBound + size.width / 2, panelWidth)
-    XCTAssertLessThan(bounds.upperBound - bounds.lowerBound, 270)
+      XCTAssertLessThan(bounds.lowerBound, panelWidth / 2)
+      XCTAssertGreaterThan(bounds.upperBound, panelWidth / 2)
+      XCTAssertLessThanOrEqual(abs(bounds.lowerBound - edges.left), size.width * 0.14)
+      XCTAssertLessThanOrEqual(abs(bounds.upperBound - edges.right), size.width * 0.14)
+      XCTAssertGreaterThanOrEqual(bounds.lowerBound - size.width / 2, 0)
+      XCTAssertLessThanOrEqual(bounds.upperBound + size.width / 2, panelWidth)
+      XCTAssertLessThan(bounds.upperBound - bounds.lowerBound, 270)
+    }
   }
 
   func testCursorInteractionWorksOnlyBesideNotch() {
