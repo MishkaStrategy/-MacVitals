@@ -29,21 +29,64 @@ final class StatusBarPetContourMotionTests: XCTestCase {
     XCTAssertLessThan(right.y, center.y)
   }
 
-  func testContourKeepsFullDragonInsideOverlay() {
+  func testContourKeepsRotatedDragonInsideOverlay() {
+    for size in StatusBarPetSize.allCases {
+      for safeAreaTop in [30.0, 38.0, 44.0] {
+        let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
+        let panelHeight = StatusBarPetMotionRules.panelHeight(
+          safeAreaTop: safeAreaTop,
+          size: size)
+
+        for index in 0...80 {
+          let sample = StatusBarPetContourPath.sample(
+            progress: Double(index) / 80,
+            panelWidth: panelWidth,
+            safeAreaTop: safeAreaTop,
+            petWidth: size.width,
+            petHeight: size.height)
+          let horizontalHalfExtent = StatusBarPetMotionRules.rotatedHorizontalHalfExtent(
+            petWidth: size.width,
+            petHeight: size.height,
+            degrees: sample.tangentDegrees)
+          let verticalHalfExtent = StatusBarPetMotionRules.rotatedVerticalHalfExtent(
+            petWidth: size.width,
+            petHeight: size.height,
+            degrees: sample.tangentDegrees)
+
+          XCTAssertGreaterThanOrEqual(
+            sample.x - horizontalHalfExtent,
+            StatusBarPetMotionRules.modelEdgeMargin - 0.001)
+          XCTAssertLessThanOrEqual(
+            sample.x + horizontalHalfExtent,
+            panelWidth - StatusBarPetMotionRules.modelEdgeMargin + 0.001)
+          XCTAssertGreaterThanOrEqual(
+            sample.y - verticalHalfExtent,
+            StatusBarPetMotionRules.modelEdgeMargin - 0.001)
+          XCTAssertLessThanOrEqual(
+            sample.y + verticalHalfExtent,
+            panelHeight - StatusBarPetMotionRules.modelEdgeMargin + 0.001)
+        }
+      }
+    }
+  }
+
+  func testCenterContourHasVisibleDescentBelowShoulders() {
     for size in StatusBarPetSize.allCases {
       let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
-      for index in 0...40 {
-        let sample = StatusBarPetContourPath.sample(
-          progress: Double(index) / 40,
-          panelWidth: panelWidth,
-          safeAreaTop: 38,
-          petWidth: size.width,
-          petHeight: size.height)
+      let left = StatusBarPetContourPath.sample(
+        progress: 0,
+        panelWidth: panelWidth,
+        safeAreaTop: 38,
+        petWidth: size.width,
+        petHeight: size.height)
+      let center = StatusBarPetContourPath.sample(
+        progress: 0.5,
+        panelWidth: panelWidth,
+        safeAreaTop: 38,
+        petWidth: size.width,
+        petHeight: size.height)
 
-        XCTAssertGreaterThanOrEqual(sample.x - size.width / 2, 5)
-        XCTAssertLessThanOrEqual(sample.x + size.width / 2, panelWidth - 5)
-        XCTAssertGreaterThanOrEqual(sample.y, 0)
-      }
+      XCTAssertGreaterThanOrEqual(center.y - left.y, min(12, size.height * 0.15))
     }
   }
 
