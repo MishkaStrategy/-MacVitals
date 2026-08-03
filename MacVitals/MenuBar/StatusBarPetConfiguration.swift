@@ -106,7 +106,7 @@ nonisolated enum StatusBarPetMotionRules {
   }
 
   static func panelHeight(safeAreaTop: Double, size: StatusBarPetSize) -> Double {
-    resolvedSafeAreaTop(safeAreaTop) + size.height + 12
+    resolvedSafeAreaTop(safeAreaTop) + size.height + 16
   }
 
   static func notchEdges(panelWidth: Double) -> (left: Double, right: Double) {
@@ -117,8 +117,8 @@ nonisolated enum StatusBarPetMotionRules {
   static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
     let edges = notchEdges(panelWidth: panelWidth)
     let overshoot = min(sidePlayground * 0.45, petWidth * 0.28)
-    let minimumCenter = petWidth / 2 + 2
-    let maximumCenter = panelWidth - petWidth / 2 - 2
+    let minimumCenter = petWidth / 2 + 7
+    let maximumCenter = panelWidth - petWidth / 2 - 7
     let lower = max(minimumCenter, edges.left - overshoot)
     let upper = min(maximumCenter, edges.right + overshoot)
     return lower...max(lower, upper)
