@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - agent/physical-pet-preview-3m-20260804-0039
+  pull_request:
+    branches:
+      - agent/physical-pet-preview-3m-20260804-0039
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -15,6 +19,9 @@ concurrency:
 
 jobs:
   physical-preview:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.ref == 'agent/physical-pet-preview-3m-run-20260804-0039'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 12
     env:
@@ -26,7 +33,7 @@ jobs:
       - name: Checkout exact preview commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
           clean: true
