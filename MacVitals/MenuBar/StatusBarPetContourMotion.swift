@@ -28,7 +28,7 @@ nonisolated enum StatusBarPetContourPath {
     petHeight: Double
   ) -> StatusBarPetContourSample {
     let resolved = normalizedProgress(progress)
-    let position = position(
+    let currentPosition = position(
       progress: resolved,
       panelWidth: panelWidth,
       safeAreaTop: safeAreaTop,
@@ -54,8 +54,8 @@ nonisolated enum StatusBarPetContourPath {
 
     return StatusBarPetContourSample(
       progress: resolved,
-      x: position.x,
-      y: position.y,
+      x: currentPosition.x,
+      y: currentPosition.y,
       tangentDegrees: min(max(angle, -16), 16),
       shoulderBlend: 1 - shoulderBlend)
   }
