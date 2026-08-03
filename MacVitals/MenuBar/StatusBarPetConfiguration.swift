@@ -108,7 +108,18 @@ nonisolated enum StatusBarPetMotionRules {
   }
 
   static func panelHeight(safeAreaTop: Double, size: StatusBarPetSize) -> Double {
-    resolvedSafeAreaTop(safeAreaTop) + size.height + 18
+    let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
+    let legacyHeight = resolvedTop + size.height + 18
+    let maximumExtent = rotatedVerticalHalfExtent(
+      petWidth: size.width,
+      petHeight: size.height)
+    let deepestCenter = notchBottomCenterY(
+      safeAreaTop: safeAreaTop,
+      petWidth: size.width,
+      petHeight: size.height)
+    let centerSag = min(2.2, size.height * 0.035)
+    let envelopeHeight = deepestCenter + centerSag + maximumExtent + modelEdgeMargin
+    return max(legacyHeight, envelopeHeight)
   }
 
   static func notchEdges(panelWidth: Double) -> (left: Double, right: Double) {
