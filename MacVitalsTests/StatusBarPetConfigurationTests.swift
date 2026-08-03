@@ -38,14 +38,18 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     XCTAssertEqual(decoded, configuration)
   }
 
-  func testDetailedModelSizesRemainNotchScoped() {
-    XCTAssertEqual(StatusBarPetSize.tiny.width, 54, accuracy: 0.001)
-    XCTAssertEqual(StatusBarPetSize.small.width, 66, accuracy: 0.001)
-    XCTAssertEqual(StatusBarPetSize.medium.width, 78, accuracy: 0.001)
+  func testDetailedModelSizesPreserveRenderReadabilityAndRemainNotchScoped() {
+    XCTAssertEqual(StatusBarPetSize.tiny.width, 76, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.small.width, 96, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.medium.width, 116, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.tiny.height, 58, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.small.height, 72, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.medium.height, 86, accuracy: 0.001)
 
     for size in StatusBarPetSize.allCases {
       XCTAssertGreaterThan(size.width, size.height)
-      XCTAssertGreaterThanOrEqual(size.height, 46)
+      XCTAssertGreaterThanOrEqual(size.height, 58)
+      XCTAssertGreaterThan(size.width / size.height, 1.25)
       XCTAssertLessThan(StatusBarPetMotionRules.panelWidth(for: size), 320)
     }
   }
@@ -95,7 +99,7 @@ final class StatusBarPetConfigurationTests: XCTestCase {
       StatusBarPetMotionRules.shouldPlay(
         petX: panelWidth / 2,
         cursorX: panelWidth / 2 + 20,
-        cursorY: 100,
+        cursorY: 120,
         panelWidth: panelWidth,
         safeAreaTop: 38,
         interactionEnabled: true))
