@@ -153,9 +153,13 @@ nonisolated enum StatusBarPetContourPath {
       petWidth: petWidth,
       petHeight: petHeight)
     let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
-    let resolvedTop = StatusBarPetMotionRules.resolvedSafeAreaTop(safeAreaTop)
-    let outerY = max(petHeight * 0.46, resolvedTop * 0.31)
-    let bottomY = resolvedTop + petHeight * 0.16 + 2
+    let outerY = StatusBarPetMotionRules.shoulderCenterY(
+      petWidth: petWidth,
+      petHeight: petHeight)
+    let bottomY = StatusBarPetMotionRules.notchBottomCenterY(
+      safeAreaTop: safeAreaTop,
+      petWidth: petWidth,
+      petHeight: petHeight)
     let inset = min(petWidth * 0.12, 9)
     let leftBottomX = max(bounds.lowerBound, edges.left + inset)
     let rightBottomX = min(bounds.upperBound, edges.right - inset)
