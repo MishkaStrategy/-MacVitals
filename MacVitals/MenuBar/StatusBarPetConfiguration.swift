@@ -17,17 +17,17 @@ nonisolated enum StatusBarPetSize: String, Codable, CaseIterable, Identifiable, 
 
   var width: Double {
     switch self {
-    case .tiny: return 22
-    case .small: return 28
-    case .medium: return 34
+    case .tiny: return 54
+    case .small: return 66
+    case .medium: return 78
     }
   }
 
   var height: Double {
     switch self {
-    case .tiny: return 18
-    case .small: return 22
-    case .medium: return 27
+    case .tiny: return 46
+    case .small: return 56
+    case .medium: return 66
     }
   }
 }
@@ -92,9 +92,9 @@ nonisolated enum StatusBarPetMotionRules {
   static let minimumSafeAreaTop = 30.0
   static let maximumSafeAreaTop = 44.0
   static let sidePlayground = 38.0
-  static let cursorInteractionRadius = 78.0
+  static let cursorInteractionRadius = 86.0
   static let cursorHorizontalPadding = 36.0
-  static let cursorBottomPadding = 32.0
+  static let cursorBottomPadding = 48.0
 
   static func resolvedSafeAreaTop(_ safeAreaTop: Double) -> Double {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -116,8 +116,12 @@ nonisolated enum StatusBarPetMotionRules {
 
   static func roamBounds(panelWidth: Double, petWidth: Double) -> ClosedRange<Double> {
     let edges = notchEdges(panelWidth: panelWidth)
-    let overshoot = min(sidePlayground * 0.72, petWidth * 0.72)
-    return (edges.left - overshoot)...(edges.right + overshoot)
+    let overshoot = min(sidePlayground * 0.45, petWidth * 0.28)
+    let minimumCenter = petWidth / 2 + 2
+    let maximumCenter = panelWidth - petWidth / 2 - 2
+    let lower = max(minimumCenter, edges.left - overshoot)
+    let upper = min(maximumCenter, edges.right + overshoot)
+    return lower...max(lower, upper)
   }
 
   static func clamped(_ x: Double, to bounds: ClosedRange<Double>) -> Double {
