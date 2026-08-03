@@ -13,7 +13,7 @@ nonisolated enum NotchHUDLayout {
   static let minimumSafeAreaTop: CGFloat = 30
   static let maximumSafeAreaTop: CGFloat = 44
   static let edgeMargin: CGFloat = 8
-  static let contourBottomOffset: CGFloat = 2.5
+  static let minimumContourClearance: CGFloat = 4
 
   static func resolvedSafeAreaTop(_ safeAreaTop: CGFloat) -> CGFloat {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -29,7 +29,7 @@ nonisolated enum NotchHUDLayout {
     safeAreaTop: CGFloat,
     configuration: NotchHUDConfiguration
   ) -> CGFloat {
-    resolvedSafeAreaTop(safeAreaTop) + (configuration.showValueText ? 30 : 12)
+    resolvedSafeAreaTop(safeAreaTop) + (configuration.showValueText ? 32 : 20)
   }
 
   static func panelFrame(
@@ -49,13 +49,19 @@ nonisolated enum NotchHUDLayout {
 
   static func contourGeometry(
     in size: CGSize,
-    safeAreaTop: CGFloat
+    safeAreaTop: CGFloat,
+    lineThickness: CGFloat
   ) -> NotchHUDContourGeometry {
     let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
+    let resolvedLineThickness = min(max(lineThickness, 1), 6)
     let resolvedNotchWidth = min(notchWidth, max(120, size.width - 72))
     let notchLeft = (size.width - resolvedNotchWidth) / 2
     let notchRight = notchLeft + resolvedNotchWidth
-    let bottomY = min(size.height - 2, resolvedTop + contourBottomOffset)
+    let desiredBottomY = resolvedTop
+      + minimumContourClearance
+      + resolvedLineThickness / 2
+    let maximumBottomY = size.height - resolvedLineThickness / 2 - 1
+    let bottomY = min(maximumBottomY, desiredBottomY)
 
     return NotchHUDContourGeometry(
       topY: 0.5,
