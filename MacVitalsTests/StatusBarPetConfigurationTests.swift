@@ -38,6 +38,18 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     XCTAssertEqual(decoded, configuration)
   }
 
+  func testDetailedModelSizesRemainNotchScoped() {
+    XCTAssertEqual(StatusBarPetSize.tiny.width, 54, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.small.width, 66, accuracy: 0.001)
+    XCTAssertEqual(StatusBarPetSize.medium.width, 78, accuracy: 0.001)
+
+    for size in StatusBarPetSize.allCases {
+      XCTAssertGreaterThan(size.width, size.height)
+      XCTAssertGreaterThanOrEqual(size.height, 46)
+      XCTAssertLessThan(StatusBarPetMotionRules.panelWidth(for: size), 320)
+    }
+  }
+
   func testPanelWidthIsLimitedToNotchNeighborhood() {
     let width = StatusBarPetMotionRules.panelWidth(for: .small)
 
@@ -45,15 +57,18 @@ final class StatusBarPetConfigurationTests: XCTestCase {
     XCTAssertLessThan(width, 320)
   }
 
-  func testRoamBoundsStayOnNotchContour() {
-    let panelWidth = StatusBarPetMotionRules.panelWidth(for: .small)
-    let bounds = StatusBarPetMotionRules.roamBounds(panelWidth: panelWidth, petWidth: 28)
+  func testRoamBoundsStayOnNotchContourAndContainTheWholeModel() {
+    let size = StatusBarPetSize.small
+    let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
+    let bounds = StatusBarPetMotionRules.roamBounds(
+      panelWidth: panelWidth,
+      petWidth: size.width)
     let edges = StatusBarPetMotionRules.notchEdges(panelWidth: panelWidth)
 
     XCTAssertLessThan(bounds.lowerBound, edges.left)
     XCTAssertGreaterThan(bounds.upperBound, edges.right)
-    XCTAssertGreaterThanOrEqual(bounds.lowerBound, 0)
-    XCTAssertLessThanOrEqual(bounds.upperBound, panelWidth)
+    XCTAssertGreaterThanOrEqual(bounds.lowerBound - size.width / 2, 0)
+    XCTAssertLessThanOrEqual(bounds.upperBound + size.width / 2, panelWidth)
     XCTAssertLessThan(bounds.upperBound - bounds.lowerBound, 270)
   }
 
@@ -95,22 +110,25 @@ final class StatusBarPetConfigurationTests: XCTestCase {
   }
 
   func testPetPathDropsAlongBottomEdgeAndClimbsShoulders() {
-    let panelWidth = StatusBarPetMotionRules.panelWidth(for: .small)
-    let bounds = StatusBarPetMotionRules.roamBounds(panelWidth: panelWidth, petWidth: 28)
+    let size = StatusBarPetSize.small
+    let panelWidth = StatusBarPetMotionRules.panelWidth(for: size)
+    let bounds = StatusBarPetMotionRules.roamBounds(
+      panelWidth: panelWidth,
+      petWidth: size.width)
     let centerY = StatusBarPetMotionRules.petY(
       x: panelWidth / 2,
       panelWidth: panelWidth,
       safeAreaTop: 38,
-      petHeight: 22)
+      petHeight: size.height)
     let shoulderY = StatusBarPetMotionRules.petY(
       x: bounds.lowerBound,
       panelWidth: panelWidth,
       safeAreaTop: 38,
-      petHeight: 22)
+      petHeight: size.height)
 
     XCTAssertGreaterThan(centerY, 38)
     XCTAssertLessThan(shoulderY, centerY)
-    XCTAssertGreaterThanOrEqual(shoulderY, 11)
+    XCTAssertGreaterThanOrEqual(shoulderY, size.height * 0.5)
   }
 
   func testMovementNeverOvershootsTarget() {
