@@ -195,3 +195,27 @@ nonisolated enum StatusBarPetContourPath {
     min(abs(progress - center) / 0.20, 1)
   }
 }
+
+nonisolated enum StatusBarPetKinematics {
+  static func targetSpeed(
+    maximumSpeed: Double,
+    remainingDistance: Double,
+    slowdownDistance: Double
+  ) -> Double {
+    guard maximumSpeed > 0, remainingDistance > 0, slowdownDistance > 0 else { return 0 }
+    let progress = min(max(remainingDistance / slowdownDistance, 0), 1)
+    return maximumSpeed * sin(progress * .pi / 2)
+  }
+
+  static func advancedSpeed(
+    current: Double,
+    target: Double,
+    acceleration: Double,
+    deltaTime: Double
+  ) -> Double {
+    guard acceleration > 0, deltaTime > 0 else { return max(current, 0) }
+    let difference = target - current
+    let step = min(abs(difference), acceleration * deltaTime)
+    return max(0, current + (difference < 0 ? -step : step))
+  }
+}
