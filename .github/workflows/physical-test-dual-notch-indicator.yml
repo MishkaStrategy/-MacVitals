@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8837338324'
-      APP_ARTIFACT_DIGEST: '1ebcf561f5165b9bf504edacc2f2e8103e9ddc2721848eb1d61a941a83e66f03'
-      FEATURE_HEAD_SHA: 'df4128d02523c03ddffaacdaecf4bf7f79b0f9cd'
+      APP_ARTIFACT_ID: '8867257004'
+      APP_ARTIFACT_DIGEST: 'ccc28054b01d3da1db9f998424f5987806f3ef261ac0ed21aa98e51c2ec6e134'
+      FEATURE_HEAD_SHA: 'f7216f9b6c83f098a35546de4ace847178e7cd0a'
       SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
 
     steps:
@@ -34,11 +34,19 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Validate corrected contour source
+      - name: Validate safe contour source
         shell: bash
         run: |
           set -Eeuo pipefail
-          grep -F 'let bottomY = min(size.height - 2, resolvedTop + contourBottomOffset)' \
+          grep -F 'static let minimumContourClearance: CGFloat = 4' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'static let maximumIndicatorLineThickness: CGFloat = 6' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'let desiredBottomY = resolvedTop' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F '+ minimumContourClearance' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F '+ resolvedLineThickness / 2' \
             MacVitals/MenuBar/NotchHUDLayout.swift
           grep -F 'path.move(to: CGPoint(x: leftX, y: topY))' \
             MacVitals/MenuBar/NotchHUDViews.swift
@@ -92,7 +100,7 @@ jobs:
                   'ps -p "${app_pid}" -o lstart=,%cpu=,rss=',
               '.rsplit(" ",3)': '.rsplit(" ",2)',
               "expected_height = resolved_safe_area + (30 if expected_labels else 8)":
-                  "expected_height = resolved_safe_area + (30 if expected_labels else 12)",
+                  "expected_height = resolved_safe_area + (32 if expected_labels else 20)",
           }
           for old, new in replacements.items():
               if script.count(old) != 1:
@@ -102,7 +110,7 @@ jobs:
           PY
           grep -F "timestamp,cpu_percent,rss_kib" /tmp/run-physical-dual-notch.sh
           grep -F 'ps -p "${app_pid}" -o lstart=,%cpu=,rss=' /tmp/run-physical-dual-notch.sh
-          grep -F '30 if expected_labels else 12' /tmp/run-physical-dual-notch.sh
+          grep -F '32 if expected_labels else 20' /tmp/run-physical-dual-notch.sh
           bash -n /tmp/run-physical-dual-notch.sh
 
       - name: Validate physical single and dual indicator modes
@@ -115,7 +123,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: physical-dual-notch-indicator-corrected-evidence
+          name: physical-dual-notch-indicator-safe-clearance-evidence
           path: physical-evidence/
           if-no-files-found: error
           retention-days: 30
