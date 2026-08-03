@@ -64,8 +64,12 @@ final class StatusBarPetContourMotionTests: XCTestCase {
 
     XCTAssertGreaterThan(left.tangentDegrees, 0)
     XCTAssertLessThan(right.tangentDegrees, 0)
-    XCTAssertLessThanOrEqual(abs(left.tangentDegrees), 16)
-    XCTAssertLessThanOrEqual(abs(right.tangentDegrees), 16)
+    XCTAssertLessThanOrEqual(
+      abs(left.tangentDegrees),
+      StatusBarPetMotionRules.maximumBodyRotationDegrees)
+    XCTAssertLessThanOrEqual(
+      abs(right.tangentDegrees),
+      StatusBarPetMotionRules.maximumBodyRotationDegrees)
   }
 
   func testCursorXMapsBackOntoContour() {
@@ -101,5 +105,52 @@ final class StatusBarPetContourMotionTests: XCTestCase {
       petHeight: size.height)
 
     XCTAssertEqual(result, 0.46, accuracy: 0.0001)
+  }
+
+  func testKinematicsSlowDownNearPerch() {
+    let farSpeed = StatusBarPetKinematics.targetSpeed(
+      maximumSpeed: 40,
+      remainingDistance: 80,
+      slowdownDistance: 30)
+    let nearSpeed = StatusBarPetKinematics.targetSpeed(
+      maximumSpeed: 40,
+      remainingDistance: 8,
+      slowdownDistance: 30)
+    let stoppedSpeed = StatusBarPetKinematics.targetSpeed(
+      maximumSpeed: 40,
+      remainingDistance: 0,
+      slowdownDistance: 30)
+
+    XCTAssertEqual(farSpeed, 40, accuracy: 0.001)
+    XCTAssertGreaterThan(nearSpeed, 0)
+    XCTAssertLessThan(nearSpeed, farSpeed)
+    XCTAssertEqual(stoppedSpeed, 0, accuracy: 0.001)
+  }
+
+  func testKinematicsAccelerationNeverOvershootsDesiredSpeed() {
+    XCTAssertEqual(
+      StatusBarPetKinematics.advancedSpeed(
+        current: 0,
+        target: 40,
+        acceleration: 100,
+        deltaTime: 0.1),
+      10,
+      accuracy: 0.001)
+    XCTAssertEqual(
+      StatusBarPetKinematics.advancedSpeed(
+        current: 38,
+        target: 40,
+        acceleration: 100,
+        deltaTime: 0.1),
+      40,
+      accuracy: 0.001)
+    XCTAssertEqual(
+      StatusBarPetKinematics.advancedSpeed(
+        current: 5,
+        target: 0,
+        acceleration: 100,
+        deltaTime: 0.1),
+      0,
+      accuracy: 0.001)
   }
 }
