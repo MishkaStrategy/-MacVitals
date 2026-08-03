@@ -14,6 +14,7 @@ nonisolated enum NotchHUDLayout {
   static let maximumSafeAreaTop: CGFloat = 44
   static let edgeMargin: CGFloat = 8
   static let minimumContourClearance: CGFloat = 4
+  static let maximumIndicatorLineThickness: CGFloat = 6
 
   static func resolvedSafeAreaTop(_ safeAreaTop: CGFloat) -> CGFloat {
     guard safeAreaTop > 0 else { return minimumSafeAreaTop }
@@ -50,10 +51,10 @@ nonisolated enum NotchHUDLayout {
   static func contourGeometry(
     in size: CGSize,
     safeAreaTop: CGFloat,
-    lineThickness: CGFloat
+    lineThickness: CGFloat = maximumIndicatorLineThickness
   ) -> NotchHUDContourGeometry {
     let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
-    let resolvedLineThickness = min(max(lineThickness, 1), 6)
+    let resolvedLineThickness = min(max(lineThickness, 1), maximumIndicatorLineThickness)
     let resolvedNotchWidth = min(notchWidth, max(120, size.width - 72))
     let notchLeft = (size.width - resolvedNotchWidth) / 2
     let notchRight = notchLeft + resolvedNotchWidth
