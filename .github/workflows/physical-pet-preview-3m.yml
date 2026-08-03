@@ -1,0 +1,233 @@
+name: Physical Pet Preview 3m
+
+on:
+  push:
+    branches:
+      - agent/physical-pet-preview-3m-20260804-0039
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: physical-pet-preview-3m
+  cancel-in-progress: true
+
+jobs:
+  physical-preview:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 12
+    env:
+      DERIVED_DATA: ${{ runner.temp }}/MacVitalsPhysicalPetPreview3m
+      PREVIEW_SECONDS: "180"
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout exact preview commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Validate active ARM64 GUI session
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          [[ "$(uname -s)" == "Darwin" ]]
+          [[ "$(uname -m)" == "arm64" ]]
+
+          console_user="$(stat -f '%Su' /dev/console)"
+          runner_user="$(id -un)"
+          [[ -n "${console_user}" && "${console_user}" != "root" && "${console_user}" != "loginwindow" ]] || {
+            echo "No active macOS GUI session." >&2
+            exit 1
+          }
+          [[ "${runner_user}" == "${console_user}" ]] || {
+            echo "Runner user is not the active GUI user." >&2
+            exit 1
+          }
+
+          console_uid="$(id -u "${console_user}")"
+          launchctl print "gui/${console_uid}" >/dev/null
+          command -v xcodegen >/dev/null
+          command -v xcodebuild >/dev/null
+          command -v codesign >/dev/null
+          command -v caffeinate >/dev/null
+
+          echo "CONSOLE_UID=${console_uid}" >> "${GITHUB_ENV}"
+
+      - name: Build only MacVitals.app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          rm -rf -- "${DERIVED_DATA}"
+          python3 scripts/materialize_app_icon.py
+          xcodegen generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          app_path="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app"
+          executable="${app_path}/Contents/MacOS/MacVitals"
+          [[ -d "${app_path}" && -x "${executable}" ]]
+
+          xattr -dr com.apple.quarantine "${app_path}" 2>/dev/null || true
+          codesign --force --deep --sign - --timestamp=none "${app_path}"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+
+          echo "APP_PATH=${app_path}" >> "${GITHUB_ENV}"
+
+      - name: Run physical preview for three minutes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          executable="${APP_PATH}/Contents/MacOS/MacVitals"
+          app_log="${RUNNER_TEMP}/MacVitals-physical-preview-3m.log"
+          metrics="${RUNNER_TEMP}/MacVitals-physical-preview-3m-metrics.txt"
+          pet_pid=""
+          launcher_pid=""
+          caffeinate_pid=""
+
+          post_comment() {
+            COMMENT_BODY="$1" python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          body = os.environ["COMMENT_BODY"]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repository}/issues/44/comments",
+              data=json.dumps({"body": body}).encode("utf-8"),
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/json",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              if response.status not in (200, 201):
+                  raise SystemExit(f"Comment API returned {response.status}")
+          PY
+          }
+
+          cleanup() {
+            if [[ -n "${pet_pid}" ]] && kill -0 "${pet_pid}" >/dev/null 2>&1; then
+              kill -TERM "${pet_pid}" >/dev/null 2>&1 || true
+              for _ in {1..20}; do
+                kill -0 "${pet_pid}" >/dev/null 2>&1 || break
+                sleep 0.25
+              done
+              kill -KILL "${pet_pid}" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${launcher_pid}" ]] && kill -0 "${launcher_pid}" >/dev/null 2>&1; then
+              kill -TERM "${launcher_pid}" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${caffeinate_pid}" ]] && kill -0 "${caffeinate_pid}" >/dev/null 2>&1; then
+              kill -TERM "${caffeinate_pid}" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT INT TERM
+
+          pkill -TERM -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
+          pkill -TERM -x MacVitals >/dev/null 2>&1 || true
+          sleep 1
+          pkill -KILL -x MacVitalsUITests-Runner >/dev/null 2>&1 || true
+          pkill -KILL -x MacVitals >/dev/null 2>&1 || true
+
+          : > "${app_log}"
+          launchctl asuser "${CONSOLE_UID}" \
+            /usr/bin/env MACVITALS_STATUS_BAR_PET_RUNTIME_SMOKE=1 \
+            "${executable}" \
+            >"${app_log}" 2>&1 &
+          launcher_pid="$!"
+
+          for _ in {1..80}; do
+            pet_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
+            [[ -n "${pet_pid}" ]] && break
+            kill -0 "${launcher_pid}" >/dev/null 2>&1 || break
+            sleep 0.25
+          done
+
+          if [[ -z "${pet_pid}" ]] || ! kill -0 "${pet_pid}" >/dev/null 2>&1; then
+            cat "${app_log}" >&2 || true
+            exit 1
+          fi
+
+          post_comment "🟢 Физический тест запущен на self-hosted Mac: основной MacVitals.app, дракон включён, длительность 3 минуты. UI-тестовый Runner не используется."
+          launchctl asuser "${CONSOLE_UID}" osascript \
+            -e 'display notification "Дракон запущен на 3 минуты" with title "MacVitals"' \
+            >/dev/null 2>&1 || true
+
+          caffeinate -dimsu -t 210 &
+          caffeinate_pid="$!"
+          printf 'timestamp pid elapsed cpu_percent rss_kib command\n' > "${metrics}"
+          finish="$(( $(date +%s) + PREVIEW_SECONDS ))"
+
+          while (( $(date +%s) < finish )); do
+            if ! kill -0 "${pet_pid}" >/dev/null 2>&1; then
+              cat "${app_log}" >&2 || true
+              exit 1
+            fi
+            printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${metrics}"
+            ps -p "${pet_pid}" -o pid=,etime=,%cpu=,rss=,comm= >> "${metrics}"
+            sleep 5
+          done
+
+          post_comment "✅ Трёхминутный физический тест завершён: MacVitals оставался запущен все 180 секунд. Тестовая копия остановлена."
+          launchctl asuser "${CONSOLE_UID}" osascript \
+            -e 'display notification "3-минутный тест завершён" with title "MacVitals"' \
+            >/dev/null 2>&1 || true
+
+      - name: Report physical preview failure
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          body = "🔴 Физический тест не запустился или MacVitals завершился раньше трёх минут. Проверяю журнал self-hosted job; UI-тестовый Runner не запускался."
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repository}/issues/44/comments",
+              data=json.dumps({"body": body}).encode("utf-8"),
+              method="POST",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/json",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20):
+              pass
+          PY
+
+      - name: Upload physical preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: physical-pet-preview-3m-evidence
+          path: |
+            ${{ runner.temp }}/MacVitals-physical-preview-3m.log
+            ${{ runner.temp }}/MacVitals-physical-preview-3m-metrics.txt
+          if-no-files-found: ignore
+          retention-days: 1
