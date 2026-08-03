@@ -20,12 +20,15 @@ final class NotchHUDIndicatorTests: XCTestCase {
 
   func testContourGeometryTracesOutsideHardwareCutout() {
     let geometry = NotchHUDLayout.contourGeometry(
-      in: CGSize(width: 356, height: 68),
+      in: CGSize(width: 356, height: 70),
       safeAreaTop: 38)
 
     XCTAssertEqual(geometry.notchRightX - geometry.notchLeftX, 212, accuracy: 0.001)
     XCTAssertLessThanOrEqual(geometry.topY, 1)
-    XCTAssertGreaterThan(geometry.bottomY, 38)
+    XCTAssertGreaterThanOrEqual(
+      geometry.bottomY - NotchHUDLayout.maximumIndicatorLineThickness / 2,
+      38 + NotchHUDLayout.minimumContourClearance,
+      accuracy: 0.001)
     XCTAssertLessThan(geometry.shoulderRadius, 15)
   }
 
@@ -37,7 +40,7 @@ final class NotchHUDIndicatorTests: XCTestCase {
       NotchHUDLayout.preferredPanelHeight(
         safeAreaTop: 38,
         configuration: configuration),
-      50,
+      58,
       accuracy: 0.001)
   }
 
