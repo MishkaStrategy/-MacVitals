@@ -90,13 +90,16 @@ private struct StatusBarPetSettingsView: View {
           let notchLeft = (proxy.size.width - notchWidth) / 2
           let wave = CGFloat((sin(time * 0.62) + 1) * 0.5)
           let velocity = CGFloat(abs(cos(time * 0.62)))
-          let direction = cos(time * 0.62) >= 0 ? CGFloat(1) : CGFloat(-1)
+          let facingRight = cos(time * 0.62) >= 0
           let shoulderDistance = min(abs(wave - 0.5) * 2, 1)
           let petX = notchLeft + wave * notchWidth
           let petY = CGFloat(62) - shoulderDistance * 16
           let rotation = wave < 0.18 ? 8.0 : (wave > 0.82 ? -8.0 : 0.0)
           let crawlPhase = CGFloat((time * 0.54).truncatingRemainder(dividingBy: 1))
           let perchBlend = max(0, 1 - velocity * 1.8)
+          let petSize = CGSize(
+            width: settings.configuration.size.width,
+            height: settings.configuration.size.height)
 
           ZStack(alignment: .topLeading) {
             LinearGradient(
@@ -129,18 +132,17 @@ private struct StatusBarPetSettingsView: View {
               .overlay(Circle().stroke(Color.cyan.opacity(0.24), lineWidth: 0.5))
               .position(x: proxy.size.width / 2, y: 18)
 
-            DetailedElectricDragonView(
+            StatusBarPetDragonPresentation(
               activity: velocity > 0.14 ? .roaming : .idle,
               time: time,
               sparkIntensity: settings.configuration.sparkIntensity,
               crawlPhase: crawlPhase,
               travelVelocity: velocity,
-              perchBlend: perchBlend)
-              .frame(
-                width: settings.configuration.size.width,
-                height: settings.configuration.size.height)
-              .scaleEffect(x: direction, y: 1)
-              .rotationEffect(.degrees(rotation))
+              perchBlend: perchBlend,
+              contourProgress: wave,
+              facingRight: facingRight,
+              rotationDegrees: rotation,
+              size: petSize)
               .position(x: petX, y: petY)
           }
         }
