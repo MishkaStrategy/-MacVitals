@@ -74,12 +74,21 @@ final class NotchHUDController {
     activeScreenNumber = screen.deviceDescription[
       NSDeviceDescriptionKey("NSScreenNumber")
     ] as? NSNumber
+
+    let hardwareGeometry = NotchHUDLayout.hardwareNotchGeometry(
+      screenFrame: screen.frame,
+      safeAreaTop: safeAreaTop,
+      auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+      auxiliaryTopRightArea: screen.auxiliaryTopRightArea)
+
     state.safeAreaTop = NotchHUDLayout.resolvedSafeAreaTop(safeAreaTop)
+    state.notchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth
 
     let frame = NotchHUDLayout.panelFrame(
       for: screen.frame,
       safeAreaTop: safeAreaTop,
-      configuration: configuration)
+      configuration: configuration,
+      notchGeometry: hardwareGeometry)
     panel.setFrame(frame, display: true)
     panel.orderFrontRegardless()
     writeDiagnostics(event: "ordered", screen: screen, frame: frame)
@@ -146,6 +155,7 @@ final class NotchHUDController {
       "primaryTrimEnd": primarySegment.to,
       "secondaryTrimStart": secondarySegment.from,
       "secondaryTrimEnd": secondarySegment.to,
+      "resolvedNotchWidth": state.notchWidth,
     ]
 
     if let screen {
@@ -154,6 +164,16 @@ final class NotchHUDController {
       payload["screenY"] = screen.frame.minY
       payload["screenWidth"] = screen.frame.width
       payload["screenHeight"] = screen.frame.height
+
+      if let hardwareGeometry = NotchHUDLayout.hardwareNotchGeometry(
+        screenFrame: screen.frame,
+        safeAreaTop: screen.safeAreaInsets.top,
+        auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+        auxiliaryTopRightArea: screen.auxiliaryTopRightArea)
+      {
+        payload["hardwareNotchCenterX"] = hardwareGeometry.centerX
+        payload["hardwareNotchWidth"] = hardwareGeometry.width
+      }
     }
 
     if let frame {
