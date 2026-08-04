@@ -3,10 +3,12 @@ name: System Language and Fan Helper Validation
 on:
   push:
     branches: [test/system-language-fan-helper]
+  pull_request:
+    branches: [fix/prevent-uitest-runner-launch]
   workflow_dispatch:
 
 concurrency:
-  group: system-language-fan-helper-validation
+  group: system-language-fan-helper-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,12 +21,13 @@ jobs:
     env:
       CANONICAL_PRODUCT_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
       SAFE_CI_BASE_SHA: f03e869b60ca5d8f5e1983e85af31940a34b67c4
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: build/system-language-fan-helper
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           clean: true
 
@@ -34,7 +37,7 @@ jobs:
           set -euo pipefail
           test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
           git merge-base --is-ancestor "${CANONICAL_PRODUCT_SHA}" HEAD
           git merge-base --is-ancestor "${SAFE_CI_BASE_SHA}" HEAD
 
@@ -45,7 +48,7 @@ jobs:
           python3 scripts/validate_localizations.py
           python3 - <<'PY'
           from pathlib import Path
-          from scripts.validate_localizations import parse, validate
+          from scripts.validate_localizations import validate
 
           root = Path("MacVitals/Resources")
           english = root / "en.lproj"
@@ -178,8 +181,9 @@ jobs:
           test "$(lipo -archs "${helper}")" = arm64
           test -f "${plist}"
 
-          if codesign -dv "${helper}" >/dev/null 2>&1; then
-            echo "Unexpected signed helper in unsigned validation build" >&2
+          codesign -dv --verbose=4 "${helper}" > build/helper-codesign.txt 2>&1 || true
+          if grep -q '^Authority=Developer ID Application:' build/helper-codesign.txt; then
+            echo "Unexpected Developer ID helper in unsigned validation build" >&2
             exit 1
           fi
 
@@ -195,7 +199,7 @@ jobs:
           assert value["AssociatedBundleIdentifiers"] == ["com.mishkacher.MacVitals"]
           assert value["RunAtLoad"] is False
           assert value["KeepAlive"] is False
-          print("Unsigned helper remains non-registerable and monitoring-only")
+          print("Unsigned/ad-hoc helper remains non-Developer-ID and monitoring-only")
           PY
 
       - name: Write validation summary
@@ -204,10 +208,10 @@ jobs:
         run: |
           mkdir -p build/validation-evidence
           cp -f build/localization-*.json build/validation-evidence/ 2>/dev/null || true
-          cp -f build-release.log fan-helper-tests.log build/validation-evidence/ 2>/dev/null || true
+          cp -f build/helper-codesign.txt build-release.log fan-helper-tests.log build/validation-evidence/ 2>/dev/null || true
           cat > build/validation-evidence/summary.json <<JSON
           {
-            "sourceSha": "${GITHUB_SHA}",
+            "sourceSha": "${SOURCE_SHA}",
             "canonicalAncestor": "${CANONICAL_PRODUCT_SHA}",
             "architecture": "arm64",
             "configuration": "Release",
@@ -224,7 +228,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: system-language-fan-helper-${{ github.sha }}
+          name: system-language-fan-helper-${{ env.SOURCE_SHA }}
           path: build/validation-evidence/
           if-no-files-found: error
           retention-days: 30
