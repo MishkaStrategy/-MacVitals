@@ -1,0 +1,68 @@
+name: Runtime Resource Evidence Policy
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: runtime-resource-policy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-runtime-resource-policy:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Validate exact self-hosted ARM64 checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+
+      - name: Validate resource evidence tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            scripts/report_runtime_resources.py \
+            scripts/validate_runtime_resource_policy.py
+          python3 scripts/report_runtime_resources.py --self-test
+          python3 scripts/validate_runtime_resource_policy.py --self-test
+          bash -n scripts/run_ci_runtime_smoke.sh
+
+      - name: Enforce policy on changed runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA}"
+          if [[ -z "${base}" ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          git cat-file -e "${base}^{commit}"
+          python3 scripts/validate_runtime_resource_policy.py --base-ref "${base}"
+
+      - name: Record not-applicable app-runtime status
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Runtime resource policy gate'
+            echo
+            echo 'This job validates test infrastructure only and does not launch MacVitals.'
+            echo 'Application CPU/RSS measurement: **not applicable**.'
+          } >> "${GITHUB_STEP_SUMMARY}"
