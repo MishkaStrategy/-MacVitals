@@ -178,6 +178,7 @@ final class NotchHUDState: ObservableObject {
   @Published var snapshot: SystemSnapshot = .empty
   @Published var configuration: NotchHUDConfiguration = .minimal
   @Published var safeAreaTop: CGFloat = NotchHUDLayout.minimumSafeAreaTop
+  @Published var notchWidth: CGFloat = NotchHUDLayout.notchWidth
 }
 
 @MainActor
@@ -188,7 +189,8 @@ struct NotchHUDIndicatorView: View {
     NotchHUDIndicatorContentView(
       snapshot: state.snapshot,
       configuration: state.configuration,
-      safeAreaTop: state.safeAreaTop)
+      safeAreaTop: state.safeAreaTop,
+      notchWidth: state.notchWidth)
   }
 }
 
@@ -197,6 +199,7 @@ struct NotchHUDIndicatorContentView: View {
   let snapshot: SystemSnapshot
   let configuration: NotchHUDConfiguration
   let safeAreaTop: CGFloat
+  let notchWidth: CGFloat
 
   var body: some View {
     let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
@@ -214,11 +217,13 @@ struct NotchHUDIndicatorContentView: View {
     }
 
     GeometryReader { proxy in
+      let lineWidth = CGFloat(normalized.lineThickness)
       let geometry = NotchHUDLayout.contourGeometry(
         in: proxy.size,
-        safeAreaTop: safeAreaTop)
+        safeAreaTop: safeAreaTop,
+        lineThickness: lineWidth,
+        notchWidth: notchWidth)
       let shape = NotchHUDContourShape(geometry: geometry)
-      let lineWidth = CGFloat(normalized.lineThickness)
       let count = normalized.indicatorCount
       let primaryTrack = NotchHUDIndicatorSegments.primaryTrack(count: count)
       let primarySegment = NotchHUDIndicatorSegments.primary(
