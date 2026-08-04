@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   capture:
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
       TARGET_BRANCH: ${{ github.ref_name }}
