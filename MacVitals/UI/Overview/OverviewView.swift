@@ -11,6 +11,7 @@ struct OverviewView: View {
   @EnvironmentObject private var coordinator: MetricsCoordinator
   @EnvironmentObject private var settings: SettingsStore
   @EnvironmentObject private var fanControl: FanControlClient
+  @EnvironmentObject private var caffeinate: CaffeinateController
 
   var body: some View {
     VStack(spacing: 10) {
@@ -31,20 +32,10 @@ struct OverviewView: View {
           .font(.caption)
         }
         Spacer()
-        Button {
-          PreferencesWindowPresenter.shared.show(
-            coordinator: coordinator,
-            settings: settings,
-            fanControl: fanControl)
-        } label: {
-          Image(systemName: "gearshape.fill")
-            .font(.title3)
-            .padding(7)
-            .background(.quaternary.opacity(0.45), in: Circle())
+        HStack(spacing: 6) {
+          caffeinateButton
+          preferencesButton
         }
-        .buttonStyle(.plain)
-        .help("Preferences")
-        .accessibilityLabel("Preferences")
       }
 
       LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
@@ -101,6 +92,48 @@ struct OverviewView: View {
     .padding(16)
     .frame(width: OverviewLayout.width, height: OverviewLayout.height)
     .accessibilityElement(children: .contain)
+  }
+
+  private var caffeinateButton: some View {
+    let actionTitle = caffeinate.isActive ? "Allow Mac to sleep" : "Keep Mac awake"
+    let stateTitle = caffeinate.isActive ? "Awake mode is on" : "Awake mode is off"
+
+    return Button(action: caffeinate.toggle) {
+      Image(systemName: "cup.and.saucer.fill")
+        .font(.title3)
+        .foregroundStyle(caffeinate.isActive ? Color.white : theme.primaryAccent)
+        .padding(7)
+        .background(
+          caffeinate.isActive ? theme.primaryAccent : Color.primary.opacity(0.06),
+          in: Circle())
+        .overlay(
+          Circle()
+            .stroke(
+              caffeinate.isActive ? theme.primaryAccent.opacity(0.8) : Color.secondary.opacity(0.14),
+              lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .help(L10n.string(actionTitle))
+    .accessibilityLabel(L10n.string(actionTitle))
+    .accessibilityValue(L10n.string(stateTitle))
+    .accessibilityIdentifier("overviewCaffeinateButton")
+  }
+
+  private var preferencesButton: some View {
+    Button {
+      PreferencesWindowPresenter.shared.show(
+        coordinator: coordinator,
+        settings: settings,
+        fanControl: fanControl)
+    } label: {
+      Image(systemName: "gearshape.fill")
+        .font(.title3)
+        .padding(7)
+        .background(.quaternary.opacity(0.45), in: Circle())
+    }
+    .buttonStyle(.plain)
+    .help("Preferences")
+    .accessibilityLabel("Preferences")
   }
 
   private func showDetail(_ kind: MetricDetailKind) {

@@ -7,6 +7,7 @@ final class StatusItemController: NSObject {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let popover = NSPopover()
   private let notchHUD = NotchHUDController()
+  private let caffeinate = CaffeinateController()
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
@@ -27,6 +28,7 @@ final class StatusItemController: NSObject {
         .environmentObject(coordinator)
         .environmentObject(settings)
         .environmentObject(fanControl)
+        .environmentObject(caffeinate)
     }
     popover.contentViewController = NSHostingController(rootView: root)
     popover.behavior = .transient
@@ -48,18 +50,25 @@ final class StatusItemController: NSObject {
       button.setAccessibilityIdentifier("macVitalsStatusItem")
     }
 
-    Publishers.CombineLatest3(
+    Publishers.CombineLatest4(
       coordinator.$snapshot,
       settings.$enabledMetrics,
-      settings.$showAroundStatusBar)
+      settings.$showAroundStatusBar,
+      settings.$notchHUDConfiguration)
       .receive(on: RunLoop.main)
-      .sink { [weak self] snapshot, metrics, showAroundStatusBar in
+      .sink { [weak self] snapshot, metrics, showAroundStatusBar, configuration in
         self?.render(
           snapshot: snapshot,
           metrics: metrics,
-          showAroundStatusBar: showAroundStatusBar)
+          showAroundStatusBar: showAroundStatusBar,
+          notchHUDConfiguration: configuration)
       }
       .store(in: &cancellables)
+
+    renderCurrentState()
+    DispatchQueue.main.async { [weak self] in
+      self?.renderCurrentState()
+    }
   }
 
   @objc private func togglePopover() {
@@ -88,6 +97,9 @@ final class StatusItemController: NSObject {
       withTitle: L10n.string(
         settings.showAroundStatusBar ? "Hide around status bar" : "Show around status bar"),
       action: #selector(toggleNotchHUD), keyEquivalent: "")
+    menu.addItem(
+      withTitle: L10n.string("HUD Settings…"),
+      action: #selector(openNotchHUDSettings), keyEquivalent: "")
 
     menu.addItem(.separator())
     menu.addItem(
@@ -113,10 +125,14 @@ final class StatusItemController: NSObject {
 
   @objc private func toggleNotchHUD() {
     settings.showAroundStatusBar.toggle()
-    notchHUD.update(
-      snapshot: coordinator.snapshot,
-      preferredScreen: statusItem.button?.window?.screen,
-      enabled: settings.showAroundStatusBar)
+    renderCurrentState()
+  }
+
+  @objc private func openNotchHUDSettings() {
+    openPreferences()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      NotificationCenter.default.post(name: .openStatusBarHUDPreferences, object: nil)
+    }
   }
 
   @objc private func openPreferences() {
@@ -125,16 +141,33 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func quit() {
+    caffeinate.stop()
     notchHUD.hide()
     NSApp.terminate(nil)
+  }
+
+  private func renderCurrentState() {
+    render(
+      snapshot: coordinator.snapshot,
+      metrics: settings.enabledMetrics,
+      showAroundStatusBar: settings.showAroundStatusBar,
+      notchHUDConfiguration: settings.notchHUDConfiguration)
   }
 
   private func render(
     snapshot: SystemSnapshot,
     metrics: [MenuMetric],
-    showAroundStatusBar: Bool
+    showAroundStatusBar: Bool,
+    notchHUDConfiguration: NotchHUDConfiguration
   ) {
     let normalized = MenuLayoutRules.normalized(metrics)
+    let preferredScreen = statusItem.button?.window?.screen
+
+    notchHUD.update(
+      snapshot: snapshot,
+      preferredScreen: preferredScreen,
+      enabled: showAroundStatusBar,
+      configuration: notchHUDConfiguration)
 
     if let button = statusItem.button {
       button.title = ""
@@ -148,11 +181,6 @@ final class StatusItemController: NSObject {
       button.setAccessibilityLabel("MacVitals")
       button.setAccessibilityValue(
         MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
-
-      notchHUD.update(
-        snapshot: snapshot,
-        preferredScreen: button.window?.screen,
-        enabled: showAroundStatusBar)
     }
     statusItem.length = NSStatusItem.variableLength
   }

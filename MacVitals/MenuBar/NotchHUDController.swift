@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 @MainActor
@@ -6,78 +7,189 @@ final class NotchHUDController {
   nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
 
   private let state = NotchHUDState()
-  private var leftPanel: NSPanel?
-  private var rightPanel: NSPanel?
+  private var panel: NSPanel?
   private var enabled = false
   private var activeScreenNumber: NSNumber?
 
   var isEnabled: Bool { enabled }
 
   var hasAllocatedPanelsForTesting: Bool {
-    leftPanel != nil || rightPanel != nil
+    panel != nil
   }
 
   func update(
     snapshot: SystemSnapshot,
     preferredScreen: NSScreen?,
-    enabled: Bool
+    enabled: Bool,
+    configuration: NotchHUDConfiguration = .minimal
   ) {
     self.enabled = enabled
+    writeDiagnostics(event: "update", screen: preferredScreen)
 
     guard enabled else {
-      hide()
+      hide(event: "disabled")
       return
     }
 
     state.snapshot = snapshot
+    state.configuration = NotchHUDConfigurationPolicy.normalized(configuration)
     applyVisibility(preferredScreen: preferredScreen)
   }
 
   func hide() {
-    leftPanel?.orderOut(nil)
-    rightPanel?.orderOut(nil)
+    hide(event: "hidden")
+  }
+
+  private func hide(event: String) {
+    panel?.orderOut(nil)
     activeScreenNumber = nil
+    writeDiagnostics(event: event)
   }
 
   private func applyVisibility(preferredScreen: NSScreen?) {
     guard enabled else {
-      hide()
+      hide(event: "disabled-before-visibility")
       return
     }
 
     guard let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else {
-      hide()
+      hide(event: "no-screen")
       return
     }
 
-    ensurePanels()
-    guard let leftPanel, let rightPanel else { return }
+    let configuration = state.configuration
+    let safeAreaTop = screen.safeAreaInsets.top
+    guard configuration.showOnDisplaysWithoutNotch || safeAreaTop > 0 else {
+      hide(event: "screen-without-notch")
+      writeDiagnostics(event: "screen-without-notch", screen: screen)
+      return
+    }
+
+    ensurePanel()
+    guard let panel else {
+      writeDiagnostics(event: "panel-allocation-failed", screen: screen)
+      return
+    }
 
     activeScreenNumber = screen.deviceDescription[
       NSDeviceDescriptionKey("NSScreenNumber")
     ] as? NSNumber
 
-    let frames = NotchHUDLayout.sideFrames(
-      for: screen.frame,
-      safeAreaTop: screen.safeAreaInsets.top)
-    leftPanel.setFrame(frames.left, display: true)
-    rightPanel.setFrame(frames.right, display: true)
+    let hardwareGeometry = NotchHUDLayout.hardwareNotchGeometry(
+      screenFrame: screen.frame,
+      safeAreaTop: safeAreaTop,
+      auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+      auxiliaryTopRightArea: screen.auxiliaryTopRightArea)
 
-    leftPanel.orderFrontRegardless()
-    rightPanel.orderFrontRegardless()
+    state.safeAreaTop = NotchHUDLayout.resolvedSafeAreaTop(safeAreaTop)
+    state.notchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth
+
+    let frame = NotchHUDLayout.panelFrame(
+      for: screen.frame,
+      safeAreaTop: safeAreaTop,
+      configuration: configuration,
+      notchGeometry: hardwareGeometry)
+    panel.setFrame(frame, display: true)
+    panel.orderFrontRegardless()
+    writeDiagnostics(event: "ordered", screen: screen, frame: frame)
+
+    DispatchQueue.main.async { [weak self, weak screen] in
+      self?.writeDiagnostics(event: "ordered-next-run-loop", screen: screen, frame: frame)
+    }
   }
 
-  private func ensurePanels() {
-    guard leftPanel == nil, rightPanel == nil else { return }
+  private func ensurePanel() {
+    guard panel == nil else { return }
 
-    let left = Self.makePanel()
-    let right = Self.makePanel()
-    left.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .left))
-    right.contentViewController = NSHostingController(
-      rootView: NotchHUDSideView(state: state, side: .right))
-    leftPanel = left
-    rightPanel = right
+    let indicatorPanel = Self.makePanel()
+    indicatorPanel.contentViewController = NSHostingController(
+      rootView: NotchHUDIndicatorView(state: state))
+    panel = indicatorPanel
+  }
+
+  private func writeDiagnostics(
+    event: String,
+    screen: NSScreen? = nil,
+    frame: NSRect? = nil
+  ) {
+    guard let path = ProcessInfo.processInfo.environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
+      !path.isEmpty
+    else {
+      return
+    }
+
+    let configuration = NotchHUDConfigurationPolicy.normalized(state.configuration)
+    let primaryReading = NotchHUDReadingResolver.resolve(
+      snapshot: state.snapshot,
+      metric: configuration.metric,
+      warningThreshold: configuration.warningThreshold,
+      criticalThreshold: configuration.criticalThreshold)
+    let secondaryMetric = configuration.secondaryMetric ?? configuration.metric
+    let secondaryDefaults = secondaryMetric.notchIndicatorDefaultThresholds
+    let secondaryReading = NotchHUDReadingResolver.resolve(
+      snapshot: state.snapshot,
+      metric: secondaryMetric,
+      warningThreshold: configuration.secondaryWarningThreshold ?? secondaryDefaults.warning,
+      criticalThreshold: configuration.secondaryCriticalThreshold ?? secondaryDefaults.critical)
+    let primarySegment = NotchHUDIndicatorSegments.primary(
+      progress: primaryReading.progress,
+      count: configuration.indicatorCount)
+    let secondarySegment = NotchHUDIndicatorSegments.secondary(
+      progress: secondaryReading.progress)
+
+    var payload: [String: Any] = [
+      "event": event,
+      "enabled": enabled,
+      "panelAllocated": panel != nil,
+      "panelVisible": panel?.isVisible ?? false,
+      "panelWindowNumber": panel?.windowNumber ?? 0,
+      "screenCount": NSScreen.screens.count,
+      "indicatorCount": configuration.indicatorCount.rawValue,
+      "primaryMetric": configuration.metric.rawValue,
+      "secondaryMetric": configuration.secondaryMetric?.rawValue ?? NSNull(),
+      "showValueText": configuration.showValueText,
+      "showSensorName": configuration.showSensorName,
+      "primaryProgress": primaryReading.progress,
+      "secondaryProgress": secondaryReading.progress,
+      "primaryTrimStart": primarySegment.from,
+      "primaryTrimEnd": primarySegment.to,
+      "secondaryTrimStart": secondarySegment.from,
+      "secondaryTrimEnd": secondarySegment.to,
+      "resolvedNotchWidth": state.notchWidth,
+    ]
+
+    if let screen {
+      payload["safeAreaTop"] = screen.safeAreaInsets.top
+      payload["screenX"] = screen.frame.minX
+      payload["screenY"] = screen.frame.minY
+      payload["screenWidth"] = screen.frame.width
+      payload["screenHeight"] = screen.frame.height
+
+      if let hardwareGeometry = NotchHUDLayout.hardwareNotchGeometry(
+        screenFrame: screen.frame,
+        safeAreaTop: screen.safeAreaInsets.top,
+        auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+        auxiliaryTopRightArea: screen.auxiliaryTopRightArea)
+      {
+        payload["hardwareNotchCenterX"] = hardwareGeometry.centerX
+        payload["hardwareNotchWidth"] = hardwareGeometry.width
+      }
+    }
+
+    if let frame {
+      payload["frameX"] = frame.minX
+      payload["frameY"] = frame.minY
+      payload["frameWidth"] = frame.width
+      payload["frameHeight"] = frame.height
+    }
+
+    guard let data = try? JSONSerialization.data(
+      withJSONObject: payload,
+      options: [.prettyPrinted, .sortedKeys])
+    else {
+      return
+    }
+    try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
   }
 
   private static func makePanel() -> NSPanel {
