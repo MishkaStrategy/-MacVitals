@@ -9,6 +9,49 @@ final class RingBufferTests: XCTestCase {
     XCTAssertEqual(buffer.values, [3, 4, 5])
   }
 
+  func testMultipleWraparoundsPreserveChronologicalOrder() {
+    var buffer = RingBuffer<Int>(capacity: 4)
+    for value in 1...12 { buffer.append(value) }
+
+    XCTAssertEqual(buffer.values, [9, 10, 11, 12])
+    XCTAssertEqual(buffer.capacity, 4)
+  }
+
+  func testCapacityIsNormalizedAndSingleSlotWraps() {
+    var buffer = RingBuffer<Int>(capacity: 0)
+    XCTAssertEqual(buffer.capacity, 1)
+
+    buffer.append(1)
+    buffer.append(2)
+    buffer.append(3)
+
+    XCTAssertEqual(buffer.values, [3])
+  }
+
+  func testRemoveAllResetsOrderingAndAllowsReuse() {
+    var buffer = RingBuffer<Int>(capacity: 3)
+    for value in 1...5 { buffer.append(value) }
+    XCTAssertEqual(buffer.values, [3, 4, 5])
+
+    buffer.removeAll()
+    XCTAssertEqual(buffer.values, [])
+
+    buffer.append(10)
+    buffer.append(11)
+    XCTAssertEqual(buffer.values, [10, 11])
+  }
+
+  func testReadingValuesDoesNotChangeSubsequentWraparound() {
+    var buffer = RingBuffer<Int>(capacity: 3)
+    for value in 1...4 { buffer.append(value) }
+
+    XCTAssertEqual(buffer.values, [2, 3, 4])
+    XCTAssertEqual(buffer.values, [2, 3, 4])
+
+    buffer.append(5)
+    XCTAssertEqual(buffer.values, [3, 4, 5])
+  }
+
   func testHistoryWithoutDiscontinuityUsesOneSegment() {
     let start = Date(timeIntervalSince1970: 100)
     let points = HistoryChartSegmentation.points(
