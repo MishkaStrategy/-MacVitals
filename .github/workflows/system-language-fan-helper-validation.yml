@@ -1,0 +1,235 @@
+name: System Language and Fan Helper Validation
+
+on:
+  push:
+    branches: [test/system-language-fan-helper]
+  pull_request:
+    branches: [fix/prevent-uitest-runner-launch]
+  workflow_dispatch:
+
+concurrency:
+  group: system-language-fan-helper-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      CANONICAL_PRODUCT_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
+      SAFE_CI_BASE_SHA: f03e869b60ca5d8f5e1983e85af31940a34b67c4
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: build/system-language-fan-helper
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Validate exact source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          git merge-base --is-ancestor "${CANONICAL_PRODUCT_SHA}" HEAD
+          git merge-base --is-ancestor "${SAFE_CI_BASE_SHA}" HEAD
+
+      - name: Validate English and Russian localization contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_localizations.py
+          python3 - <<'PY'
+          from pathlib import Path
+          from scripts.validate_localizations import validate
+
+          root = Path("MacVitals/Resources")
+          english = root / "en.lproj"
+          russian = root / "ru.lproj"
+          english_tables = {path.name for path in english.glob("*.strings")}
+          russian_tables = {path.name for path in russian.glob("*.strings")}
+          assert english_tables == russian_tables, (english_tables, russian_tables)
+          assert english_tables, "No localization tables found"
+
+          errors = []
+          for name in sorted(english_tables):
+            errors.extend(validate(english / name, russian / name))
+          if errors:
+            raise SystemExit("\n".join(errors))
+
+          project = Path("project.yml").read_text(encoding="utf-8")
+          assert "CFBundleDevelopmentRegion: en" in project
+          assert "CFBundleLocalizations:" in project
+          localization_block = project.split("CFBundleLocalizations:", 1)[1].split("settings:", 1)[0]
+          assert "- en" in localization_block
+          assert "- ru" in localization_block
+
+          l10n = Path("MacVitals/Localization/L10n.swift").read_text(encoding="utf-8")
+          assert "Bundle.main.localizedString" in l10n
+          assert "NSLocalizedString" in l10n
+
+          production = [Path("MacVitals"), Path("MacVitalsFanHelper")]
+          forced = []
+          for directory in production:
+            for path in directory.rglob("*.swift"):
+              text = path.read_text(encoding="utf-8")
+              if "AppleLanguages" in text:
+                forced.append(str(path))
+          assert not forced, f"Production code forces AppleLanguages: {forced}"
+          print(f"EN/RU table parity passed for {len(english_tables)} tables")
+          PY
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build Release arm64 application and helper
+        shell: bash
+        run: |
+          set -o pipefail
+          rm -rf "${DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee build-release.log
+          grep -q 'BUILD SUCCEEDED' build-release.log
+
+      - name: Validate native system-language selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          test -d "${app}"
+          xcrun swiftc -O -target arm64-apple-macos13.0 \
+            scripts/probe_system_localization.swift \
+            -o build/localization-probe
+
+          build/localization-probe -AppleLanguages '(en)' "${app}" > build/localization-en.json
+          build/localization-probe -AppleLanguages '(ru)' "${app}" > build/localization-ru.json
+          build/localization-probe "${app}" > build/localization-system.json
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          en = json.loads(Path("build/localization-en.json").read_text(encoding="utf-8"))
+          ru = json.loads(Path("build/localization-ru.json").read_text(encoding="utf-8"))
+          system = json.loads(Path("build/localization-system.json").read_text(encoding="utf-8"))
+
+          for payload in (en, ru, system):
+            assert {"en", "ru"}.issubset(set(payload["available"])), payload
+            assert payload["development"] == "en", payload
+
+          assert en["preferred"] == "en", en
+          assert en["preferencesTitle"] == "Preferences", en
+          assert ru["preferred"] == "ru", ru
+          assert ru["preferencesTitle"] == "Настройки", ru
+          assert system["preferred"] in {"en", "ru"}, system
+          expected = "Настройки" if system["preferred"] == "ru" else "Preferences"
+          assert system["preferencesTitle"] == expected, system
+          print(f"System-selected localization: {system['preferred']}")
+          PY
+
+      - name: Test fan helper safety, recovery, signing and XPC contract
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${DERIVED_DATA}-tests" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            test \
+            -only-testing:MacVitalsTests/FanControlSafetyPolicyTests \
+            -only-testing:MacVitalsTests/FanControlRecoveryStoreTests \
+            -only-testing:MacVitalsTests/FanControlSigningPolicyTests \
+            -only-testing:MacVitalsTests/FanControlXPCContractTests \
+            | tee fan-helper-tests.log
+          grep -q 'TEST SUCCEEDED' fan-helper-tests.log
+
+      - name: Validate embedded helper and launch daemon contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          helper="${app}/Contents/Resources/MacVitalsFanHelper"
+          plist="${app}/Contents/Library/LaunchDaemons/com.mishkacher.MacVitals.FanControl.plist"
+
+          python3 scripts/validate_fan_helper_bundle.py --self-test
+          python3 scripts/validate_fan_helper_bundle.py "${app}"
+          test "$(lipo -archs "${helper}")" = arm64
+          test -f "${plist}"
+
+          codesign -dv --verbose=4 "${helper}" > build/helper-codesign.txt 2>&1 || true
+          if grep -q '^Authority=Developer ID Application:' build/helper-codesign.txt; then
+            echo "Unexpected Developer ID helper in unsigned validation build" >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          path = Path("build/system-language-fan-helper/Build/Products/Release/MacVitals.app/Contents/Library/LaunchDaemons/com.mishkacher.MacVitals.FanControl.plist")
+          with path.open("rb") as handle:
+            value = plistlib.load(handle)
+          assert value["Label"] == "com.mishkacher.MacVitals.FanControl"
+          assert value["MachServices"] == {"com.mishkacher.MacVitals.FanControl": True}
+          assert value["AssociatedBundleIdentifiers"] == ["com.mishkacher.MacVitals"]
+          assert value["RunAtLoad"] is False
+          assert value["KeepAlive"] is False
+          print("Unsigned/ad-hoc helper remains non-Developer-ID and monitoring-only")
+          PY
+
+      - name: Write validation summary
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/validation-evidence
+          cp -f build/localization-*.json build/validation-evidence/ 2>/dev/null || true
+          cp -f build/helper-codesign.txt build-release.log fan-helper-tests.log build/validation-evidence/ 2>/dev/null || true
+          cat > build/validation-evidence/summary.json <<JSON
+          {
+            "sourceSha": "${SOURCE_SHA}",
+            "canonicalAncestor": "${CANONICAL_PRODUCT_SHA}",
+            "architecture": "arm64",
+            "configuration": "Release",
+            "languages": ["en", "ru"],
+            "languageSelection": "native-system-preferences",
+            "helperBuilt": true,
+            "helperRegistered": false,
+            "smcWritesPerformed": false,
+            "fanRPMChanged": false
+          }
+          JSON
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: system-language-fan-helper-${{ env.SOURCE_SHA }}
+          path: build/validation-evidence/
+          if-no-files-found: error
+          retention-days: 30

@@ -9,8 +9,12 @@ from pathlib import Path
 ENTRY_RE = re.compile(
     r'^\s*"(?P<key>(?:\\.|[^"\\])*)"\s*=\s*"(?P<value>(?:\\.|[^"\\])*)"\s*;\s*$'
 )
+# A literal phrase such as "100% on multicore Macs" must not be parsed as
+# an octal placeholder with the space flag ("% o"). MacVitals format strings
+# use explicit placeholders such as %@, %d and %.1f, so excluding a bare
+# whitespace flag keeps the validation useful without natural-language false positives.
 FORMAT_RE = re.compile(
-    r'%(?!%)(?:\d+\$)?(?:[-+ 0#]*)?(?:\d+|\*)?(?:\.\d+|\.\*)?[hlLzjtq]*[@diuoxXfFeEgGcCsSp]'
+    r'%(?!%)(?:\d+\$)?(?:[-+0#]*)?(?:\d+|\*)?(?:\.\d+|\.\*)?[hlLzjtq]*[@diuoxXfFeEgGcCsSp]'
 )
 
 
@@ -76,7 +80,17 @@ def validate(base_path: Path, localized_path: Path) -> list[str]:
     return errors
 
 
+def self_test() -> None:
+    assert placeholders("CPU %@") == ["%@"]
+    assert placeholders("%d processes") == ["%d"]
+    assert placeholders("≈ %.2f W") == ["%.2f"]
+    assert placeholders("CPU can exceed 100% on multicore Macs") == []
+    assert placeholders("Battery 100% charged") == []
+    assert placeholders("Literal %% sign") == []
+
+
 def main() -> int:
+    self_test()
     root = Path(__file__).resolve().parents[1]
     base = root / "MacVitals/Resources/en.lproj/Localizable.strings"
     localized_files = sorted(
