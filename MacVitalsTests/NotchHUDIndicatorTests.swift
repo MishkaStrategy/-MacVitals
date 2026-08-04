@@ -47,12 +47,52 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.001)
   }
 
+  func testPanelFrameStaysOnSmallOffsetDisplay() {
+    var configuration = NotchHUDConfiguration.minimal
+    configuration.horizontalExtension = 180
+
+    let screen = NSRect(x: -900, y: 200, width: 500, height: 700)
+    let hardware = NotchHUDHardwareGeometry(centerX: -470, width: 230)
+    let frame = NotchHUDLayout.panelFrame(
+      for: screen,
+      safeAreaTop: 52,
+      configuration: configuration,
+      notchGeometry: hardware)
+
+    XCTAssertGreaterThanOrEqual(frame.minX, screen.minX + NotchHUDLayout.edgeMargin)
+    XCTAssertLessThanOrEqual(frame.maxX, screen.maxX - NotchHUDLayout.edgeMargin)
+    XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.001)
+  }
+
   func testHardwareNotchGeometryRejectsMissingSafeArea() {
     XCTAssertNil(NotchHUDLayout.hardwareNotchGeometry(
       screenFrame: NSRect(x: 0, y: 0, width: 1_512, height: 982),
       safeAreaTop: 0,
       auxiliaryTopLeftArea: NSRect(x: 0, y: 950, width: 650, height: 32),
       auxiliaryTopRightArea: NSRect(x: 862, y: 950, width: 650, height: 32)))
+  }
+
+  func testSafeAreaHeightUsesLiveDisplayValueWithoutModelClamp() {
+    XCTAssertEqual(NotchHUDLayout.resolvedSafeAreaTop(27), 27, accuracy: 0.001)
+    XCTAssertEqual(NotchHUDLayout.resolvedSafeAreaTop(52), 52, accuracy: 0.001)
+    XCTAssertEqual(
+      NotchHUDLayout.resolvedSafeAreaTop(.nan),
+      NotchHUDLayout.minimumSafeAreaTop,
+      accuracy: 0.001)
+    XCTAssertEqual(
+      NotchHUDLayout.resolvedSafeAreaTop(0),
+      NotchHUDLayout.minimumSafeAreaTop,
+      accuracy: 0.001)
+  }
+
+  func testBackingRectIsAlignedOutwardForFractionalScaledCoordinates() {
+    let aligned = NotchHUDLayout.outwardIntegralBackingRect(
+      NSRect(x: 1_843.25, y: 2_581.5, width: 439.5, height: 76.25))
+
+    XCTAssertEqual(aligned.minX, 1_843, accuracy: 0.001)
+    XCTAssertEqual(aligned.minY, 2_581, accuracy: 0.001)
+    XCTAssertEqual(aligned.maxX, 2_283, accuracy: 0.001)
+    XCTAssertEqual(aligned.maxY, 2_658, accuracy: 0.001)
   }
 
   func testContourGeometryTouchesHardwareCutoutExactly() {
@@ -73,7 +113,32 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertEqual(geometry.notchRightX - halfLine, hardwareRight, accuracy: 0.001)
     XCTAssertEqual(geometry.bottomY - halfLine, 38, accuracy: 0.001)
     XCTAssertEqual(NotchHUDLayout.minimumContourClearance, 0, accuracy: 0.001)
-    XCTAssertLessThan(geometry.shoulderRadius, 15)
+    XCTAssertGreaterThan(geometry.shoulderRadius, 7)
+    XCTAssertLessThanOrEqual(geometry.shoulderRadius, 16)
+  }
+
+  func testContourTracksDifferentNotchSizesAndStrokeWidths() {
+    let cases: [(panel: CGSize, safeTop: CGFloat, notch: CGFloat, line: CGFloat)] = [
+      (CGSize(width: 300, height: 62), 32, 180, 1),
+      (CGSize(width: 364, height: 70), 38, 220, 2.5),
+      (CGSize(width: 430, height: 86), 52, 250, 6),
+    ]
+
+    for item in cases {
+      let geometry = NotchHUDLayout.contourGeometry(
+        in: item.panel,
+        safeAreaTop: item.safeTop,
+        lineThickness: item.line,
+        notchWidth: item.notch)
+      let halfLine = min(max(item.line, 1), NotchHUDLayout.maximumIndicatorLineThickness) / 2
+      let hardwareLeft = (item.panel.width - item.notch) / 2
+      let hardwareRight = hardwareLeft + item.notch
+
+      XCTAssertEqual(geometry.notchLeftX + halfLine, hardwareLeft, accuracy: 0.001)
+      XCTAssertEqual(geometry.notchRightX - halfLine, hardwareRight, accuracy: 0.001)
+      XCTAssertEqual(geometry.bottomY - halfLine, item.safeTop, accuracy: 0.001)
+      XCTAssertGreaterThan(geometry.shoulderRadius, 0)
+    }
   }
 
   func testPanelKeepsGlowPaddingWhenLabelsAreHidden() {
@@ -85,6 +150,25 @@ final class NotchHUDIndicatorTests: XCTestCase {
         safeAreaTop: 38,
         configuration: configuration),
       58,
+      accuracy: 0.001)
+  }
+
+  func testPanelHeightAdaptsToFutureSafeAreaHeight() {
+    var configuration = NotchHUDConfiguration.minimal
+    configuration.showValueText = true
+    XCTAssertEqual(
+      NotchHUDLayout.preferredPanelHeight(
+        safeAreaTop: 52,
+        configuration: configuration),
+      84,
+      accuracy: 0.001)
+
+    configuration.showValueText = false
+    XCTAssertEqual(
+      NotchHUDLayout.preferredPanelHeight(
+        safeAreaTop: 52,
+        configuration: configuration),
+      72,
       accuracy: 0.001)
   }
 
