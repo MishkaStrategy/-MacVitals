@@ -192,7 +192,7 @@ jobs:
           done
 
           log show --start "${started_at}" --style compact \
-            --predicate 'eventMessage CONTAINS[c] "MacVitalsUITests-Runner"' \
+            --predicate '(eventMessage CONTAINS[c] "MacVitalsUITests-Runner") AND NOT (process == "log")' \
             > "${evidence}/runner-unified-log.txt" 2>&1 || true
           sed -i '' "s|${HOME}|~|g" "${evidence}/runner-unified-log.txt" || true
           if grep -vE '^(Timestamp|Filtering|$)' "${evidence}/runner-unified-log.txt" | grep -q 'MacVitalsUITests-Runner'; then
