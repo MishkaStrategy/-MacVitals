@@ -62,6 +62,9 @@ struct PreferencesView: View {
     }
     .frame(minWidth: 860, minHeight: 620)
     .background(Color(nsColor: .windowBackgroundColor))
+    .onReceive(NotificationCenter.default.publisher(for: .openStatusBarHUDPreferences)) { _ in
+      selection = .statusBarHUD
+    }
   }
 
   private var sidebar: some View {
@@ -420,47 +423,7 @@ struct PreferencesView: View {
   }
 
   private var statusBarHUDTab: some View {
-    ScrollView {
-      VStack(spacing: 14) {
-        SettingsCard(
-          title: L10n.string("Around the camera notch"),
-          subtitle: L10n.string("Show one compact metric capsule on each side of the camera."),
-          symbol: "macbook") {
-            VStack(spacing: 12) {
-              preferenceToggle(
-                title: L10n.string("Show around status bar"),
-                detail: L10n.string("Display compact performance and power metrics directly beside the notch."),
-                symbol: "menubar.rectangle",
-                isOn: $settings.showAroundStatusBar)
-                .accessibilityIdentifier("showAroundStatusBarToggle")
-
-              Divider()
-
-              HStack(spacing: 12) {
-                Label(L10n.string("CPU, GPU and memory on the left"), systemImage: "cpu")
-                Spacer()
-                Label(L10n.string("Fans, temperature, battery and power on the right"), systemImage: "fan")
-              }
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            }
-          }
-
-        SettingsCard(
-          title: L10n.string("Compact layout"),
-          subtitle: L10n.string("The panels sit inside the menu-bar height without a lower floating dashboard."),
-          symbol: "rectangle.split.2x1") {
-            HStack(spacing: 10) {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Color.green)
-              Text(L10n.string("Changes apply immediately and persist after restarting MacVitals."))
-                .font(.subheadline)
-              Spacer()
-            }
-          }
-      }
-      .padding(24)
-    }
+    CompactNotchHUDPreferencesView()
   }
 
   private var fansTab: some View {

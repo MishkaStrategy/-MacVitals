@@ -8,7 +8,6 @@ final class StatusItemController: NSObject {
   private let popover = NSPopover()
   private let notchHUD = NotchHUDController()
   private let caffeinate = CaffeinateController()
-  private var hudSettingsWindowController: NotchHUDSettingsWindowController?
   private var cancellables: Set<AnyCancellable> = []
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
@@ -65,6 +64,11 @@ final class StatusItemController: NSObject {
           notchHUDConfiguration: configuration)
       }
       .store(in: &cancellables)
+
+    renderCurrentState()
+    DispatchQueue.main.async { [weak self] in
+      self?.renderCurrentState()
+    }
   }
 
   @objc private func togglePopover() {
@@ -121,24 +125,14 @@ final class StatusItemController: NSObject {
 
   @objc private func toggleNotchHUD() {
     settings.showAroundStatusBar.toggle()
-    notchHUD.update(
-      snapshot: coordinator.snapshot,
-      preferredScreen: statusItem.button?.window?.screen,
-      enabled: settings.showAroundStatusBar,
-      configuration: settings.notchHUDConfiguration)
+    renderCurrentState()
   }
 
   @objc private func openNotchHUDSettings() {
-    let controller: NotchHUDSettingsWindowController
-    if let existing = hudSettingsWindowController {
-      controller = existing
-    } else {
-      controller = NotchHUDSettingsWindowController(
-        coordinator: coordinator,
-        settings: settings)
-      hudSettingsWindowController = controller
+    openPreferences()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      NotificationCenter.default.post(name: .openStatusBarHUDPreferences, object: nil)
     }
-    controller.present()
   }
 
   @objc private func openPreferences() {
@@ -152,6 +146,14 @@ final class StatusItemController: NSObject {
     NSApp.terminate(nil)
   }
 
+  private func renderCurrentState() {
+    render(
+      snapshot: coordinator.snapshot,
+      metrics: settings.enabledMetrics,
+      showAroundStatusBar: settings.showAroundStatusBar,
+      notchHUDConfiguration: settings.notchHUDConfiguration)
+  }
+
   private func render(
     snapshot: SystemSnapshot,
     metrics: [MenuMetric],
@@ -159,6 +161,13 @@ final class StatusItemController: NSObject {
     notchHUDConfiguration: NotchHUDConfiguration
   ) {
     let normalized = MenuLayoutRules.normalized(metrics)
+    let preferredScreen = statusItem.button?.window?.screen
+
+    notchHUD.update(
+      snapshot: snapshot,
+      preferredScreen: preferredScreen,
+      enabled: showAroundStatusBar,
+      configuration: notchHUDConfiguration)
 
     if let button = statusItem.button {
       button.title = ""
@@ -172,12 +181,6 @@ final class StatusItemController: NSObject {
       button.setAccessibilityLabel("MacVitals")
       button.setAccessibilityValue(
         MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
-
-      notchHUD.update(
-        snapshot: snapshot,
-        preferredScreen: button.window?.screen,
-        enabled: showAroundStatusBar,
-        configuration: notchHUDConfiguration)
     }
     statusItem.length = NSStatusItem.variableLength
   }
