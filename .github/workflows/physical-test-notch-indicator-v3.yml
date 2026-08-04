@@ -1,0 +1,20 @@
+name: Physical Test Notch Indicator V3 Retired
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-notch-indicator-diagnostics
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  retired:
+    if: github.event.pull_request.head.ref == 'agent/physical-test-notch-indicator'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Superseded by Physical Test Notch Indicator V4.'
