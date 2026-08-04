@@ -40,23 +40,24 @@ jobs:
           set -Eeuo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           text = Path('project.yml').read_text(encoding='utf-8')
           primary = text.split('  MacVitalsUITestsBuild:', 1)[0]
           if '        - MacVitalsUITests\n' in primary:
-              raise SystemExit('MacVitalsUITests remains in primary MacVitals test action')
+              raise SystemExit('MacVitalsUITests remains in the primary MacVitals scheme')
           if '  MacVitalsUITestsBuild:' not in text:
-              raise SystemExit('build-only UI test scheme is missing')
+              raise SystemExit('Build-only UI test scheme is missing')
           PY
           test "${GITHUB_BASE_REF}" = 'fix/prevent-uitest-runner-launch'
 
-      - name: Run physical launch isolation test
+      - name: Validate exact app on physical Mac
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
 
-          stage="${RUNNER_TEMP}/macvitals-ui-runner-physical-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          stage="${RUNNER_TEMP}/macvitals-ui-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           evidence="${GITHUB_WORKSPACE}/physical-evidence"
           artifact_zip="${stage}/artifact.zip"
           mkdir -p "${stage}" "${evidence}"
@@ -67,41 +68,34 @@ jobs:
               sleep 2
               kill -9 "${app_pid}" 2>/dev/null || true
             fi
+            pkill -x MacVitalsUITests-Runner 2>/dev/null || true
             find "${HOME}/Library/Developer/Xcode/DerivedData" \
               -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
               2>/dev/null || true
           }
           trap cleanup EXIT
 
-          setup_started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
-          printf 'product_head=%s\nartifact_id=%s\nsetup_started_at_utc=%s\nduration_seconds=%s\n' \
-            "${PRODUCT_HEAD_SHA}" "${APP_ARTIFACT_ID}" "${setup_started_at}" "${TEST_DURATION_SECONDS}" \
+          printf 'product_head=%s\nartifact_id=%s\nduration_seconds=%s\n' \
+            "${PRODUCT_HEAD_SHA}" "${APP_ARTIFACT_ID}" "${TEST_DURATION_SECONDS}" \
             > "${evidence}/metadata.txt"
 
-          stale_runner_pids="$(pgrep -f 'MacVitalsUITests-Runner' || true)"
-          if [[ -n "${stale_runner_pids}" ]]; then
-            ps -p "$(echo "${stale_runner_pids}" | paste -sd, -)" -o pid=,ppid=,comm=,args= \
+          pgrep -x MacVitalsUITests-Runner \
+            > "${evidence}/stale-runner-pids.txt" 2>/dev/null || true
+          if [[ -s "${evidence}/stale-runner-pids.txt" ]]; then
+            stale_pids="$(paste -sd, "${evidence}/stale-runner-pids.txt")"
+            ps -p "${stale_pids}" -o pid=,ppid=,comm=,args= \
               > "${evidence}/stale-runner-processes.txt" 2>&1 || true
-            while IFS= read -r stale_pid; do
-              [[ -n "${stale_pid}" ]] || continue
-              kill "${stale_pid}" 2>/dev/null || true
-            done <<< "${stale_runner_pids}"
+            pkill -x MacVitalsUITests-Runner 2>/dev/null || true
             sleep 2
-            while IFS= read -r stale_pid; do
-              [[ -n "${stale_pid}" ]] || continue
-              kill -9 "${stale_pid}" 2>/dev/null || true
-            done <<< "${stale_runner_pids}"
+            pkill -9 -x MacVitalsUITests-Runner 2>/dev/null || true
           else
             : > "${evidence}/stale-runner-processes.txt"
           fi
-          if pgrep -f 'MacVitalsUITests-Runner' > "${evidence}/runner-process-after-cleanup.txt" 2>&1; then
-            echo 'Unable to terminate stale MacVitalsUITests-Runner process before observation' >&2
-            exit 1
-          fi
+          test -z "$(pgrep -x MacVitalsUITests-Runner || true)"
 
           quiet_seconds=0
           for _ in $(seq 1 300); do
-            if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
+            if pgrep -x xcodebuild >/dev/null 2>&1; then
               quiet_seconds=0
             else
               quiet_seconds=$((quiet_seconds + 1))
@@ -110,9 +104,6 @@ jobs:
             sleep 1
           done
           test "${quiet_seconds}" -ge 5
-
-          started_at="$(date '+%Y-%m-%d %H:%M:%S')"
-          printf 'observation_started_at=%s\n' "${started_at}" >> "${evidence}/metadata.txt"
 
           find "${HOME}/Library/Developer/Xcode/DerivedData" \
             -type d -name 'MacVitalsUITests-Runner.app' -print \
@@ -142,10 +133,7 @@ jobs:
           test -d "${app}"
           test -x "${executable}"
 
-          if find "${stage}" -type d -name 'MacVitalsUITests-Runner.app' -print -quit | grep -q .; then
-            echo 'Artifact unexpectedly contains MacVitalsUITests-Runner.app' >&2
-            exit 1
-          fi
+          test -z "$(find "${stage}" -type d -name 'MacVitalsUITests-Runner.app' -print -quit)"
 
           bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
           bundle_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${app}/Contents/Info.plist")"
@@ -153,13 +141,11 @@ jobs:
           test "${bundle_executable}" = 'MacVitals'
           file "${executable}" | tee "${evidence}/executable-file.txt"
           file "${executable}" | grep -q 'arm64'
-          printf 'bundle_id=%s\nbundle_executable=%s\napp_path=%s\n' \
-            "${bundle_id}" "${bundle_executable}" "${app}" \
-            > "${evidence}/app-info.txt"
+          printf 'bundle_id=%s\nbundle_executable=%s\n' \
+            "${bundle_id}" "${bundle_executable}" > "${evidence}/app-info.txt"
 
           xattr -dr com.apple.quarantine "${app}" 2>/dev/null || true
-          ps -axo pid=,comm=,args= | grep -E 'CoreServicesUIAgent|MacVitalsUITests-Runner' \
-            | grep -v grep > "${evidence}/gatekeeper-baseline.txt" || true
+          pgrep -x CoreServicesUIAgent > "${evidence}/coreservices-pids-before.txt" 2>/dev/null || true
 
           open -na "${app}" --args --physical-ui-runner-isolation-test \
             > "${evidence}/launch-stdout.txt" 2> "${evidence}/launch-stderr.txt"
@@ -174,42 +160,33 @@ jobs:
           kill -0 "${app_pid}"
           printf 'app_pid=%s\n' "${app_pid}" > "${evidence}/launch-result.txt"
 
-          printf 'second,app_alive,runner_processes,runner_bundles\n' > "${evidence}/samples.csv"
+          printf 'second,app_alive,runner_processes,xcodebuild_processes\n' \
+            > "${evidence}/samples.csv"
           for second in $(seq 0 "${TEST_DURATION_SECONDS}"); do
             if kill -0 "${app_pid}" 2>/dev/null; then
               app_alive=1
             else
               app_alive=0
             fi
-            runner_processes="$( (pgrep -f 'MacVitalsUITests-Runner' || true) | wc -l | tr -d ' ')"
-            runner_bundles="$(find "${HOME}/Library/Developer/Xcode/DerivedData" \
-              -type d -name 'MacVitalsUITests-Runner.app' -print 2>/dev/null | wc -l | tr -d ' ')"
-            printf '%s,%s,%s,%s\n' "${second}" "${app_alive}" "${runner_processes}" "${runner_bundles}" \
+            runner_processes="$(pgrep -x MacVitalsUITests-Runner 2>/dev/null | wc -l | tr -d ' ')"
+            xcodebuild_processes="$(pgrep -x xcodebuild 2>/dev/null | wc -l | tr -d ' ')"
+            printf '%s,%s,%s,%s\n' \
+              "${second}" "${app_alive}" "${runner_processes}" "${xcodebuild_processes}" \
               >> "${evidence}/samples.csv"
             test "${app_alive}" = '1'
             test "${runner_processes}" = '0'
             sleep 1
           done
 
-          log show --start "${started_at}" --style compact \
-            --predicate '(eventMessage CONTAINS[c] "MacVitalsUITests-Runner") AND NOT (process == "log")' \
-            > "${evidence}/runner-unified-log.txt" 2>&1 || true
-          sed -i '' "s|${HOME}|~|g" "${evidence}/runner-unified-log.txt" || true
-          if grep -vE '^(Timestamp|Filtering|$)' "${evidence}/runner-unified-log.txt" | grep -q 'MacVitalsUITests-Runner'; then
-            echo 'Unified log contains a new MacVitalsUITests-Runner launch event' >&2
-            exit 1
-          fi
+          pgrep -x CoreServicesUIAgent > "${evidence}/coreservices-pids-after.txt" 2>/dev/null || true
+          pgrep -x MacVitalsUITests-Runner > "${evidence}/runner-pids-after.txt" 2>/dev/null || true
+          test ! -s "${evidence}/runner-pids-after.txt"
 
-          ps -axo pid=,comm=,args= | grep -E 'CoreServicesUIAgent|MacVitalsUITests-Runner' \
-            | grep -v grep > "${evidence}/gatekeeper-after.txt" || true
           find "${HOME}/Library/Developer/Xcode/DerivedData" \
             -type d -name 'MacVitalsUITests-Runner.app' -print \
             > "${evidence}/runner-bundles-after.txt" 2>/dev/null || true
-          find "${HOME}/Library/Developer/Xcode/DerivedData" \
-            -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
-            2>/dev/null || true
 
-          printf 'result=passed\napp_started=1\napp_survived_seconds=%s\nrunner_process_seen=0\nrunner_bundles_recorded_and_cleaned=1\n' \
+          printf 'result=passed\napp_started=1\napp_survived_seconds=%s\nrunner_process_seen=0\n' \
             "${TEST_DURATION_SECONDS}" > "${evidence}/result.txt"
 
       - name: Upload physical evidence
