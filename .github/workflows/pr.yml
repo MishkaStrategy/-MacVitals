@@ -173,7 +173,9 @@ jobs:
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             -derivedDataPath "${ui_derived_data}" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
             clean test \
             -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches \
             > native-ui-tests.log 2>&1
