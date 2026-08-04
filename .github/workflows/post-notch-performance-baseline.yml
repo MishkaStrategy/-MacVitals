@@ -1,0 +1,477 @@
+name: Exact Post-Notch Performance Baseline
+
+on:
+  push:
+    branches: [perf/exact-head-post-notch-baseline]
+    paths:
+      - .github/workflows/post-notch-performance-baseline.yml
+      - scripts/collect_runtime_metrics.py
+      - scripts/collect_runtime_metrics.sh
+      - MacVitals/**
+      - MacVitalsTests/**
+      - project.yml
+  workflow_dispatch:
+
+concurrency:
+  group: exact-post-notch-performance-baseline
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  physical-idle-notch-baseline:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      CANONICAL_BASE_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact canonical ancestry and HUD contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]]
+          git merge-base --is-ancestor "${CANONICAL_BASE_SHA}" "${GITHUB_SHA}"
+          [[ "$(git rev-parse HEAD)" == "${GITHUB_SHA}" ]]
+          grep -F 'static func hardwareNotchGeometry(' MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'static let minimumContourClearance: CGFloat = 0' MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea' MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'auxiliaryTopRightArea: screen.auxiliaryTopRightArea' MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'private var panel: NSPanel?' MacVitals/MenuBar/NotchHUDController.swift
+          if git grep -nE 'NotchPet|PetCompanion|petPhysicalPreview' -- MacVitals MacVitalsTests; then
+            echo 'Pet implementation is present in the baseline candidate' >&2
+            exit 1
+          fi
+          if grep -F 'private var leftPanel' MacVitals/MenuBar/NotchHUDController.swift \
+            || grep -F 'private var rightPanel' MacVitals/MenuBar/NotchHUDController.swift; then
+            echo 'Legacy two-panel HUD is present in the baseline candidate' >&2
+            exit 1
+          fi
+
+      - name: Build exact unsigned ARM64 Release and unit tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/materialize_app_icon.py
+          xcodegen_path="$(command -v xcodegen 2>/dev/null || true)"
+          if [[ -z "${xcodegen_path}" ]]; then
+            brew install xcodegen
+            xcodegen_path="$(command -v xcodegen)"
+          fi
+          "${xcodegen_path}" generate
+          rm -rf build/post-notch-baseline-release build/post-notch-baseline-tests
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -derivedDataPath build/post-notch-baseline-release \
+            -destination 'platform=macOS,arch=arm64' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -derivedDataPath build/post-notch-baseline-tests \
+            -destination 'platform=macOS,arch=arm64' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            test -only-testing:MacVitalsTests
+
+      - name: Measure physical idle contour HUD
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
+          launchctl print "gui/$(id -u)" >/dev/null
+
+          evidence="post-notch-baseline-evidence"
+          tools="${evidence}/tools"
+          profiles="${evidence}/profiles"
+          metrics="${evidence}/runtime"
+          rm -rf "${evidence}"
+          mkdir -p "${tools}" "${profiles}" "${metrics}"
+
+          app="${PWD}/build/post-notch-baseline-release/Build/Products/Release/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
+          [[ -d "${app}" && -x "${executable}" ]]
+          [[ "$(lipo -archs "${executable}")" == arm64 ]]
+          [[ -z "$(pgrep -x MacVitals || true)" ]]
+
+          cat > "${tools}/Preferences.swift" <<'SWIFT'
+          import CoreFoundation
+          import Foundation
+
+          let enabledKey = "experimentalNotchHUDEnabled" as CFString
+          let configurationKey = "notchHUDConfiguration.v1" as CFString
+
+          func synchronize(_ bundle: CFString) {
+            guard CFPreferencesAppSynchronize(bundle) else { exit(20) }
+          }
+
+          func snapshot(bundle: CFString, path: String) throws {
+            let enabledValue = CFPreferencesCopyAppValue(enabledKey, bundle)
+            let configurationValue = CFPreferencesCopyAppValue(configurationKey, bundle)
+            var payload: [String: Any] = [
+              "enabledExists": enabledValue != nil,
+              "enabledValue": enabledValue as? Bool ?? false,
+              "configurationExists": configurationValue != nil,
+            ]
+            if let data = configurationValue as? Data {
+              payload["configurationBase64"] = data.base64EncodedString()
+            }
+            let data = try JSONSerialization.data(
+              withJSONObject: payload,
+              options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+          }
+
+          func configuration(profile: String) -> [String: Any] {
+            let dual = profile.hasPrefix("dual-")
+            let labels = profile.hasSuffix("labels") && !profile.hasSuffix("no-labels")
+            return [
+              "schemaVersion": 4,
+              "configuration": [
+                "metric": "cpu",
+                "secondaryMetric": dual ? "temperature" : NSNull(),
+                "showValueText": labels,
+                "showSensorName": true,
+                "colorMode": "automatic",
+                "accent": "cyan",
+                "lineThickness": 2.5,
+                "horizontalExtension": 72.0,
+                "trackOpacity": 0.18,
+                "glowIntensity": 0.62,
+                "warningThreshold": 75.0,
+                "criticalThreshold": 90.0,
+                "secondaryWarningThreshold": dual ? 75.0 : NSNull(),
+                "secondaryCriticalThreshold": dual ? 90.0 : NSNull(),
+                "animateChanges": true,
+                "showOnDisplaysWithoutNotch": false,
+              ],
+            ]
+          }
+
+          func apply(bundle: CFString, profile: String) throws {
+            let data = try JSONSerialization.data(
+              withJSONObject: configuration(profile: profile),
+              options: [.sortedKeys])
+            CFPreferencesSetAppValue(enabledKey, true as CFBoolean, bundle)
+            CFPreferencesSetAppValue(configurationKey, data as CFData, bundle)
+            synchronize(bundle)
+            guard CFPreferencesCopyAppValue(enabledKey, bundle) as? Bool == true,
+              CFPreferencesCopyAppValue(configurationKey, bundle) as? Data == data
+            else { exit(21) }
+          }
+
+          func restore(bundle: CFString, path: String) throws {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            let payload = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            if payload["enabledExists"] as? Bool == true {
+              CFPreferencesSetAppValue(
+                enabledKey,
+                (payload["enabledValue"] as? Bool ?? false) as CFBoolean,
+                bundle)
+            } else {
+              CFPreferencesSetAppValue(enabledKey, nil, bundle)
+            }
+            if payload["configurationExists"] as? Bool == true,
+              let encoded = payload["configurationBase64"] as? String,
+              let original = Data(base64Encoded: encoded)
+            {
+              CFPreferencesSetAppValue(configurationKey, original as CFData, bundle)
+            } else {
+              CFPreferencesSetAppValue(configurationKey, nil, bundle)
+            }
+            synchronize(bundle)
+          }
+
+          guard CommandLine.arguments.count >= 4 else { exit(2) }
+          let command = CommandLine.arguments[1]
+          let bundle = CommandLine.arguments[2] as CFString
+          let argument = CommandLine.arguments[3]
+          switch command {
+          case "snapshot": try snapshot(bundle: bundle, path: argument)
+          case "apply": try apply(bundle: bundle, profile: argument)
+          case "restore": try restore(bundle: bundle, path: argument)
+          default: exit(3)
+          }
+          SWIFT
+          xcrun swiftc -O -target arm64-apple-macos13.0 \
+            "${tools}/Preferences.swift" -o "${tools}/preferences"
+
+          preferences_before="${evidence}/preferences-before.json"
+          "${tools}/preferences" snapshot "${bundle_id}" "${preferences_before}"
+          app_pid=""
+          cleanup() {
+            set +e
+            launchctl unsetenv MACVITALS_NOTCH_DIAGNOSTICS_PATH 2>/dev/null || true
+            if [[ -n "${app_pid:-}" ]]; then
+              kill -TERM "${app_pid}" 2>/dev/null || true
+              for _ in {1..50}; do
+                kill -0 "${app_pid}" 2>/dev/null || break
+                sleep .1
+              done
+              kill -KILL "${app_pid}" 2>/dev/null || true
+            fi
+            "${tools}/preferences" restore "${bundle_id}" "${preferences_before}" \
+              2>/dev/null || true
+          }
+          trap cleanup EXIT INT TERM
+
+          run_profile() {
+            local profile="$1"
+            local expected_count="$2"
+            local expected_labels="$3"
+            local collect_runtime="$4"
+            local diagnostics="${profiles}/${profile}-controller.json"
+            local validation="${profiles}/${profile}-validation.json"
+            local launch_started
+            local launch_finished
+
+            "${tools}/preferences" apply "${bundle_id}" "${profile}"
+            rm -f "${diagnostics}"
+            launchctl setenv MACVITALS_NOTCH_DIAGNOSTICS_PATH "${PWD}/${diagnostics}"
+            launch_started="$(python3 -c 'import time; print(time.monotonic())')"
+            /usr/bin/open -na "${app}" --args \
+              -ApplePersistenceIgnoreState YES \
+              -notificationsEnabled NO \
+              -showInDock NO \
+              -samplingInterval 2
+            app_pid=""
+            for _ in {1..200}; do
+              app_pid="$(pgrep -x MacVitals | tail -n 1 || true)"
+              [[ -n "${app_pid}" && -s "${diagnostics}" ]] && break
+              sleep .1
+            done
+            launch_finished="$(python3 -c 'import time; print(time.monotonic())')"
+            [[ -n "${app_pid}" && -s "${diagnostics}" ]]
+            sleep 5
+
+            DIAGNOSTICS="${diagnostics}" VALIDATION="${validation}" \
+            PROFILE="${profile}" EXPECTED_COUNT="${expected_count}" \
+            EXPECTED_LABELS="${expected_labels}" SOURCE_SHA="${GITHUB_SHA}" \
+            CANONICAL_BASE_SHA="${CANONICAL_BASE_SHA}" APP_PID="${app_pid}" \
+            LAUNCH_STARTED="${launch_started}" LAUNCH_FINISHED="${launch_finished}" \
+            python3 - <<'PY'
+          import json
+          import math
+          import os
+
+          with open(os.environ["DIAGNOSTICS"], encoding="utf-8") as handle:
+              d = json.load(handle)
+          expected_count = os.environ["EXPECTED_COUNT"]
+          expected_labels = os.environ["EXPECTED_LABELS"] == "true"
+          assert d["event"] in ("ordered", "ordered-next-run-loop"), d
+          assert d["enabled"] is True, d
+          assert d["panelAllocated"] is True and d["panelVisible"] is True, d
+          assert d["panelWindowNumber"] > 0, d
+          assert d["safeAreaTop"] > 0, d
+          assert d["indicatorCount"] == expected_count, d
+          assert d["primaryMetric"] == "cpu", d
+          assert d["showValueText"] is expected_labels, d
+          assert d["showSensorName"] is True, d
+          assert d["hardwareNotchWidth"] > 0, d
+          assert math.isclose(
+              d["resolvedNotchWidth"], d["hardwareNotchWidth"], abs_tol=0.5), d
+          assert 0 <= d["primaryProgress"] <= 1, d
+          assert 0 <= d["secondaryProgress"] <= 1, d
+
+          resolved_safe_area = min(max(d["safeAreaTop"], 30), 44)
+          expected_height = resolved_safe_area + (32 if expected_labels else 20)
+          expected_width = d["hardwareNotchWidth"] + 144
+          expected_x = d["hardwareNotchCenterX"] - expected_width / 2
+          assert abs(d["frameWidth"] - expected_width) <= 3, d
+          assert abs(d["frameHeight"] - expected_height) <= 3, d
+          assert abs(d["frameX"] - expected_x) <= 3, d
+          assert abs(
+              (d["frameY"] + d["frameHeight"])
+              - (d["screenY"] + d["screenHeight"])) <= 3, d
+
+          if expected_count == "one":
+              assert d["secondaryMetric"] is None, d
+              assert math.isclose(d["primaryTrimStart"], 0, abs_tol=1e-6), d
+              assert math.isclose(
+                  d["primaryTrimEnd"], d["primaryProgress"], abs_tol=1e-6), d
+          else:
+              assert d["secondaryMetric"] == "temperature", d
+              split_start, split_end = 0.492, 0.508
+              assert math.isclose(
+                  d["primaryTrimStart"],
+                  split_start * (1 - d["primaryProgress"]),
+                  abs_tol=1e-6), d
+              assert math.isclose(d["primaryTrimEnd"], split_start, abs_tol=1e-6), d
+              assert math.isclose(d["secondaryTrimStart"], split_end, abs_tol=1e-6), d
+              assert d["primaryTrimEnd"] < d["secondaryTrimStart"], d
+
+          result = {
+              "schemaVersion": 1,
+              "result": "passed",
+              "scenario": "idle-status-item-with-contour-hud",
+              "profile": os.environ["PROFILE"],
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "canonicalBaseSha": os.environ["CANONICAL_BASE_SHA"],
+              "processPID": int(os.environ["APP_PID"]),
+              "launchToHUDSeconds": (
+                  float(os.environ["LAUNCH_FINISHED"])
+                  - float(os.environ["LAUNCH_STARTED"])),
+              "overlayWindowCount": 1,
+              "legacyTwoPanelLayoutAbsent": True,
+              "petAbsent": True,
+              "appKitPanel": d,
+          }
+          with open(os.environ["VALIDATION"], "w", encoding="utf-8") as handle:
+              json.dump(result, handle, indent=2, sort_keys=True)
+          PY
+
+            if [[ "${collect_runtime}" == true ]]; then
+              PROCESS_NAME=MacVitals \
+              PROCESS_ID="${app_pid}" \
+              EXPECTED_EXECUTABLE_PATH="${executable}" \
+              OUTPUT_ROOT="${metrics}/${profile}" \
+                bash scripts/collect_runtime_metrics.sh 60 2
+              summary="$(find "${metrics}/${profile}" -name summary.json -type f -print -quit)"
+              [[ -n "${summary}" ]]
+              SUMMARY="${summary}" SOURCE_SHA="${GITHUB_SHA}" python3 - <<'PY'
+          import json
+          import os
+
+          path = os.environ["SUMMARY"]
+          with open(path, encoding="utf-8") as handle:
+              data = json.load(handle)
+          assert data["process"]["aliveAtEnd"] is True, data
+          assert data["observed"]["sampleCount"] >= 25, data
+          assert data["observed"]["durationSeconds"] >= 55, data
+          data["scenario"] = "idle-status-item-with-dual-contour-hud"
+          data["sourceSha"] = os.environ["SOURCE_SHA"]
+          data["limitations"].extend([
+              "The overview popover and detail windows were closed in this scenario.",
+              "Wakeups and Energy Impact were not measured by this workflow.",
+              "Provider-level and render-level timings require separate opt-in instrumentation.",
+          ])
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2, sort_keys=True)
+          PY
+            fi
+
+            kill -TERM "${app_pid}"
+            for _ in {1..50}; do
+              kill -0 "${app_pid}" 2>/dev/null || break
+              sleep .1
+            done
+            kill -KILL "${app_pid}" 2>/dev/null || true
+            app_pid=""
+            launchctl unsetenv MACVITALS_NOTCH_DIAGNOSTICS_PATH
+          }
+
+          run_profile single-labels one true false
+          run_profile single-no-labels one false false
+          run_profile dual-labels two true true
+          run_profile dual-no-labels two false false
+
+          "${tools}/preferences" restore "${bundle_id}" "${preferences_before}"
+          SOURCE_SHA="${GITHUB_SHA}" BASE_SHA="${CANONICAL_BASE_SHA}" \
+          EVIDENCE="${evidence}" python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          root = Path(os.environ["EVIDENCE"])
+          profiles = [
+              json.loads(Path(path).read_text(encoding="utf-8"))
+              for path in sorted(glob.glob(str(root / "profiles" / "*-validation.json")))
+          ]
+          assert len(profiles) == 4, profiles
+          runtime_paths = list((root / "runtime").rglob("summary.json"))
+          assert len(runtime_paths) == 1, runtime_paths
+          runtime = json.loads(runtime_paths[0].read_text(encoding="utf-8"))
+
+          def output(*args: str) -> str:
+              result = subprocess.run(args, check=False, capture_output=True, text=True)
+              return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+          summary = {
+              "schemaVersion": 1,
+              "result": "passed",
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "canonicalBaseSha": os.environ["BASE_SHA"],
+              "sourceIsCanonicalDescendant": True,
+              "scenario": "idle-status-item-with-contour-hud",
+              "profiles": profiles,
+              "runtime": runtime,
+              "preferencesRestored": True,
+              "captureScope": "instrumented AppKit state only; no desktop capture",
+              "environment": {
+                  "architecture": platform.machine(),
+                  "macOSVersion": output("sw_vers", "-productVersion"),
+                  "macOSBuild": output("sw_vers", "-buildVersion"),
+                  "hardwareModel": output("sysctl", "-n", "hw.model"),
+              },
+              "measured": [
+                  "launch-to-HUD latency",
+                  "process CPU",
+                  "resident and virtual memory",
+                  "thread count when available",
+                  "physical notch and overlay geometry",
+                  "single/dual and label visibility profiles",
+                  "60-second process survival",
+              ],
+              "notMeasured": [
+                  "overview-open workload",
+                  "detail-window workload",
+                  "sleep/wake",
+                  "power-source switching",
+                  "wakeups",
+                  "Energy Impact",
+                  "provider-level latency",
+                  "status/notch render duration and allocation counts",
+              ],
+          }
+          (root / "summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8")
+          PY
+
+          EVIDENCE="${evidence}" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path(os.environ["EVIDENCE"])
+          home = str(Path.home())
+          home_pattern = re.compile(r"/(?:Users|home)/[^/\s]+")
+          violations = []
+          for path in root.rglob("*"):
+              if not path.is_file() or path.is_symlink():
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
+              if (home and home in text) or home_pattern.search(text):
+                  violations.append(str(path.relative_to(root)))
+          if violations:
+              raise SystemExit(
+                  "Evidence contains a user home path: " + ", ".join(sorted(violations)))
+          PY
+          printf 'preferences-restored=true\nprivacy-scan=passed\n' \
+            > "${evidence}/final-result.txt"
+
+      - name: Upload exact post-notch baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exact-post-notch-idle-baseline-${{ github.sha }}
+          path: post-notch-baseline-evidence/
+          if-no-files-found: error
+          retention-days: 30
