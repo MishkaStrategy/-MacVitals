@@ -187,6 +187,22 @@ final class NotchHUDController {
       payload["frameY"] = frame.minY
       payload["frameWidth"] = frame.width
       payload["frameHeight"] = frame.height
+
+      let lineWidth = CGFloat(configuration.lineThickness)
+      let contourGeometry = NotchHUDLayout.contourGeometry(
+        in: frame.size,
+        safeAreaTop: state.safeAreaTop,
+        lineThickness: lineWidth,
+        notchWidth: state.notchWidth)
+      let cutoutRect = NotchHUDLayout.hardwareCutoutRect(
+        in: frame.size,
+        contourGeometry: contourGeometry,
+        lineThickness: lineWidth)
+      payload["contourShoulderRadius"] = contourGeometry.shoulderRadius
+      payload["hardwareCutoutMaskX"] = cutoutRect.minX
+      payload["hardwareCutoutMaskY"] = cutoutRect.minY
+      payload["hardwareCutoutMaskWidth"] = cutoutRect.width
+      payload["hardwareCutoutMaskHeight"] = cutoutRect.height
     }
 
     guard let data = try? JSONSerialization.data(
