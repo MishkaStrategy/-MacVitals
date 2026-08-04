@@ -117,6 +117,25 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertLessThanOrEqual(geometry.shoulderRadius, 16)
   }
 
+  func testHardwareCutoutMaskMatchesForbiddenCameraArea() {
+    let size = CGSize(width: 364, height: 70)
+    let lineThickness: CGFloat = 2.5
+    let geometry = NotchHUDLayout.contourGeometry(
+      in: size,
+      safeAreaTop: 38,
+      lineThickness: lineThickness,
+      notchWidth: 220)
+    let cutout = NotchHUDLayout.hardwareCutoutRect(
+      in: size,
+      contourGeometry: geometry,
+      lineThickness: lineThickness)
+
+    XCTAssertEqual(cutout.minX, 72, accuracy: 0.001)
+    XCTAssertEqual(cutout.width, 220, accuracy: 0.001)
+    XCTAssertEqual(cutout.minY, 0, accuracy: 0.001)
+    XCTAssertEqual(cutout.height, 38, accuracy: 0.001)
+  }
+
   func testContourTracksDifferentNotchSizesAndStrokeWidths() {
     let cases: [(panel: CGSize, safeTop: CGFloat, notch: CGFloat, line: CGFloat)] = [
       (CGSize(width: 300, height: 62), 32, 180, 1),
@@ -133,10 +152,17 @@ final class NotchHUDIndicatorTests: XCTestCase {
       let halfLine = min(max(item.line, 1), NotchHUDLayout.maximumIndicatorLineThickness) / 2
       let hardwareLeft = (item.panel.width - item.notch) / 2
       let hardwareRight = hardwareLeft + item.notch
+      let cutout = NotchHUDLayout.hardwareCutoutRect(
+        in: item.panel,
+        contourGeometry: geometry,
+        lineThickness: item.line)
 
       XCTAssertEqual(geometry.notchLeftX + halfLine, hardwareLeft, accuracy: 0.001)
       XCTAssertEqual(geometry.notchRightX - halfLine, hardwareRight, accuracy: 0.001)
       XCTAssertEqual(geometry.bottomY - halfLine, item.safeTop, accuracy: 0.001)
+      XCTAssertEqual(cutout.minX, hardwareLeft, accuracy: 0.001)
+      XCTAssertEqual(cutout.width, item.notch, accuracy: 0.001)
+      XCTAssertEqual(cutout.height, item.safeTop, accuracy: 0.001)
       XCTAssertGreaterThan(geometry.shoulderRadius, 0)
     }
   }
