@@ -168,8 +168,8 @@ jobs:
             else
               app_alive=0
             fi
-            runner_processes="$(pgrep -x MacVitalsUITests-Runner 2>/dev/null | wc -l | tr -d ' ')"
-            xcodebuild_processes="$(pgrep -x xcodebuild 2>/dev/null | wc -l | tr -d ' ')"
+            runner_processes="$( (pgrep -x MacVitalsUITests-Runner 2>/dev/null || true) | wc -l | tr -d ' ')"
+            xcodebuild_processes="$( (pgrep -x xcodebuild 2>/dev/null || true) | wc -l | tr -d ' ')"
             printf '%s,%s,%s,%s\n' \
               "${second}" "${app_alive}" "${runner_processes}" "${xcodebuild_processes}" \
               >> "${evidence}/samples.csv"
