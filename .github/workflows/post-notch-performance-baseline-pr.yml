@@ -1,0 +1,94 @@
+name: Exact Post-Notch Baseline PR Gate
+
+on:
+  pull_request:
+    branches: [feature/macvitals-v1]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: exact-post-notch-baseline-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head-physical-baseline:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'perf/exact-head-post-notch-baseline'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    env:
+      CANONICAL_BASE_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
+      EXACT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Materialize exact workflow stages
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/post-notch-performance-baseline.yml')
+          lines = source.read_text(encoding='utf-8').splitlines()
+          names = [
+              'Verify exact canonical ancestry and HUD contract',
+              'Build exact unsigned ARM64 Release and unit tests',
+              'Measure physical idle contour HUD',
+          ]
+          output = Path('/tmp/post-notch-baseline-stages')
+          output.mkdir(parents=True, exist_ok=True)
+
+          for number, name in enumerate(names, start=1):
+              marker = f'      - name: {name}'
+              try:
+                  step = lines.index(marker)
+              except ValueError as error:
+                  raise SystemExit(f'Missing baseline step: {name}') from error
+              run_line = next(
+                  index for index in range(step + 1, len(lines))
+                  if lines[index].strip() == 'run: |')
+              end = next(
+                  (index for index in range(run_line + 1, len(lines))
+                   if lines[index].startswith('      - ')),
+                  len(lines))
+              body = [
+                  line[10:] if line.startswith('          ') else line
+                  for line in lines[run_line + 1:end]
+              ]
+              path = output / f'{number:02d}.sh'
+              path.write_text('\n'.join(body) + '\n', encoding='utf-8')
+          PY
+          for script in /tmp/post-notch-baseline-stages/*.sh; do
+            bash -n "${script}"
+          done
+
+      - name: Execute exact baseline stages
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$(git rev-parse HEAD)" == "${EXACT_HEAD_SHA}" ]]
+          for script in /tmp/post-notch-baseline-stages/*.sh; do
+            echo "Running ${script} for ${EXACT_HEAD_SHA}"
+            GITHUB_SHA="${EXACT_HEAD_SHA}" \
+            CANONICAL_BASE_SHA="${CANONICAL_BASE_SHA}" \
+              bash "${script}"
+          done
+
+      - name: Upload exact-head baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exact-post-notch-idle-baseline-${{ github.event.pull_request.head.sha }}
+          path: post-notch-baseline-evidence/
+          if-no-files-found: error
+          retention-days: 30
