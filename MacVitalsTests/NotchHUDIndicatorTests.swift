@@ -18,17 +18,61 @@ final class NotchHUDIndicatorTests: XCTestCase {
     XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.001)
   }
 
-  func testContourGeometryTracesOutsideHardwareCutout() {
-    let geometry = NotchHUDLayout.contourGeometry(
-      in: CGSize(width: 356, height: 70),
-      safeAreaTop: 38)
+  func testHardwareNotchGeometryUsesAuxiliaryTopAreas() throws {
+    let screen = NSRect(x: 0, y: 0, width: 2_056, height: 1_329)
+    let geometry = try XCTUnwrap(NotchHUDLayout.hardwareNotchGeometry(
+      screenFrame: screen,
+      safeAreaTop: 38,
+      auxiliaryTopLeftArea: NSRect(x: 0, y: 1_291, width: 922, height: 38),
+      auxiliaryTopRightArea: NSRect(x: 1_134, y: 1_291, width: 922, height: 38)))
 
-    XCTAssertEqual(geometry.notchRightX - geometry.notchLeftX, 212, accuracy: 0.001)
+    XCTAssertEqual(geometry.width, 212, accuracy: 0.001)
+    XCTAssertEqual(geometry.centerX, 1_028, accuracy: 0.001)
+  }
+
+  func testPanelFrameUsesDetectedNotchCenterAndWidth() {
+    var configuration = NotchHUDConfiguration.minimal
+    configuration.horizontalExtension = 80
+
+    let screen = NSRect(x: 100, y: 0, width: 1_600, height: 1_000)
+    let hardware = NotchHUDHardwareGeometry(centerX: 860, width: 220)
+    let frame = NotchHUDLayout.panelFrame(
+      for: screen,
+      safeAreaTop: 38,
+      configuration: configuration,
+      notchGeometry: hardware)
+
+    XCTAssertEqual(frame.midX, hardware.centerX, accuracy: 0.001)
+    XCTAssertEqual(frame.width, 380, accuracy: 0.001)
+    XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.001)
+  }
+
+  func testHardwareNotchGeometryRejectsMissingSafeArea() {
+    XCTAssertNil(NotchHUDLayout.hardwareNotchGeometry(
+      screenFrame: NSRect(x: 0, y: 0, width: 1_512, height: 982),
+      safeAreaTop: 0,
+      auxiliaryTopLeftArea: NSRect(x: 0, y: 950, width: 650, height: 32),
+      auxiliaryTopRightArea: NSRect(x: 862, y: 950, width: 650, height: 32)))
+  }
+
+  func testContourGeometryTouchesHardwareCutoutExactly() {
+    let lineThickness: CGFloat = 6
+    let panelWidth: CGFloat = 356
+    let hardwareNotchWidth: CGFloat = 212
+    let geometry = NotchHUDLayout.contourGeometry(
+      in: CGSize(width: panelWidth, height: 70),
+      safeAreaTop: 38,
+      lineThickness: lineThickness,
+      notchWidth: hardwareNotchWidth)
+    let hardwareLeft = (panelWidth - hardwareNotchWidth) / 2
+    let hardwareRight = hardwareLeft + hardwareNotchWidth
+    let halfLine = lineThickness / 2
+
     XCTAssertLessThanOrEqual(geometry.topY, 1)
-    XCTAssertEqual(
-      geometry.bottomY - NotchHUDLayout.maximumIndicatorLineThickness / 2,
-      38 + NotchHUDLayout.minimumContourClearance,
-      accuracy: 0.001)
+    XCTAssertEqual(geometry.notchLeftX + halfLine, hardwareLeft, accuracy: 0.001)
+    XCTAssertEqual(geometry.notchRightX - halfLine, hardwareRight, accuracy: 0.001)
+    XCTAssertEqual(geometry.bottomY - halfLine, 38, accuracy: 0.001)
+    XCTAssertEqual(NotchHUDLayout.minimumContourClearance, 0, accuracy: 0.001)
     XCTAssertLessThan(geometry.shoulderRadius, 15)
   }
 
