@@ -1,5 +1,10 @@
 import AppKit
 
+nonisolated struct NotchHUDHardwareGeometry: Equatable {
+  let centerX: CGFloat
+  let width: CGFloat
+}
+
 nonisolated struct NotchHUDContourGeometry: Equatable {
   let topY: CGFloat
   let bottomY: CGFloat
@@ -13,7 +18,7 @@ nonisolated enum NotchHUDLayout {
   static let minimumSafeAreaTop: CGFloat = 30
   static let maximumSafeAreaTop: CGFloat = 44
   static let edgeMargin: CGFloat = 8
-  static let minimumContourClearance: CGFloat = 4
+  static let minimumContourClearance: CGFloat = 0
   static let maximumIndicatorLineThickness: CGFloat = 6
 
   static func resolvedSafeAreaTop(_ safeAreaTop: CGFloat) -> CGFloat {
@@ -21,9 +26,47 @@ nonisolated enum NotchHUDLayout {
     return min(max(safeAreaTop, minimumSafeAreaTop), maximumSafeAreaTop)
   }
 
-  static func preferredPanelWidth(configuration: NotchHUDConfiguration) -> CGFloat {
+  static func hardwareNotchGeometry(
+    screenFrame: NSRect,
+    safeAreaTop: CGFloat,
+    auxiliaryTopLeftArea: NSRect?,
+    auxiliaryTopRightArea: NSRect?
+  ) -> NotchHUDHardwareGeometry? {
+    guard safeAreaTop > 0,
+      let leftArea = auxiliaryTopLeftArea,
+      let rightArea = auxiliaryTopRightArea
+    else {
+      return nil
+    }
+
+    let leftEdge = leftArea.maxX
+    let rightEdge = rightArea.minX
+    let width = rightEdge - leftEdge
+    let tolerance: CGFloat = 1
+
+    guard leftEdge.isFinite,
+      rightEdge.isFinite,
+      width.isFinite,
+      width > 0,
+      leftEdge >= screenFrame.minX - tolerance,
+      rightEdge <= screenFrame.maxX + tolerance,
+      width <= screenFrame.width
+    else {
+      return nil
+    }
+
+    return NotchHUDHardwareGeometry(
+      centerX: (leftEdge + rightEdge) / 2,
+      width: width)
+  }
+
+  static func preferredPanelWidth(
+    configuration: NotchHUDConfiguration,
+    notchWidth: CGFloat = notchWidth
+  ) -> CGFloat {
     let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
-    return notchWidth + CGFloat(normalized.horizontalExtension * 2)
+    let resolvedWidth = notchWidth.isFinite && notchWidth > 0 ? notchWidth : Self.notchWidth
+    return resolvedWidth + CGFloat(normalized.horizontalExtension * 2)
   }
 
   static func preferredPanelHeight(
@@ -36,13 +79,23 @@ nonisolated enum NotchHUDLayout {
   static func panelFrame(
     for screenFrame: NSRect,
     safeAreaTop: CGFloat,
-    configuration: NotchHUDConfiguration
+    configuration: NotchHUDConfiguration,
+    notchGeometry: NotchHUDHardwareGeometry? = nil
   ) -> NSRect {
-    let preferredWidth = preferredPanelWidth(configuration: configuration)
-    let width = min(preferredWidth, max(notchWidth, screenFrame.width - edgeMargin * 2))
+    let hardwareNotchWidth = notchGeometry?.width ?? notchWidth
+    let preferredWidth = preferredPanelWidth(
+      configuration: configuration,
+      notchWidth: hardwareNotchWidth)
+    let maximumWidth = max(notchWidth, screenFrame.width - edgeMargin * 2)
+    let width = min(preferredWidth, maximumWidth)
+    let centerX = notchGeometry?.centerX ?? screenFrame.midX
+    let minimumX = screenFrame.minX + edgeMargin
+    let maximumX = screenFrame.maxX - edgeMargin - width
+    let x = min(max(centerX - width / 2, minimumX), max(minimumX, maximumX))
     let height = preferredPanelHeight(safeAreaTop: safeAreaTop, configuration: configuration)
+
     return NSRect(
-      x: screenFrame.midX - width / 2,
+      x: x,
       y: screenFrame.maxY - height,
       width: width,
       height: height)
@@ -51,17 +104,24 @@ nonisolated enum NotchHUDLayout {
   static func contourGeometry(
     in size: CGSize,
     safeAreaTop: CGFloat,
-    lineThickness: CGFloat = maximumIndicatorLineThickness
+    lineThickness: CGFloat = maximumIndicatorLineThickness,
+    notchWidth: CGFloat = notchWidth
   ) -> NotchHUDContourGeometry {
     let resolvedTop = resolvedSafeAreaTop(safeAreaTop)
     let resolvedLineThickness = min(max(lineThickness, 1), maximumIndicatorLineThickness)
-    let resolvedNotchWidth = min(notchWidth, max(120, size.width - 72))
-    let notchLeft = (size.width - resolvedNotchWidth) / 2
-    let notchRight = notchLeft + resolvedNotchWidth
-    let desiredBottomY = resolvedTop
-      + minimumContourClearance
-      + resolvedLineThickness / 2
-    let maximumBottomY = size.height - resolvedLineThickness / 2 - 1
+    let maximumHardwareWidth = max(1, size.width - resolvedLineThickness - 2)
+    let candidateNotchWidth = notchWidth.isFinite && notchWidth > 0 ? notchWidth : Self.notchWidth
+    let resolvedNotchWidth = min(candidateNotchWidth, maximumHardwareWidth)
+    let hardwareNotchLeft = (size.width - resolvedNotchWidth) / 2
+    let hardwareNotchRight = hardwareNotchLeft + resolvedNotchWidth
+    let halfLine = resolvedLineThickness / 2
+
+    // The centerline is expanded by half the stroke width so the visible inner edge
+    // touches the physical cutout exactly without drawing underneath it.
+    let notchLeft = max(halfLine, hardwareNotchLeft - halfLine)
+    let notchRight = min(size.width - halfLine, hardwareNotchRight + halfLine)
+    let desiredBottomY = resolvedTop + minimumContourClearance + halfLine
+    let maximumBottomY = size.height - halfLine - 1
     let bottomY = min(maximumBottomY, desiredBottomY)
 
     return NotchHUDContourGeometry(
