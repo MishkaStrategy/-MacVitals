@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8882541564'
-      APP_ARTIFACT_DIGEST: '0a6a0d16f11c9130004259aff5bfe369ba3c59649dfff8e13cadb2873ad3c97d'
-      FEATURE_HEAD_SHA: 'ddf6e348a2b926faa1f8c0269f7f3ac25f55d561'
+      APP_ARTIFACT_ID: '8882798498'
+      APP_ARTIFACT_DIGEST: '86970b955addcd983437e1070b91e682ce68f7f9424ed9ff17f4673f29e5a6a6'
+      FEATURE_HEAD_SHA: '2d1fbd0342689af1629e2ee9875e5e5238f37ea2'
       SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
 
     steps:
