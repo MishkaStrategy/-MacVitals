@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8884404997'
-      APP_ARTIFACT_DIGEST: '34856c0477acf98534d735989117d37aa6eb51100994e2a89d6155c5f7be57b8'
-      FEATURE_HEAD_SHA: '9c4a01061efd9b078db37e63a3c4bea355d9fe2e'
+      APP_ARTIFACT_ID: '8885008401'
+      APP_ARTIFACT_DIGEST: '163fc5af53bc3874336090673e17ef44901ea372c82e9a1c4e67e4690d8d2aea'
+      FEATURE_HEAD_SHA: '651a08250663b03a63ebdbc83d9b33430078ba46'
       SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
 
     steps:
@@ -46,12 +46,20 @@ jobs:
             MacVitals/MenuBar/NotchHUDLayout.swift
           grep -F 'static func outwardIntegralBackingRect' \
             MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'static func hardwareCutoutRect(' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
           grep -F 'return safeAreaTop' \
             MacVitals/MenuBar/NotchHUDLayout.swift
           if grep -F 'maximumSafeAreaTop' MacVitals/MenuBar/NotchHUDLayout.swift; then
             echo 'Legacy safe-area model clamp is still present' >&2
             exit 1
           fi
+          grep -F 'NotchHUDExteriorMask(cutoutRect: cutoutRect)' \
+            MacVitals/MenuBar/NotchHUDViews.swift
+          grep -F '.fill(Color.white, style: FillStyle(eoFill: true))' \
+            MacVitals/MenuBar/NotchHUDViews.swift
+          grep -F 'hardwareCutoutMaskWidth' \
+            MacVitals/MenuBar/NotchHUDController.swift
           grep -F 'if hasHardwareNotch, screenGeometry.notch == nil' \
             MacVitals/MenuBar/NotchHUDController.swift
           grep -F 'func refreshLayout(preferredScreen: NSScreen?)' \
@@ -111,7 +119,12 @@ jobs:
                   "assert abs(d['resolvedSafeAreaTop'] - d['safeAreaTop']) <= 1.0, d\n"
                   "assert d['backingScaleFactor'] >= 1, d\n"
                   "assert math.isclose(d['resolvedNotchWidth'], d['hardwareNotchWidth'], abs_tol=0.5), d\n"
-                  "assert abs(d['frameWidth'] - (d['hardwareNotchWidth'] + 144)) <= 3, d",
+                  "assert abs(d['frameWidth'] - (d['hardwareNotchWidth'] + 144)) <= 3, d\n"
+                  "assert math.isclose(d['hardwareCutoutMaskWidth'], d['hardwareNotchWidth'], abs_tol=0.5), d\n"
+                  "assert math.isclose(d['hardwareCutoutMaskHeight'], d['resolvedSafeAreaTop'], abs_tol=0.5), d\n"
+                  "assert math.isclose(d['hardwareCutoutMaskX'], (d['frameWidth'] - d['hardwareNotchWidth']) / 2, abs_tol=0.5), d\n"
+                  "assert math.isclose(d['hardwareCutoutMaskY'], 0, abs_tol=0.01), d\n"
+                  "assert 0 < d['contourShoulderRadius'] <= 16, d",
               "expected_x = d['screenX'] + (d['screenWidth'] - d['frameWidth']) / 2":
                   "expected_x = d['hardwareNotchCenterX'] - d['frameWidth'] / 2",
           }
@@ -123,7 +136,8 @@ jobs:
           PY
           grep -F '32 if expected_labels else 20' /tmp/run-physical-adaptive-notch.sh
           grep -F "d['resolvedSafeAreaTop']" /tmp/run-physical-adaptive-notch.sh
-          grep -F "d['hardwareNotchWidth'] + 144" /tmp/run-physical-adaptive-notch.sh
+          grep -F "d['hardwareCutoutMaskWidth']" /tmp/run-physical-adaptive-notch.sh
+          grep -F "d['contourShoulderRadius']" /tmp/run-physical-adaptive-notch.sh
           grep -F "d['hardwareNotchCenterX'] - d['frameWidth'] / 2" \
             /tmp/run-physical-adaptive-notch.sh
           bash -n /tmp/run-physical-adaptive-notch.sh
@@ -138,7 +152,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: physical-adaptive-notch-contour-evidence
+          name: physical-adaptive-notch-contour-final-evidence
           path: physical-evidence/
           if-no-files-found: error
           retention-days: 30
