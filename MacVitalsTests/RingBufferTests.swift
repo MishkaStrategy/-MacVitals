@@ -1,3 +1,4 @@
+import Dispatch
 import XCTest
 
 @testable import MacVitals
@@ -50,6 +51,34 @@ final class RingBufferTests: XCTestCase {
 
     buffer.append(5)
     XCTAssertEqual(buffer.values, [3, 4, 5])
+  }
+
+  func testSteadyStateAppendOutperformsLegacyFrontShift() {
+    let capacity = 3_600
+    let iterations = 20_000
+
+    var legacy = LegacyShiftBuffer<Int>(capacity: capacity)
+    for value in 0..<capacity { legacy.append(value) }
+    let legacyStart = DispatchTime.now().uptimeNanoseconds
+    for value in capacity..<(capacity + iterations) { legacy.append(value) }
+    let legacyNanoseconds = DispatchTime.now().uptimeNanoseconds - legacyStart
+
+    var circular = RingBuffer<Int>(capacity: capacity)
+    for value in 0..<capacity { circular.append(value) }
+    let circularStart = DispatchTime.now().uptimeNanoseconds
+    for value in capacity..<(capacity + iterations) { circular.append(value) }
+    let circularNanoseconds = DispatchTime.now().uptimeNanoseconds - circularStart
+
+    let expected = Array(iterations..<(iterations + capacity))
+    XCTAssertEqual(legacy.values, expected)
+    XCTAssertEqual(circular.values, expected)
+    XCTAssertLessThan(circularNanoseconds, legacyNanoseconds)
+
+    let speedup = Double(legacyNanoseconds) / Double(max(circularNanoseconds, 1))
+    print(
+      "RING_BUFFER_BENCHMARK capacity=\(capacity) iterations=\(iterations) "
+        + "legacy_ns=\(legacyNanoseconds) circular_ns=\(circularNanoseconds) "
+        + String(format: "speedup=%.2fx", speedup))
   }
 
   func testHistoryWithoutDiscontinuityUsesOneSegment() {
@@ -130,5 +159,22 @@ final class RingBufferTests: XCTestCase {
     XCTAssertEqual(points.memory.timestamp, snapshot.timestamp)
     XCTAssertNil(points.cpu.value)
     XCTAssertNil(points.memory.value)
+  }
+}
+
+private struct LegacyShiftBuffer<Element> {
+  private var storage: [Element] = []
+  private let capacity: Int
+
+  init(capacity: Int) {
+    self.capacity = max(1, capacity)
+    storage.reserveCapacity(self.capacity)
+  }
+
+  var values: [Element] { storage }
+
+  mutating func append(_ element: Element) {
+    if storage.count == capacity { storage.removeFirst() }
+    storage.append(element)
   }
 }
