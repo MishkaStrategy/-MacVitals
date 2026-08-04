@@ -13,4 +13,6 @@ Policy:
 - generated runner bundles are removed from DerivedData before and after the compile guard;
 - only `MacVitals.app` may be launched by runtime and physical validation workflows.
 
+If the macOS warning is already open, moving `MacVitalsUITests-Runner` to Trash is safe: it removes only the temporary XCTest host and does not affect `MacVitals.app` or user settings.
+
 This preserves compile coverage for UI test sources without producing user-visible XCTest Runner prompts on a physical self-hosted Mac.
