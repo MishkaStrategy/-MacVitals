@@ -1,0 +1,190 @@
+name: Physical Test UI Runner Isolation
+
+on:
+  pull_request:
+    branches: [fix/prevent-uitest-runner-launch]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-ui-runner-isolation
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  physical-ui-runner-isolation:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'test/physical-ui-runner-isolation'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 12
+    env:
+      APP_ARTIFACT_ID: '8891623131'
+      APP_ARTIFACT_SHA256: 'f8f45779d546391b6e482595804bf79252249e25c1a2db2c26e62973cadb936e'
+      PRODUCT_HEAD_SHA: 'f03e869b60ca5d8f5e1983e85af31940a34b67c4'
+      TEST_DURATION_SECONDS: '180'
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Validate product isolation source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('project.yml').read_text(encoding='utf-8')
+          primary = text.split('  MacVitalsUITestsBuild:', 1)[0]
+          if '        - MacVitalsUITests\n' in primary:
+              raise SystemExit('MacVitalsUITests remains in primary MacVitals test action')
+          if '  MacVitalsUITestsBuild:' not in text:
+              raise SystemExit('build-only UI test scheme is missing')
+          PY
+          test "${GITHUB_BASE_REF}" = 'fix/prevent-uitest-runner-launch'
+
+      - name: Run physical launch isolation test
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          stage="${RUNNER_TEMP}/macvitals-ui-runner-physical-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence="${GITHUB_WORKSPACE}/physical-evidence"
+          artifact_zip="${stage}/artifact.zip"
+          mkdir -p "${stage}" "${evidence}"
+
+          cleanup() {
+            if [[ -n "${app_pid:-}" ]] && kill -0 "${app_pid}" 2>/dev/null; then
+              kill "${app_pid}" 2>/dev/null || true
+              sleep 2
+              kill -9 "${app_pid}" 2>/dev/null || true
+            fi
+            find "${HOME}/Library/Developer/Xcode/DerivedData" \
+              -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
+              2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
+          printf 'product_head=%s\nartifact_id=%s\nstarted_at_utc=%s\nduration_seconds=%s\n' \
+            "${PRODUCT_HEAD_SHA}" "${APP_ARTIFACT_ID}" "${started_at}" "${TEST_DURATION_SECONDS}" \
+            > "${evidence}/metadata.txt"
+
+          if pgrep -f 'MacVitalsUITests-Runner' > "${evidence}/runner-process-before.txt" 2>&1; then
+            echo 'A MacVitalsUITests-Runner process already exists before the test' >&2
+            exit 1
+          fi
+
+          find "${HOME}/Library/Developer/Xcode/DerivedData" \
+            -type d -name 'MacVitalsUITests-Runner.app' -print \
+            > "${evidence}/runner-bundles-before-cleanup.txt" 2>/dev/null || true
+          find "${HOME}/Library/Developer/Xcode/DerivedData" \
+            -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
+            2>/dev/null || true
+
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${APP_ARTIFACT_ID}/zip" \
+            --output "${artifact_zip}"
+
+          actual_sha="$(shasum -a 256 "${artifact_zip}" | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\n' "${APP_ARTIFACT_SHA256}" "${actual_sha}" \
+            > "${evidence}/artifact-sha256.txt"
+          test "${actual_sha}" = "${APP_ARTIFACT_SHA256}"
+
+          unzip -q "${artifact_zip}" -d "${stage}/outer"
+          nested_zip="${stage}/outer/MacVitals-0.0.808.zip"
+          test -f "${nested_zip}"
+          unzip -q "${nested_zip}" -d "${stage}/app"
+          app="${stage}/app/MacVitals.app"
+          executable="${app}/Contents/MacOS/MacVitals"
+          test -d "${app}"
+          test -x "${executable}"
+
+          if find "${stage}" -type d -name 'MacVitalsUITests-Runner.app' -print -quit | grep -q .; then
+            echo 'Artifact unexpectedly contains MacVitalsUITests-Runner.app' >&2
+            exit 1
+          fi
+
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Contents/Info.plist")"
+          bundle_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${app}/Contents/Info.plist")"
+          test "${bundle_id}" = 'com.mishkacher.MacVitals'
+          test "${bundle_executable}" = 'MacVitals'
+          file "${executable}" | tee "${evidence}/executable-file.txt"
+          file "${executable}" | grep -q 'arm64'
+          printf 'bundle_id=%s\nbundle_executable=%s\napp_path=%s\n' \
+            "${bundle_id}" "${bundle_executable}" "${app}" \
+            > "${evidence}/app-info.txt"
+
+          xattr -dr com.apple.quarantine "${app}" 2>/dev/null || true
+          ps -axo pid=,comm=,args= | grep -E 'CoreServicesUIAgent|MacVitalsUITests-Runner' \
+            | grep -v grep > "${evidence}/gatekeeper-baseline.txt" || true
+
+          open -na "${app}" --args --physical-ui-runner-isolation-test \
+            > "${evidence}/launch-stdout.txt" 2> "${evidence}/launch-stderr.txt"
+
+          app_pid=''
+          for _ in $(seq 1 30); do
+            app_pid="$(pgrep -f "${executable}" | head -n 1 || true)"
+            [[ -n "${app_pid}" ]] && break
+            sleep 1
+          done
+          test -n "${app_pid}"
+          kill -0 "${app_pid}"
+          printf 'app_pid=%s\n' "${app_pid}" > "${evidence}/launch-result.txt"
+
+          printf 'second,app_alive,runner_processes,runner_bundles\n' > "${evidence}/samples.csv"
+          for second in $(seq 0 "${TEST_DURATION_SECONDS}"); do
+            if kill -0 "${app_pid}" 2>/dev/null; then
+              app_alive=1
+            else
+              app_alive=0
+            fi
+            runner_processes="$(pgrep -f 'MacVitalsUITests-Runner' | wc -l | tr -d ' ')"
+            runner_bundles="$(find "${HOME}/Library/Developer/Xcode/DerivedData" \
+              -type d -name 'MacVitalsUITests-Runner.app' -print 2>/dev/null | wc -l | tr -d ' ')"
+            printf '%s,%s,%s,%s\n' "${second}" "${app_alive}" "${runner_processes}" "${runner_bundles}" \
+              >> "${evidence}/samples.csv"
+            test "${app_alive}" = '1'
+            test "${runner_processes}" = '0'
+            test "${runner_bundles}" = '0'
+            sleep 1
+          done
+
+          log show --start "${started_at}" --style compact \
+            --predicate 'eventMessage CONTAINS[c] "MacVitalsUITests-Runner"' \
+            > "${evidence}/runner-unified-log.txt" 2>&1 || true
+          sed -i '' "s|${HOME}|~|g" "${evidence}/runner-unified-log.txt" || true
+          if grep -vE '^(Timestamp|Filtering|$)' "${evidence}/runner-unified-log.txt" | grep -q 'MacVitalsUITests-Runner'; then
+            echo 'Unified log contains a new MacVitalsUITests-Runner launch event' >&2
+            exit 1
+          fi
+
+          ps -axo pid=,comm=,args= | grep -E 'CoreServicesUIAgent|MacVitalsUITests-Runner' \
+            | grep -v grep > "${evidence}/gatekeeper-after.txt" || true
+          find "${HOME}/Library/Developer/Xcode/DerivedData" \
+            -type d -name 'MacVitalsUITests-Runner.app' -print \
+            > "${evidence}/runner-bundles-after.txt" 2>/dev/null || true
+          test ! -s "${evidence}/runner-bundles-after.txt"
+
+          printf 'result=passed\napp_started=1\napp_survived_seconds=%s\nrunner_process_seen=0\nrunner_bundle_seen_after_cleanup=0\n' \
+            "${TEST_DURATION_SECONDS}" > "${evidence}/result.txt"
+
+      - name: Upload physical evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-ui-runner-isolation-evidence
+          path: physical-evidence/
+          if-no-files-found: error
+          retention-days: 30
