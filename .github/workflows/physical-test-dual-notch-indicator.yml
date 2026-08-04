@@ -1,4 +1,4 @@
-name: Physical Test Dual Notch Indicator
+name: Physical Test Exact Hardware Notch Contour
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened]
 
 concurrency:
-  group: physical-test-dual-notch-indicator
+  group: physical-test-exact-hardware-notch-contour
   cancel-in-progress: true
 
 permissions:
@@ -23,9 +23,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     env:
-      APP_ARTIFACT_ID: '8867257004'
-      APP_ARTIFACT_DIGEST: 'ccc28054b01d3da1db9f998424f5987806f3ef261ac0ed21aa98e51c2ec6e134'
-      FEATURE_HEAD_SHA: 'f7216f9b6c83f098a35546de4ace847178e7cd0a'
+      APP_ARTIFACT_ID: '8882541564'
+      APP_ARTIFACT_DIGEST: '0a6a0d16f11c9130004259aff5bfe369ba3c59649dfff8e13cadb2873ad3c97d'
+      FEATURE_HEAD_SHA: 'ddf6e348a2b926faa1f8c0269f7f3ac25f55d561'
       SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
 
     steps:
@@ -34,20 +34,28 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Validate safe contour source
+      - name: Validate exact hardware contour source
         shell: bash
         run: |
           set -Eeuo pipefail
-          grep -F 'static let minimumContourClearance: CGFloat = 4' \
+          grep -F 'static let minimumContourClearance: CGFloat = 0' \
             MacVitals/MenuBar/NotchHUDLayout.swift
           grep -F 'static let maximumIndicatorLineThickness: CGFloat = 6' \
             MacVitals/MenuBar/NotchHUDLayout.swift
-          grep -F 'let desiredBottomY = resolvedTop' \
+          grep -F 'static func hardwareNotchGeometry(' \
             MacVitals/MenuBar/NotchHUDLayout.swift
-          grep -F '+ minimumContourClearance' \
+          grep -F 'let notchLeft = max(halfLine, hardwareNotchLeft - halfLine)' \
             MacVitals/MenuBar/NotchHUDLayout.swift
-          grep -F '+ resolvedLineThickness / 2' \
+          grep -F 'let notchRight = min(size.width - halfLine, hardwareNotchRight + halfLine)' \
             MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'let desiredBottomY = resolvedTop + minimumContourClearance + halfLine' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea' \
+            MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'auxiliaryTopRightArea: screen.auxiliaryTopRightArea' \
+            MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'state.notchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth' \
+            MacVitals/MenuBar/NotchHUDController.swift
           grep -F 'path.move(to: CGPoint(x: leftX, y: topY))' \
             MacVitals/MenuBar/NotchHUDViews.swift
           grep -F 'path.addLine(to: CGPoint(x: leftX, y: bottomY - radius))' \
@@ -101,6 +109,12 @@ jobs:
               '.rsplit(" ",3)': '.rsplit(" ",2)',
               "expected_height = resolved_safe_area + (30 if expected_labels else 8)":
                   "expected_height = resolved_safe_area + (32 if expected_labels else 20)",
+              "assert abs(d['frameWidth'] - 356) <= 3, d":
+                  "assert d['hardwareNotchWidth'] > 0, d\n"
+                  "assert math.isclose(d['resolvedNotchWidth'], d['hardwareNotchWidth'], abs_tol=0.5), d\n"
+                  "assert abs(d['frameWidth'] - (d['hardwareNotchWidth'] + 144)) <= 3, d",
+              "expected_x = d['screenX'] + (d['screenWidth'] - d['frameWidth']) / 2":
+                  "expected_x = d['hardwareNotchCenterX'] - d['frameWidth'] / 2",
           }
           for old, new in replacements.items():
               if script.count(old) != 1:
@@ -111,6 +125,8 @@ jobs:
           grep -F "timestamp,cpu_percent,rss_kib" /tmp/run-physical-dual-notch.sh
           grep -F 'ps -p "${app_pid}" -o lstart=,%cpu=,rss=' /tmp/run-physical-dual-notch.sh
           grep -F '32 if expected_labels else 20' /tmp/run-physical-dual-notch.sh
+          grep -F "d['hardwareNotchWidth'] + 144" /tmp/run-physical-dual-notch.sh
+          grep -F "d['hardwareNotchCenterX'] - d['frameWidth'] / 2" /tmp/run-physical-dual-notch.sh
           bash -n /tmp/run-physical-dual-notch.sh
 
       - name: Validate physical single and dual indicator modes
@@ -123,7 +139,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: physical-dual-notch-indicator-safe-clearance-evidence
+          name: physical-exact-hardware-notch-contour-evidence
           path: physical-evidence/
           if-no-files-found: error
           retention-days: 30
