@@ -65,6 +65,25 @@ final class StatusItemController: NSObject {
       }
       .store(in: &cancellables)
 
+    Publishers.Merge3(
+      NotificationCenter.default.publisher(
+        for: NSApplication.didChangeScreenParametersNotification),
+      NotificationCenter.default.publisher(
+        for: NSWindow.didChangeScreenNotification),
+      NotificationCenter.default.publisher(
+        for: NSWindow.didChangeBackingPropertiesNotification))
+      .receive(on: RunLoop.main)
+      .sink { [weak self] notification in
+        guard let self else { return }
+        if let window = notification.object as? NSWindow,
+          window !== self.statusItem.button?.window
+        {
+          return
+        }
+        self.refreshNotchHUDLayout()
+      }
+      .store(in: &cancellables)
+
     renderCurrentState()
     DispatchQueue.main.async { [weak self] in
       self?.renderCurrentState()
@@ -152,6 +171,14 @@ final class StatusItemController: NSObject {
       metrics: settings.enabledMetrics,
       showAroundStatusBar: settings.showAroundStatusBar,
       notchHUDConfiguration: settings.notchHUDConfiguration)
+  }
+
+  private func refreshNotchHUDLayout() {
+    notchHUD.refreshLayout(preferredScreen: statusItem.button?.window?.screen)
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.notchHUD.refreshLayout(preferredScreen: self.statusItem.button?.window?.screen)
+    }
   }
 
   private func render(

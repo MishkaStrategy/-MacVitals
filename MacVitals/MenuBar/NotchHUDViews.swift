@@ -224,6 +224,10 @@ struct NotchHUDIndicatorContentView: View {
         lineThickness: lineWidth,
         notchWidth: notchWidth)
       let shape = NotchHUDContourShape(geometry: geometry)
+      let cutoutRect = NotchHUDLayout.hardwareCutoutRect(
+        in: proxy.size,
+        contourGeometry: geometry,
+        lineThickness: lineWidth)
       let count = normalized.indicatorCount
       let primaryTrack = NotchHUDIndicatorSegments.primaryTrack(count: count)
       let primarySegment = NotchHUDIndicatorSegments.primary(
@@ -231,51 +235,57 @@ struct NotchHUDIndicatorContentView: View {
         count: count)
 
       ZStack(alignment: .top) {
-        shape
-          .trim(from: primaryTrack.from, to: primaryTrack.to)
-          .stroke(
-            Color.white.opacity(normalized.trackOpacity),
-            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-
-        shape
-          .trim(from: primarySegment.from, to: primarySegment.to)
-          .stroke(
-            primaryColor,
-            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
-          )
-          .shadow(
-            color: primaryColor.opacity(0.75 * normalized.glowIntensity),
-            radius: 2 + 6 * normalized.glowIntensity
-          )
-          .animation(
-            normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
-            value: primaryReading.progress)
-
-        if let secondaryReading, let secondaryColor {
-          let secondaryTrack = NotchHUDIndicatorSegments.secondaryTrack
-          let secondarySegment = NotchHUDIndicatorSegments.secondary(
-            progress: secondaryReading.progress)
-
+        ZStack {
           shape
-            .trim(from: secondaryTrack.from, to: secondaryTrack.to)
+            .trim(from: primaryTrack.from, to: primaryTrack.to)
             .stroke(
               Color.white.opacity(normalized.trackOpacity),
               style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
 
           shape
-            .trim(from: secondarySegment.from, to: secondarySegment.to)
+            .trim(from: primarySegment.from, to: primarySegment.to)
             .stroke(
-              secondaryColor,
+              primaryColor,
               style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
             )
             .shadow(
-              color: secondaryColor.opacity(0.75 * normalized.glowIntensity),
+              color: primaryColor.opacity(0.75 * normalized.glowIntensity),
               radius: 2 + 6 * normalized.glowIntensity
             )
             .animation(
               normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
-              value: secondaryReading.progress)
+              value: primaryReading.progress)
+
+          if let secondaryReading, let secondaryColor {
+            let secondaryTrack = NotchHUDIndicatorSegments.secondaryTrack
+            let secondarySegment = NotchHUDIndicatorSegments.secondary(
+              progress: secondaryReading.progress)
+
+            shape
+              .trim(from: secondaryTrack.from, to: secondaryTrack.to)
+              .stroke(
+                Color.white.opacity(normalized.trackOpacity),
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+
+            shape
+              .trim(from: secondarySegment.from, to: secondarySegment.to)
+              .stroke(
+                secondaryColor,
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+              )
+              .shadow(
+                color: secondaryColor.opacity(0.75 * normalized.glowIntensity),
+                radius: 2 + 6 * normalized.glowIntensity
+              )
+              .animation(
+                normalized.animateChanges ? .easeOut(duration: 0.35) : nil,
+                value: secondaryReading.progress)
+          }
         }
+        .compositingGroup()
+        .mask(
+          NotchHUDExteriorMask(cutoutRect: cutoutRect)
+            .fill(Color.white, style: FillStyle(eoFill: true)))
 
         if normalized.showValueText {
           if let secondaryReading, let secondaryColor {
@@ -414,6 +424,24 @@ private struct NotchHUDContourShape: Shape {
       to: CGPoint(x: rightX, y: bottomY - radius),
       control: CGPoint(x: rightX, y: bottomY))
     path.addLine(to: CGPoint(x: rightX, y: topY))
+    return path
+  }
+}
+
+private struct NotchHUDExteriorMask: Shape {
+  let cutoutRect: CGRect
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    path.addRect(rect)
+
+    let clippedCutout = cutoutRect.intersection(rect)
+    if !clippedCutout.isNull,
+      clippedCutout.width > 0,
+      clippedCutout.height > 0
+    {
+      path.addRect(clippedCutout)
+    }
     return path
   }
 }
