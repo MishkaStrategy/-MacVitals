@@ -149,15 +149,18 @@ schemes:
         MacVitalsFanProbe: all
         MacVitals: all
         MacVitalsTests: [test]
-        MacVitalsUITests: [test]
     test:
       gatherCoverageData: true
       language: en
       region: US
       targets:
         - MacVitalsTests
-        - MacVitalsUITests
     run:
       config: Debug
     archive:
       config: Release
+  MacVitalsUITestsBuild:
+    build:
+      targets:
+        MacVitals: all
+        MacVitalsUITests: all
