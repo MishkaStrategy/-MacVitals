@@ -206,4 +206,22 @@ nonisolated enum NotchHUDLayout {
       notchRightX: notchRight,
       shoulderRadius: max(0, shoulderRadius))
   }
+
+  static func hardwareCutoutRect(
+    in size: CGSize,
+    contourGeometry: NotchHUDContourGeometry,
+    lineThickness: CGFloat
+  ) -> CGRect {
+    let resolvedLineThickness = min(max(lineThickness, 1), maximumIndicatorLineThickness)
+    let halfLine = resolvedLineThickness / 2
+    let left = min(max(contourGeometry.notchLeftX + halfLine, 0), size.width)
+    let right = min(max(contourGeometry.notchRightX - halfLine, left), size.width)
+    let bottom = min(max(contourGeometry.bottomY - halfLine, 0), size.height)
+
+    return CGRect(
+      x: left,
+      y: 0,
+      width: max(0, right - left),
+      height: bottom)
+  }
 }
