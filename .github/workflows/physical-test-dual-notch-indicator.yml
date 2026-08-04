@@ -1,0 +1,145 @@
+name: Physical Test Exact Hardware Notch Contour
+
+on:
+  pull_request:
+    branches: [agent/hud-tile-editor]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-exact-hardware-notch-contour
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  physical-dual-notch-indicator:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-test-dual-notch-indicator'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    env:
+      APP_ARTIFACT_ID: '8882798498'
+      APP_ARTIFACT_DIGEST: '86970b955addcd983437e1070b91e682ce68f7f9424ed9ff17f4673f29e5a6a6'
+      FEATURE_HEAD_SHA: '2d1fbd0342689af1629e2ee9875e5e5238f37ea2'
+      SOURCE_WORKFLOW_COMMIT: 'fb378feab39f99f0c9adf071613d235eaa80fadf'
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Validate exact hardware contour source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -F 'static let minimumContourClearance: CGFloat = 0' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'static let maximumIndicatorLineThickness: CGFloat = 6' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'static func hardwareNotchGeometry(' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'let notchLeft = max(halfLine, hardwareNotchLeft - halfLine)' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'let notchRight = min(size.width - halfLine, hardwareNotchRight + halfLine)' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'let desiredBottomY = resolvedTop + minimumContourClearance + halfLine' \
+            MacVitals/MenuBar/NotchHUDLayout.swift
+          grep -F 'auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea' \
+            MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'auxiliaryTopRightArea: screen.auxiliaryTopRightArea' \
+            MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'state.notchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth' \
+            MacVitals/MenuBar/NotchHUDController.swift
+          grep -F 'path.move(to: CGPoint(x: leftX, y: topY))' \
+            MacVitals/MenuBar/NotchHUDViews.swift
+          grep -F 'path.addLine(to: CGPoint(x: leftX, y: bottomY - radius))' \
+            MacVitals/MenuBar/NotchHUDViews.swift
+          grep -F 'path.addLine(to: CGPoint(x: rightX, y: topY))' \
+            MacVitals/MenuBar/NotchHUDViews.swift
+          if grep -F 'path.move(to: CGPoint(x: rect.minX' MacVitals/MenuBar/NotchHUDViews.swift; then
+            echo 'Legacy outer horizontal contour is still present' >&2
+            exit 1
+          fi
+
+      - name: Materialize portable physical script
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/contents/.github/workflows/physical-test-dual-notch-indicator.yml?ref=${SOURCE_WORKFLOW_COMMIT}" \
+            > /tmp/source-workflow.json
+
+          python3 - <<'PY'
+          import base64
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('/tmp/source-workflow.json').read_text(encoding='utf-8'))
+          source = base64.b64decode(payload['content']).decode('utf-8').splitlines()
+          step = next(
+              index for index, line in enumerate(source)
+              if line.strip() == '- name: Validate physical single and dual indicator modes')
+          run_line = next(
+              index for index in range(step + 1, len(source))
+              if source[index].strip() == 'run: |')
+          end = next(
+              index for index in range(run_line + 1, len(source))
+              if source[index].startswith('      - name:'))
+          body = [
+              line[10:] if line.startswith('          ') else line
+              for line in source[run_line + 1:end]
+          ]
+          script = '\n'.join(body) + '\n'
+          replacements = {
+              "printf 'timestamp,cpu_percent,rss_kib,threads\\n'":
+                  "printf 'timestamp,cpu_percent,rss_kib\\n'",
+              'ps -p "${app_pid}" -o lstart=,%cpu=,rss=,thcount=':
+                  'ps -p "${app_pid}" -o lstart=,%cpu=,rss=',
+              '.rsplit(" ",3)': '.rsplit(" ",2)',
+              "expected_height = resolved_safe_area + (30 if expected_labels else 8)":
+                  "expected_height = resolved_safe_area + (32 if expected_labels else 20)",
+              "assert abs(d['frameWidth'] - 356) <= 3, d":
+                  "assert d['hardwareNotchWidth'] > 0, d\n"
+                  "assert math.isclose(d['resolvedNotchWidth'], d['hardwareNotchWidth'], abs_tol=0.5), d\n"
+                  "assert abs(d['frameWidth'] - (d['hardwareNotchWidth'] + 144)) <= 3, d",
+              "expected_x = d['screenX'] + (d['screenWidth'] - d['frameWidth']) / 2":
+                  "expected_x = d['hardwareNotchCenterX'] - d['frameWidth'] / 2",
+          }
+          for old, new in replacements.items():
+              if script.count(old) != 1:
+                  raise SystemExit(f'expected one physical script target: {old!r}')
+              script = script.replace(old, new, 1)
+          Path('/tmp/run-physical-dual-notch.sh').write_text(script, encoding='utf-8')
+          PY
+          grep -F "timestamp,cpu_percent,rss_kib" /tmp/run-physical-dual-notch.sh
+          grep -F 'ps -p "${app_pid}" -o lstart=,%cpu=,rss=' /tmp/run-physical-dual-notch.sh
+          grep -F '32 if expected_labels else 20' /tmp/run-physical-dual-notch.sh
+          grep -F "d['hardwareNotchWidth'] + 144" /tmp/run-physical-dual-notch.sh
+          grep -F "d['hardwareNotchCenterX'] - d['frameWidth'] / 2" /tmp/run-physical-dual-notch.sh
+          bash -n /tmp/run-physical-dual-notch.sh
+
+      - name: Validate physical single and dual indicator modes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash /tmp/run-physical-dual-notch.sh
+
+      - name: Upload physical evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-exact-hardware-notch-contour-evidence
+          path: physical-evidence/
+          if-no-files-found: error
+          retention-days: 30
