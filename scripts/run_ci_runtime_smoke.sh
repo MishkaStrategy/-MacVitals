@@ -8,6 +8,8 @@ WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
 DURATION_SECONDS="${CI_RUNTIME_DURATION_SECONDS:-45}"
 INTERVAL_SECONDS="${CI_RUNTIME_INTERVAL_SECONDS:-2}"
 OUTPUT_ROOT="${CI_RUNTIME_OUTPUT_ROOT:-${ROOT_DIR}/runtime-smoke-results}"
+SCENARIO="${CI_RUNTIME_SCENARIO:-packaged-runtime-smoke}"
+SOURCE_SHA="${GITHUB_SHA:-unknown}"
 app_pid=""
 
 cleanup() {
@@ -45,6 +47,13 @@ done
   echo "Runtime interval must be a positive number of seconds: ${INTERVAL_SECONDS}" >&2
   exit 2
 }
+[[ "${SCENARIO}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+  echo "Runtime scenario contains unsafe characters: ${SCENARIO}" >&2
+  exit 2
+}
+if [[ ! "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  SOURCE_SHA="unknown"
+fi
 [[ -d "${APP_PATH}" ]] || {
   echo "Packaged application is missing" >&2
   exit 1
@@ -138,6 +147,12 @@ python3 "${ROOT_DIR}/scripts/validate_runtime_metrics_hardened.py" \
   --maximum-interval-multiplier "${CI_RUNTIME_MAXIMUM_INTERVAL_MULTIPLIER:-6}" \
   | tee "${VALIDATION_LOG}"
 
+python3 "${ROOT_DIR}/scripts/report_runtime_resources.py" \
+  "${summary_path}" \
+  --scenario "${SCENARIO}" \
+  --source-sha "${SOURCE_SHA}" \
+  --output "${OUTPUT_ROOT}/resource-summary.json"
+
 EVIDENCE_ROOT="${OUTPUT_ROOT}" python3 - <<'PY'
 import os
 import re
@@ -162,32 +177,5 @@ if violations:
     )
 print("Runtime evidence privacy validation passed")
 PY
-
-if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  SUMMARY_PATH="${summary_path}" WARMUP_SECONDS="${WARMUP_SECONDS}" python3 - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
-import json
-import os
-from pathlib import Path
-
-summary = json.loads(Path(os.environ["SUMMARY_PATH"]).read_text(encoding="utf-8"))
-metrics = summary["metrics"]
-observed = summary["observed"]
-print("## Runtime smoke guardrail")
-print()
-print("Hosted-runner regression evidence only; this is not a physical-device benchmark.")
-print(f"A {float(os.environ['WARMUP_SECONDS']):.1f}-second warmup preceded measurement.")
-print()
-print("| Metric | Observed |")
-print("|---|---:|")
-print(f"| Samples | {observed['sampleCount']} |")
-print(f"| Duration | {observed['durationSeconds']:.1f} s |")
-print(f"| Mean process CPU | {metrics['cpuPercent']['mean']:.2f}% |")
-print(f"| p95 process CPU | {metrics['cpuPercent']['p95']:.2f}% |")
-print(f"| Peak RSS | {metrics['residentMemoryKiB']['max'] / 1024:.2f} MiB |")
-print(f"| RSS growth | {metrics['residentMemoryKiB']['growth'] / 1024:.2f} MiB |")
-threads = metrics["threads"]["max"]
-print(f"| Peak threads | {threads:.0f} |" if threads is not None else "| Peak threads | unavailable |")
-PY
-fi
 
 echo "Runtime smoke artifacts were generated."
