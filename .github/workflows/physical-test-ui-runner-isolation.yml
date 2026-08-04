@@ -73,15 +73,33 @@ jobs:
           }
           trap cleanup EXIT
 
-          started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
-          printf 'product_head=%s\nartifact_id=%s\nstarted_at_utc=%s\nduration_seconds=%s\n' \
-            "${PRODUCT_HEAD_SHA}" "${APP_ARTIFACT_ID}" "${started_at}" "${TEST_DURATION_SECONDS}" \
+          setup_started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
+          printf 'product_head=%s\nartifact_id=%s\nsetup_started_at_utc=%s\nduration_seconds=%s\n' \
+            "${PRODUCT_HEAD_SHA}" "${APP_ARTIFACT_ID}" "${setup_started_at}" "${TEST_DURATION_SECONDS}" \
             > "${evidence}/metadata.txt"
 
-          if pgrep -f 'MacVitalsUITests-Runner' > "${evidence}/runner-process-before.txt" 2>&1; then
-            echo 'A MacVitalsUITests-Runner process already exists before the test' >&2
+          stale_runner_pids="$(pgrep -f 'MacVitalsUITests-Runner' || true)"
+          if [[ -n "${stale_runner_pids}" ]]; then
+            ps -p "$(echo "${stale_runner_pids}" | paste -sd, -)" -o pid=,ppid=,comm=,args= \
+              > "${evidence}/stale-runner-processes.txt" 2>&1 || true
+            while IFS= read -r stale_pid; do
+              [[ -n "${stale_pid}" ]] || continue
+              kill "${stale_pid}" 2>/dev/null || true
+            done <<< "${stale_runner_pids}"
+            sleep 2
+            while IFS= read -r stale_pid; do
+              [[ -n "${stale_pid}" ]] || continue
+              kill -9 "${stale_pid}" 2>/dev/null || true
+            done <<< "${stale_runner_pids}"
+          else
+            : > "${evidence}/stale-runner-processes.txt"
+          fi
+          if pgrep -f 'MacVitalsUITests-Runner' > "${evidence}/runner-process-after-cleanup.txt" 2>&1; then
+            echo 'Unable to terminate stale MacVitalsUITests-Runner process before observation' >&2
             exit 1
           fi
+          started_at="$(date '+%Y-%m-%d %H:%M:%S')"
+          printf 'observation_started_at=%s\n' "${started_at}" >> "${evidence}/metadata.txt"
 
           find "${HOME}/Library/Developer/Xcode/DerivedData" \
             -type d -name 'MacVitalsUITests-Runner.app' -print \
