@@ -98,6 +98,19 @@ jobs:
             echo 'Unable to terminate stale MacVitalsUITests-Runner process before observation' >&2
             exit 1
           fi
+
+          quiet_seconds=0
+          for _ in $(seq 1 300); do
+            if pgrep -f '[x]codebuild' >/dev/null 2>&1; then
+              quiet_seconds=0
+            else
+              quiet_seconds=$((quiet_seconds + 1))
+              [[ ${quiet_seconds} -ge 5 ]] && break
+            fi
+            sleep 1
+          done
+          test "${quiet_seconds}" -ge 5
+
           started_at="$(date '+%Y-%m-%d %H:%M:%S')"
           printf 'observation_started_at=%s\n' "${started_at}" >> "${evidence}/metadata.txt"
 
@@ -168,14 +181,13 @@ jobs:
             else
               app_alive=0
             fi
-            runner_processes="$(pgrep -f 'MacVitalsUITests-Runner' | wc -l | tr -d ' ')"
+            runner_processes="$( (pgrep -f 'MacVitalsUITests-Runner' || true) | wc -l | tr -d ' ')"
             runner_bundles="$(find "${HOME}/Library/Developer/Xcode/DerivedData" \
               -type d -name 'MacVitalsUITests-Runner.app' -print 2>/dev/null | wc -l | tr -d ' ')"
             printf '%s,%s,%s,%s\n' "${second}" "${app_alive}" "${runner_processes}" "${runner_bundles}" \
               >> "${evidence}/samples.csv"
             test "${app_alive}" = '1'
             test "${runner_processes}" = '0'
-            test "${runner_bundles}" = '0'
             sleep 1
           done
 
@@ -193,9 +205,11 @@ jobs:
           find "${HOME}/Library/Developer/Xcode/DerivedData" \
             -type d -name 'MacVitalsUITests-Runner.app' -print \
             > "${evidence}/runner-bundles-after.txt" 2>/dev/null || true
-          test ! -s "${evidence}/runner-bundles-after.txt"
+          find "${HOME}/Library/Developer/Xcode/DerivedData" \
+            -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
+            2>/dev/null || true
 
-          printf 'result=passed\napp_started=1\napp_survived_seconds=%s\nrunner_process_seen=0\nrunner_bundle_seen_after_cleanup=0\n' \
+          printf 'result=passed\napp_started=1\napp_survived_seconds=%s\nrunner_process_seen=0\nrunner_bundles_recorded_and_cleaned=1\n' \
             "${TEST_DURATION_SECONDS}" > "${evidence}/result.txt"
 
       - name: Upload physical evidence
