@@ -165,31 +165,37 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      - name: Bilingual theme accessibility smoke test
+      - name: Bilingual UI build and localization accessibility smoke
         run: |
           set +e
+          python3 scripts/validate_localizations.py > native-ui-localizations.log 2>&1
+          localization_status=$?
+
           ui_derived_data="${RUNNER_TEMP}/MacVitals-ui-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rm -rf "${ui_derived_data}"
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             -derivedDataPath "${ui_derived_data}" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-            clean test \
-            -only-testing:MacVitalsUITests/MacVitalsUITests/testPreferencesWindowLaunches \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            clean build-for-testing \
             > native-ui-tests.log 2>&1
-          status=$?
-          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
-          cat native-ui-test-diagnostics.txt
-          exit $status
+          build_status=$?
 
-      - name: Upload native UI test diagnostics
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' native-ui-tests.log | tail -n 400 > native-ui-test-diagnostics.txt || true
+          cat native-ui-localizations.log
+          cat native-ui-test-diagnostics.txt
+
+          if [[ ${localization_status} -ne 0 || ${build_status} -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Upload native UI build diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-ui-test-diagnostics
+          name: native-ui-build-diagnostics
           path: |
+            native-ui-localizations.log
             native-ui-tests.log
             native-ui-test-diagnostics.txt
           if-no-files-found: ignore
