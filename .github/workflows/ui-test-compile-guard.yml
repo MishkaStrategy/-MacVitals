@@ -1,0 +1,118 @@
+name: UI Test Compile Guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ui-test-compile-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile-ui-tests-without-launch:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Validate scheme isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+          require 'yaml'
+          project = YAML.load_file('project.yml')
+          schemes = project.fetch('schemes')
+          main = schemes.fetch('MacVitals')
+          main_build = main.fetch('build').fetch('targets')
+          main_tests = main.fetch('test').fetch('targets')
+          ui_build = schemes.fetch('MacVitalsUITestsBuild')
+
+          abort 'MacVitalsUITests must not be in the main build action' if main_build.key?('MacVitalsUITests')
+          abort 'MacVitalsUITests must not be in the main test action' if main_tests.include?('MacVitalsUITests')
+          abort 'MacVitalsUITestsBuild must not have a test action' if ui_build.key?('test')
+          abort 'MacVitalsUITestsBuild must compile MacVitalsUITests' unless ui_build.fetch('build').fetch('targets').key?('MacVitalsUITests')
+          RUBY
+
+      - name: Remove stale UI test runners
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkill -x MacVitalsUITests-Runner 2>/dev/null || true
+          roots=(
+            "${HOME}/Library/Developer/Xcode/DerivedData"
+            "${RUNNER_TEMP}"
+          )
+          for root in "${roots[@]}"; do
+            [[ -d "${root}" ]] || continue
+            find "${root}" -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + 2>/dev/null || true
+          done
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Compile UI tests without test action
+        shell: bash
+        run: |
+          set +e
+          derived_data="${RUNNER_TEMP}/MacVitals-ui-compile-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${derived_data}"
+
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsUITestsBuild \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${derived_data}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build \
+            > ui-test-compile.log 2>&1
+          build_status=$?
+
+          runner_status=0
+          if pgrep -x MacVitalsUITests-Runner >/dev/null 2>&1; then
+            echo 'MacVitalsUITests-Runner was launched unexpectedly' >&2
+            pkill -x MacVitalsUITests-Runner 2>/dev/null || true
+            runner_status=1
+          fi
+
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' \
+            ui-test-compile.log | tail -n 400 > ui-test-compile-diagnostics.txt || true
+          cat ui-test-compile-diagnostics.txt
+
+          find "${derived_data}" -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf "${derived_data}"
+
+          if [[ ${build_status} -ne 0 || ${runner_status} -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Upload UI compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-test-compile-diagnostics
+          path: |
+            ui-test-compile.log
+            ui-test-compile-diagnostics.txt
+          if-no-files-found: ignore
+
+      - name: Final UI runner cleanup
+        if: always()
+        shell: bash
+        run: |
+          pkill -x MacVitalsUITests-Runner 2>/dev/null || true
+          find "${HOME}/Library/Developer/Xcode/DerivedData" \
+            -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
+            2>/dev/null || true
