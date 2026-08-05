@@ -177,18 +177,18 @@ jobs:
 
           status_image="${screenshot_dir}/status-bar-overview.png"
           hud_image="${screenshot_dir}/notch-hud.png"
-          swift "${crop_script}" "${status_image}" 900 820 right
-          swift "${crop_script}" "${hud_image}" 1200 340 center
+          swift "${crop_script}" "${status_image}" 640 820 right
+          swift "${crop_script}" "${hud_image}" 1200 120 center
 
           test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 6
           for image in "${screenshot_dir}"/preferences-*.png; do
             test "$(sips -g pixelWidth "${image}" | awk '/pixelWidth/ {print $2}')" -eq 900
             test "$(sips -g pixelHeight "${image}" | awk '/pixelHeight/ {print $2}')" -eq 728
           done
-          test "$(sips -g pixelWidth "${status_image}" | awk '/pixelWidth/ {print $2}')" -eq 900
+          test "$(sips -g pixelWidth "${status_image}" | awk '/pixelWidth/ {print $2}')" -eq 640
           test "$(sips -g pixelHeight "${status_image}" | awk '/pixelHeight/ {print $2}')" -eq 820
           test "$(sips -g pixelWidth "${hud_image}" | awk '/pixelWidth/ {print $2}')" -eq 1200
-          test "$(sips -g pixelHeight "${hud_image}" | awk '/pixelHeight/ {print $2}')" -eq 340
+          test "$(sips -g pixelHeight "${hud_image}" | awk '/pixelHeight/ {print $2}')" -eq 120
 
       - name: Upload screenshot diagnostics
         if: always()
