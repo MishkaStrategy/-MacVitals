@@ -105,8 +105,17 @@ nonisolated enum ProcessCounterCalculator {
   }
 
   static func normalizedScores(_ values: [Double]) -> [Double] {
-    let sanitized = values.map { $0.isFinite ? max(0, $0) : 0 }
-    guard let maximum = sanitized.max(), maximum > 0 else {
+    var sanitized: [Double] = []
+    sanitized.reserveCapacity(values.count)
+    var maximum = 0.0
+
+    for value in values {
+      let resolved = value.isFinite ? max(0, value) : 0
+      sanitized.append(resolved)
+      maximum = max(maximum, resolved)
+    }
+
+    guard maximum > 0 else {
       return Array(repeating: 0, count: values.count)
     }
     return sanitized.map { min(100, max(0, $0 / maximum * 100)) }
@@ -196,6 +205,13 @@ actor ProcessMetricsProvider {
     var graphicsSignal = 0.0
   }
 
+  private static let strongGraphicsKeywords = [
+    "gpu", "metal", "coreanimation", "windowserver",
+  ]
+  private static let moderateGraphicsKeywords = [
+    "renderer", "render", "webcontent", "video", "media",
+  ]
+
   private var previousTimestamp: Date?
   private var previousSamples: [ProcessIdentity: ProcessCounterSample] = [:]
 
@@ -207,14 +223,16 @@ actor ProcessMetricsProvider {
   func sample(runningApplications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     let now = Date()
     let samplesByPID = ProcessCollectionSanitizer.samplesByPID(readAllProcesses())
-    let samples = Array(samplesByPID.values)
     let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
     let applicationsByPID = ProcessCollectionSanitizer.applicationsByPID(runningApplications)
     var accumulators: [String: ApplicationAccumulator] = [:]
+    var nextPreviousSamples: [ProcessIdentity: ProcessCounterSample] = [:]
+    nextPreviousSamples.reserveCapacity(samplesByPID.count)
     var energyCountersAvailable = false
 
-    for sample in samples {
+    for sample in samplesByPID.values {
       let identity = ProcessIdentity(pid: sample.pid, startTime: sample.startTime)
+      nextPreviousSamples[identity] = sample
       let counters = ProcessCounterCalculator.delta(
         previous: previousSamples[identity],
         current: sample,
@@ -240,9 +258,7 @@ actor ProcessMetricsProvider {
     }
 
     previousTimestamp = now
-    previousSamples = samples.reduce(into: [:]) { result, sample in
-      result[ProcessIdentity(pid: sample.pid, startTime: sample.startTime)] = sample
-    }
+    previousSamples = nextPreviousSamples
 
     let ordered = accumulators.values.sorted {
       if $0.cpuPercent == $1.cpuPercent {
@@ -289,7 +305,7 @@ actor ProcessMetricsProvider {
     return ProcessMetricsSnapshot(
       timestamp: now,
       applications: applications,
-      sampledProcessCount: samples.count,
+      sampledProcessCount: samplesByPID.count,
       energyCountersAvailable: energyCountersAvailable)
   }
 
@@ -405,10 +421,8 @@ actor ProcessMetricsProvider {
 
   private func graphicsSignal(processName: String) -> Double {
     let name = processName.lowercased()
-    let strongKeywords = ["gpu", "metal", "coreanimation", "windowserver"]
-    if strongKeywords.contains(where: name.contains) { return 1.25 }
-    let moderateKeywords = ["renderer", "render", "webcontent", "video", "media"]
-    if moderateKeywords.contains(where: name.contains) { return 0.55 }
+    if Self.strongGraphicsKeywords.contains(where: name.contains) { return 1.25 }
+    if Self.moderateGraphicsKeywords.contains(where: name.contains) { return 0.55 }
     return 0
   }
 }
