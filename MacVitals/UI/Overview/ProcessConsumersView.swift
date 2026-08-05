@@ -5,16 +5,23 @@ import SwiftUI
 actor ProcessMetricsSamplingCenter {
   static let shared = ProcessMetricsSamplingCenter()
 
+  private struct InFlightSample {
+    let id: UUID
+    let task: Task<ProcessMetricsSnapshot, Never>
+  }
+
   private let provider = ProcessMetricsProvider()
   private var subscribers: Set<UUID> = []
   private var cachedSnapshot: ProcessMetricsSnapshot = .empty
-  private var inFlight: Task<ProcessMetricsSnapshot, Never>?
+  private var inFlight: InFlightSample?
 
   func subscribe(_ id: UUID) async {
     let wasIdle = subscribers.isEmpty
     subscribers.insert(id)
     if wasIdle {
       cachedSnapshot = .empty
+      inFlight?.task.cancel()
+      inFlight = nil
       await provider.reset()
     }
   }
@@ -23,7 +30,7 @@ actor ProcessMetricsSamplingCenter {
     subscribers.remove(id)
     if subscribers.isEmpty {
       cachedSnapshot = .empty
-      inFlight?.cancel()
+      inFlight?.task.cancel()
       inFlight = nil
     }
   }
@@ -40,17 +47,21 @@ actor ProcessMetricsSamplingCenter {
     }
 
     if let inFlight {
-      return await inFlight.value
+      return await inFlight.task.value
     }
 
     let provider = self.provider
+    let requestID = UUID()
     let task = Task {
       await provider.sample(runningApplications: runningApplications)
     }
-    inFlight = task
+    inFlight = InFlightSample(id: requestID, task: task)
     let snapshot = await task.value
-    cachedSnapshot = snapshot
-    inFlight = nil
+
+    if inFlight?.id == requestID {
+      cachedSnapshot = subscribers.isEmpty ? .empty : snapshot
+      inFlight = nil
+    }
     return snapshot
   }
 }
