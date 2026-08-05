@@ -2,15 +2,15 @@ name: README Screenshots
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches:
-      - agent/readme-real-hud-statusbar
+      - feature/macvitals-v1
     paths:
       - .github/workflows/readme-screenshots.yml
       - MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests.swift
 
 concurrency:
-  group: readme-screenshots-${{ github.ref }}
+  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     env:
-      TARGET_BRANCH: ${{ github.ref_name }}
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -166,8 +166,8 @@ jobs:
 
       - name: Commit real application screenshots
         run: |
-          if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ]; then
-            echo "Refusing to auto-commit README screenshots directly to main"
+          if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ] || [ "${TARGET_BRANCH}" = "feature/macvitals-v1" ]; then
+            echo "Refusing to auto-commit README screenshots to a protected branch"
             exit 1
           fi
           git config user.name "github-actions[bot]"
