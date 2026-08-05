@@ -14,10 +14,10 @@ nonisolated final class SmartBatteryRegistryCache: @unchecked Sendable {
 
   init(
     freshnessInterval: TimeInterval = 0.25,
-    reader: @escaping Reader = SmartBatteryRegistryCache.readRegistry
+    reader: Reader? = nil
   ) {
     self.freshnessInterval = max(0, freshnessInterval)
-    self.reader = reader
+    self.reader = reader ?? Self.readRegistry
   }
 
   func snapshot(
