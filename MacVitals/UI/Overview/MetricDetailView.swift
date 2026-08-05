@@ -69,27 +69,6 @@ private enum MetricHistoryRange: String, CaseIterable, Identifiable {
   }
 }
 
-private struct FanHistoryChartPoint: Identifiable {
-  let id: UUID
-  let timestamp: Date
-  let value: Double
-  let fanIndex: Int
-  let segment: Int
-
-  var seriesKey: String { "fan-\(fanIndex)-segment-\(segment)" }
-  var fanLabel: String { L10n.format("Fan %d", fanIndex + 1) }
-}
-
-private struct PowerHistoryChartPoint: Identifiable {
-  let id = UUID()
-  let timestamp: Date
-  let value: Double
-  let series: String
-  let segment: Int
-
-  var seriesKey: String { "\(series)-\(segment)" }
-}
-
 struct MetricDetailView: View {
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var coordinator: MetricsCoordinator
@@ -114,10 +93,11 @@ struct MetricDetailView: View {
       case .power:
         powerDetail
       default:
+        let chartModel = metricChartModel
         metricChart(
-          points: HistoryChartSegmentation.points(from: metricHistory),
+          points: chartModel.points,
           title: kind.title,
-          yDomain: metricYDomain)
+          yDomain: chartModel.yDomain)
           .frame(height: 205)
         if kind == .battery { batteryBreakdown }
         if let processMetric {
@@ -263,10 +243,11 @@ struct MetricDetailView: View {
         }
       }
 
+      let chartModel = selectedTemperatureChartModel
       metricChart(
-        points: HistoryChartSegmentation.points(from: selectedTemperatureHistory),
+        points: chartModel.points,
         title: selectedTemperatureSensor?.name ?? kind.title,
-        yDomain: temperatureYDomain)
+        yDomain: chartModel.yDomain)
         .frame(height: 210)
 
       HStack {
@@ -368,10 +349,11 @@ struct MetricDetailView: View {
 
   @ViewBuilder
   private var powerChart: some View {
-    if powerPoints.isEmpty {
+    let model = powerChartModel
+    if model.points.isEmpty {
       unavailableChart
     } else {
-      Chart(powerPoints) { point in
+      Chart(model.points) { point in
         LineMark(
           x: .value("Time", point.timestamp),
           y: .value("W", point.value),
@@ -381,7 +363,7 @@ struct MetricDetailView: View {
         RuleMark(y: .value("Zero", 0))
           .foregroundStyle(.secondary.opacity(0.35))
       }
-      .chartYScale(domain: powerYDomain)
+      .chartYScale(domain: model.yDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 5))
@@ -467,11 +449,12 @@ struct MetricDetailView: View {
 
   @ViewBuilder
   private var fanChart: some View {
-    if fanPoints.isEmpty {
+    let model = fanChartModel
+    if model.points.isEmpty {
       unavailableChart
         .frame(height: 130)
     } else {
-      Chart(fanPoints) { point in
+      Chart(model.points) { point in
         LineMark(
           x: .value("Time", point.timestamp),
           y: .value("RPM", point.value),
@@ -480,7 +463,7 @@ struct MetricDetailView: View {
         .foregroundStyle(by: .value("Fans", point.fanLabel))
         .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
       }
-      .chartYScale(domain: fanYDomain)
+      .chartYScale(domain: model.yDomain)
       .chartXAxis { chartXAxis }
       .chartYAxis {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 4))
@@ -516,11 +499,6 @@ struct MetricDetailView: View {
     }
   }
 
-  private func filtered(_ history: [TimedPoint]) -> [TimedPoint] {
-    let cutoff = Date().addingTimeInterval(-selectedRange.duration)
-    return history.filter { $0.timestamp >= cutoff }
-  }
-
   private var processMetric: ProcessConsumerMetric? {
     switch kind {
     case .cpu: return .cpu
@@ -531,21 +509,21 @@ struct MetricDetailView: View {
     }
   }
 
-  private var metricHistory: [TimedPoint] {
-    switch kind {
-    case .cpu: return filtered(coordinator.cpuHistory)
-    case .memory: return filtered(coordinator.memoryHistory)
-    case .gpu: return filtered(coordinator.gpuHistory)
-    case .battery: return filtered(coordinator.batteryHistory)
-    case .temperature: return selectedTemperatureHistory
-    case .fans, .power: return []
-    }
+  private var metricChartModel: ScalarHistoryChartModel {
+    MetricHistoryChartModelBuilder.scalar(
+      history: metricSourceHistory,
+      cutoff: historyCutoff,
+      yDomain: 0...100)
   }
 
-  private var metricYDomain: ClosedRange<Double> {
+  private var metricSourceHistory: [TimedPoint] {
     switch kind {
-    case .temperature: return temperatureYDomain
-    default: return 0...100
+    case .cpu: return coordinator.cpuHistory
+    case .memory: return coordinator.memoryHistory
+    case .gpu: return coordinator.gpuHistory
+    case .battery: return coordinator.batteryHistory
+    case .temperature: return selectedTemperatureHistory
+    case .fans, .power: return []
     }
   }
 
@@ -563,8 +541,8 @@ struct MetricDetailView: View {
   }
 
   private var selectedTemperatureHistory: [TimedPoint] {
-    guard let id = selectedTemperatureSensor?.id else { return filtered(coordinator.temperatureHistory) }
-    return filtered(coordinator.temperatureSensorHistory[id] ?? [])
+    guard let id = selectedTemperatureSensor?.id else { return coordinator.temperatureHistory }
+    return coordinator.temperatureSensorHistory[id] ?? []
   }
 
   private func chooseInitialTemperatureSensor() {
@@ -584,60 +562,36 @@ struct MetricDetailView: View {
     return sensor.name
   }
 
-  private var temperatureYDomain: ClosedRange<Double> {
-    let values = selectedTemperatureHistory.compactMap(\.value)
-    guard let minimum = values.min(), let maximum = values.max() else { return 0...120 }
-    let lower = max(-10, floor(minimum / 10) * 10 - 10)
-    let upper = min(140, max(lower + 20, ceil(maximum / 10) * 10 + 10))
-    return lower...upper
+  private var selectedTemperatureChartModel: ScalarHistoryChartModel {
+    MetricHistoryChartModelBuilder.temperature(
+      history: selectedTemperatureHistory,
+      cutoff: historyCutoff)
   }
 
-  private var fanPoints: [FanHistoryChartPoint] {
-    coordinator.fanHistory
-      .sorted { $0.key < $1.key }
-      .flatMap { index, history in
-        HistoryChartSegmentation.points(from: filtered(history))
-          .map { point in
-            FanHistoryChartPoint(
-              id: point.id,
-              timestamp: point.timestamp,
-              value: point.value,
-              fanIndex: index,
-              segment: point.segment)
-          }
-      }
+  private var fanChartModel: FanHistoryChartModel {
+    MetricHistoryChartModelBuilder.fans(
+      histories: coordinator.fanHistory,
+      cutoff: historyCutoff)
   }
 
-  private var fanYDomain: ClosedRange<Double> {
-    let values = fanPoints.map(\.value)
-    guard let minimum = values.min(), let maximum = values.max() else { return 0...8_000 }
-    let lower = max(0, floor((minimum - 500) / 500) * 500)
-    let upper = max(lower + 1_000, ceil((maximum + 500) / 500) * 500)
-    return lower...upper
+  private var powerChartModel: PowerHistoryChartModel {
+    MetricHistoryChartModelBuilder.power(
+      series: [
+        PowerHistorySeries(
+          name: L10n.string("System consumption"),
+          history: coordinator.systemPowerHistory),
+        PowerHistorySeries(
+          name: L10n.string("Battery flow"),
+          history: coordinator.batteryPowerHistory),
+        PowerHistorySeries(
+          name: L10n.string("Adapter input"),
+          history: coordinator.adapterInputPowerHistory),
+      ],
+      cutoff: historyCutoff)
   }
 
-  private var powerPoints: [PowerHistoryChartPoint] {
-    let series: [(String, [TimedPoint])] = [
-      (L10n.string("System consumption"), coordinator.systemPowerHistory),
-      (L10n.string("Battery flow"), coordinator.batteryPowerHistory),
-      (L10n.string("Adapter input"), coordinator.adapterInputPowerHistory),
-    ]
-    return series.flatMap { name, history in
-      HistoryChartSegmentation.points(from: filtered(history)).map { point in
-        PowerHistoryChartPoint(
-          timestamp: point.timestamp,
-          value: point.value,
-          series: name,
-          segment: point.segment)
-      }
-    }
-  }
-
-  private var powerYDomain: ClosedRange<Double> {
-    let values = powerPoints.map(\.value) + [0]
-    guard let minimum = values.min(), let maximum = values.max() else { return -20...100 }
-    let padding = max(5, (maximum - minimum) * 0.15)
-    return floor(minimum - padding)...ceil(maximum + padding)
+  private var historyCutoff: Date {
+    Date().addingTimeInterval(-selectedRange.duration)
   }
 
   private var currentBatteryPower: Double? {
