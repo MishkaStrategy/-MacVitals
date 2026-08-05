@@ -175,9 +175,7 @@ final class StatusItemController: NSObject {
         snapshot: snapshot,
         metrics: normalized)
       if statusSegments != lastStatusSegments {
-        button.image = MenuBarStatusTitleRenderer.lightImage(
-          snapshot: snapshot,
-          metrics: normalized)
+        button.image = MenuBarStatusTitleRenderer.lightImage(segments: statusSegments)
         lastStatusSegments = statusSegments
       }
 
