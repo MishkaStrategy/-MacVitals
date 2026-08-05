@@ -25,7 +25,7 @@ concurrency:
 jobs:
   exact-long-idle-baseline:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 140
+    timeout-minutes: 180
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
@@ -86,7 +86,7 @@ jobs:
           bash scripts/run_exact_long_idle_baseline.sh \
             "${APP_PATH}" \
             "${SOURCE_SHA}" \
-            "${RESULTS_ROOT}" | tee long-idle-baseline.log
+            "${RESULTS_ROOT}" 2>&1 | tee long-idle-baseline.log
 
       - name: Validate evidence contract
         if: always()
