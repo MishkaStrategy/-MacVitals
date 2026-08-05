@@ -43,7 +43,13 @@ nonisolated enum MenuBarStatusTitleRenderer {
     snapshot: SystemSnapshot,
     metrics: [MenuMetric]
   ) -> NSImage {
-    let resolvedSegments = segments(snapshot: snapshot, metrics: metrics)
+    lightImage(segments: segments(snapshot: snapshot, metrics: metrics))
+  }
+
+  @MainActor
+  static func lightImage(
+    segments resolvedSegments: [MenuBarStatusSegment]
+  ) -> NSImage {
     let drawableSegments = resolvedSegments.isEmpty
       ? [MenuBarStatusSegment(metric: .cpu, state: .normal, value: "")]
       : resolvedSegments
