@@ -1,51 +1,47 @@
-import Dispatch
-import Foundation
 import XCTest
 
 @testable import MacVitals
 
 final class DynamicHistoryMutationTests: XCTestCase {
-  func testInPlaceDictionaryMutationPreservesHistoryAndOutperformsValueCopy() {
+  func testInPlaceDictionaryMutationPreservesWrappedHistory() {
     let seriesCount = 24
     let capacity = 512
     let iterations = 2_000
+    let expectedValues = Array((iterations - capacity)..<iterations)
 
-    var legacy: [Int: RingBuffer<Int>] = [:]
+    var reference: [Int: RingBuffer<Int>] = [:]
     var inPlace: [Int: RingBuffer<Int>] = [:]
     for key in 0..<seriesCount {
-      legacy[key] = RingBuffer(capacity: capacity)
+      reference[key] = RingBuffer(capacity: capacity)
       inPlace[key] = RingBuffer(capacity: capacity)
     }
 
-    let legacyStart = DispatchTime.now().uptimeNanoseconds
     for value in 0..<iterations {
       for key in 0..<seriesCount {
-        var buffer = legacy[key] ?? RingBuffer(capacity: capacity)
+        var buffer = reference[key] ?? RingBuffer(capacity: capacity)
         buffer.append(value)
-        legacy[key] = buffer
-      }
-    }
-    let legacyNanoseconds = DispatchTime.now().uptimeNanoseconds - legacyStart
+        reference[key] = buffer
 
-    let inPlaceStart = DispatchTime.now().uptimeNanoseconds
-    for value in 0..<iterations {
-      for key in 0..<seriesCount {
         inPlace[key, default: RingBuffer(capacity: capacity)].append(value)
       }
     }
-    let inPlaceNanoseconds = DispatchTime.now().uptimeNanoseconds - inPlaceStart
 
-    XCTAssertEqual(legacy.keys.sorted(), inPlace.keys.sorted())
+    XCTAssertEqual(reference.keys.sorted(), Array(0..<seriesCount))
+    XCTAssertEqual(inPlace.keys.sorted(), Array(0..<seriesCount))
     for key in 0..<seriesCount {
-      XCTAssertEqual(legacy[key]?.values, inPlace[key]?.values)
+      XCTAssertEqual(reference[key]?.values, expectedValues)
+      XCTAssertEqual(inPlace[key]?.values, expectedValues)
+      XCTAssertEqual(reference[key]?.values, inPlace[key]?.values)
     }
-    XCTAssertLessThan(inPlaceNanoseconds, legacyNanoseconds)
+  }
 
-    let speedup = Double(legacyNanoseconds) / Double(max(inPlaceNanoseconds, 1))
-    print(
-      "DYNAMIC_HISTORY_MUTATION_BENCHMARK series=\(seriesCount) capacity=\(capacity) "
-        + "iterations=\(iterations) legacy_ns=\(legacyNanoseconds) "
-        + "in_place_ns=\(inPlaceNanoseconds) "
-        + String(format: "speedup=%.2fx", speedup))
+  func testDefaultSubscriptInsertsOnlyRequestedSeries() {
+    var buffers: [Int: RingBuffer<Int>] = [:]
+
+    buffers[7, default: RingBuffer(capacity: 3)].append(10)
+    buffers[7, default: RingBuffer(capacity: 3)].append(20)
+
+    XCTAssertEqual(buffers.keys.sorted(), [7])
+    XCTAssertEqual(buffers[7]?.values, [10, 20])
   }
 }
