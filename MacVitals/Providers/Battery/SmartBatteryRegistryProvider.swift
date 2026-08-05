@@ -1,55 +1,55 @@
 import Foundation
 import IOKit
 
-nonisolated struct SmartBatteryRegistrySnapshot: Sendable, Equatable {
-  let voltageMillivolts: Double?
-  let amperageMilliamps: Double?
-  let designCapacityMah: Double?
-  let maximumCapacityMah: Double?
-  let currentCapacityMah: Double?
-  let temperatureRaw: Double?
-  let cycleCount: Int?
-  let systemLoadMilliwatts: Double?
-  let systemInputMilliwatts: Double?
+nonisolated final class SmartBatteryRegistryCache: @unchecked Sendable {
+  typealias Reader = () -> [String: Any]
 
-  static let empty = SmartBatteryRegistrySnapshot(
-    voltageMillivolts: nil,
-    amperageMilliamps: nil,
-    designCapacityMah: nil,
-    maximumCapacityMah: nil,
-    currentCapacityMah: nil,
-    temperatureRaw: nil,
-    cycleCount: nil,
-    systemLoadMilliwatts: nil,
-    systemInputMilliwatts: nil)
-}
+  static let shared = SmartBatteryRegistryCache()
 
-nonisolated enum SmartBatteryRegistryDecoder {
-  static func decode(_ properties: [String: Any]) -> SmartBatteryRegistrySnapshot {
-    let telemetry = properties["PowerTelemetryData"] as? [String: Any]
-    return SmartBatteryRegistrySnapshot(
-      voltageMillivolts: BatteryValueNormalizer.finiteNumber(properties["Voltage"]),
-      amperageMilliamps: BatteryValueNormalizer.finiteNumber(
-        properties["Amperage"] ?? properties["InstantAmperage"]),
-      designCapacityMah: BatteryValueNormalizer.finiteNumber(properties["DesignCapacity"]),
-      maximumCapacityMah: BatteryValueNormalizer.finiteNumber(
-        properties["AppleRawMaxCapacity"] ?? properties["MaxCapacity"]),
-      currentCapacityMah: BatteryValueNormalizer.finiteNumber(
-        properties["AppleRawCurrentCapacity"] ?? properties["CurrentCapacity"]),
-      temperatureRaw: BatteryValueNormalizer.finiteNumber(properties["Temperature"]),
-      cycleCount: BatteryValueNormalizer.cycleCount(properties["CycleCount"]),
-      systemLoadMilliwatts: BatteryValueNormalizer.finiteNumber(telemetry?["SystemLoad"]),
-      systemInputMilliwatts: BatteryValueNormalizer.finiteNumber(
-        telemetry?["SystemPowerIn"]))
+  private let freshnessInterval: TimeInterval
+  private let reader: Reader
+  private let lock = NSLock()
+  private var cachedProperties: [String: Any] = [:]
+  private var sampledAt: TimeInterval?
+
+  init(
+    freshnessInterval: TimeInterval = 0.25,
+    reader: @escaping Reader = SmartBatteryRegistryCache.readRegistry
+  ) {
+    self.freshnessInterval = max(0, freshnessInterval)
+    self.reader = reader
   }
-}
 
-struct SmartBatteryRegistryProvider: Sendable {
-  func sample() -> SmartBatteryRegistrySnapshot? {
+  func snapshot(
+    now: TimeInterval = ProcessInfo.processInfo.systemUptime
+  ) -> [String: Any] {
+    lock.withLock {
+      if let sampledAt,
+        now >= sampledAt,
+        now - sampledAt < freshnessInterval
+      {
+        return cachedProperties
+      }
+
+      let properties = reader()
+      cachedProperties = properties
+      sampledAt = now
+      return properties
+    }
+  }
+
+  func reset() {
+    lock.withLock {
+      cachedProperties = [:]
+      sampledAt = nil
+    }
+  }
+
+  private static func readRegistry() -> [String: Any] {
     let service = IOServiceGetMatchingService(
       kIOMainPortDefault,
       IOServiceMatching("AppleSmartBattery"))
-    guard service != 0 else { return nil }
+    guard service != 0 else { return [:] }
     defer { IOObjectRelease(service) }
 
     var properties: Unmanaged<CFMutableDictionary>?
@@ -60,7 +60,7 @@ struct SmartBatteryRegistryProvider: Sendable {
         kCFAllocatorDefault,
         0) == KERN_SUCCESS,
       let dictionary = properties?.takeRetainedValue() as? [String: Any]
-    else { return nil }
-    return SmartBatteryRegistryDecoder.decode(dictionary)
+    else { return [:] }
+    return dictionary
   }
 }
