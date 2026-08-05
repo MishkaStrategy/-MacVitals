@@ -121,7 +121,9 @@ struct ProcessConsumersView: View {
   @ObservedObject var monitor: ProcessConsumersMonitor
   let metric: ProcessConsumerMetric
   @State private var visibleCount = 5
+  @State private var rankedApplications: [RankedApplicationProcessUsage] = []
   @State private var applicationIcons: [pid_t: NSImage] = [:]
+  @State private var applicationIconPIDs: Set<pid_t> = []
 
   @MainActor
   private static let percentFormatter: NumberFormatter = {
@@ -133,9 +135,7 @@ struct ProcessConsumersView: View {
   }()
 
   var body: some View {
-    let ranked = rankedApplications
-
-    return VStack(alignment: .leading, spacing: 9) {
+    VStack(alignment: .leading, spacing: 9) {
       HStack(spacing: 8) {
         Label(title, systemImage: symbol)
           .font(.subheadline.bold())
@@ -157,7 +157,7 @@ struct ProcessConsumersView: View {
         .frame(width: 86)
       }
 
-      if ranked.isEmpty {
+      if rankedApplications.isEmpty {
         VStack(spacing: 7) {
           ProgressView()
             .controlSize(.small)
@@ -172,9 +172,8 @@ struct ProcessConsumersView: View {
       } else {
         ScrollView {
           LazyVStack(spacing: 6) {
-            ForEach(Array(ranked.prefix(visibleCount).enumerated()), id: \.element.id) {
-              index, application in
-              applicationRow(application, rank: index + 1)
+            ForEach(rankedApplications.prefix(visibleCount)) { ranked in
+              applicationRow(ranked.application, rank: ranked.rank)
             }
           }
           .padding(.vertical, 1)
@@ -193,9 +192,23 @@ struct ProcessConsumersView: View {
       RoundedRectangle(cornerRadius: 12)
         .stroke(.quaternary.opacity(0.35), lineWidth: 1))
     .accessibilityIdentifier("processConsumers.\(metric.rawValue)")
-    .onReceive(monitor.$snapshot) { _ in
-      refreshApplicationIcons()
+    .onReceive(monitor.$snapshot) { snapshot in
+      updatePresentation(from: snapshot)
     }
+    .onChange(of: metric.rawValue) { _ in
+      updatePresentation(from: monitor.snapshot)
+    }
+  }
+
+  @MainActor
+  private func updatePresentation(from snapshot: ProcessMetricsSnapshot) {
+    let nextRanking = ProcessConsumerRanking.topApplications(
+      snapshot.applications,
+      metric: metric)
+    if nextRanking != rankedApplications {
+      rankedApplications = nextRanking
+    }
+    refreshApplicationIcons(for: nextRanking)
   }
 
   private func applicationRow(_ application: ApplicationProcessUsage, rank: Int) -> some View {
@@ -252,33 +265,6 @@ struct ProcessConsumersView: View {
         .font(.title3)
         .foregroundStyle(.secondary)
         .accessibilityHidden(true)
-    }
-  }
-
-  private var rankedApplications: [ApplicationProcessUsage] {
-    monitor.snapshot.applications
-      .filter { application in
-        application.memoryBytes > 1_048_576
-          || application.cpuPercent > 0.01
-          || application.energyImpactScore > 0.01
-          || application.gpuActivityScore > 0.01
-      }
-      .sorted { lhs, rhs in
-        let left = sortValue(lhs)
-        let right = sortValue(rhs)
-        if left == right {
-          return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-        return left > right
-      }
-  }
-
-  private func sortValue(_ application: ApplicationProcessUsage) -> Double {
-    switch metric {
-    case .cpu: return application.cpuPercent
-    case .memory: return Double(application.memoryBytes)
-    case .gpu: return application.gpuActivityScore
-    case .energy: return application.energyWatts ?? application.energyImpactScore
     }
   }
 
@@ -384,18 +370,30 @@ struct ProcessConsumersView: View {
   }
 
   @MainActor
-  private func refreshApplicationIcons() {
+  private func refreshApplicationIcons(for ranking: [RankedApplicationProcessUsage]) {
+    let desiredPIDs = Set(ranking.map { $0.application.representativePID })
+    guard desiredPIDs != applicationIconPIDs else { return }
+
+    guard !desiredPIDs.isEmpty else {
+      applicationIconPIDs = []
+      applicationIcons = [:]
+      return
+    }
+
     var icons: [pid_t: NSImage] = [:]
-    icons.reserveCapacity(monitor.snapshot.applications.count)
+    icons.reserveCapacity(desiredPIDs.count)
     for application in NSWorkspace.shared.runningApplications {
-      guard !application.isTerminated,
-        application.processIdentifier > 0,
+      let pid = application.processIdentifier
+      guard desiredPIDs.contains(pid),
+        !application.isTerminated,
         let icon = application.icon
       else {
         continue
       }
-      icons[application.processIdentifier] = icon
+      icons[pid] = icon
+      if icons.count == desiredPIDs.count { break }
     }
+    applicationIconPIDs = Set(icons.keys)
     applicationIcons = icons
   }
 }
