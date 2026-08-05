@@ -70,6 +70,12 @@ final class MetricsCoordinator: ObservableObject {
   private var adapterInputPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
+  private var configuredInterval: TimeInterval
+
+  init() {
+    configuredInterval = SamplingIntervalPolicy.normalized(
+      UserDefaults.standard.double(forKey: "samplingInterval"))
+  }
 
   func start() {
     start(resetBeforeSampling: false)
@@ -79,6 +85,10 @@ final class MetricsCoordinator: ObservableObject {
     samplingTask?.cancel()
     samplingTask = nil
     isRunning = false
+  }
+
+  func setSamplingInterval(_ interval: TimeInterval) {
+    configuredInterval = SamplingIntervalPolicy.normalized(interval)
   }
 
   func handleSleep() {
@@ -92,8 +102,7 @@ final class MetricsCoordinator: ObservableObject {
   }
 
   private var currentInterval: TimeInterval {
-    SamplingIntervalPolicy.normalized(
-      UserDefaults.standard.double(forKey: "samplingInterval"))
+    configuredInterval
   }
 
   private func start(resetBeforeSampling: Bool) {
