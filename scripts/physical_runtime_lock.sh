@@ -6,6 +6,20 @@ physical_runtime_lock_directory() {
   printf '%s\n' "${MACVITALS_PHYSICAL_LOCK_DIR:-/tmp/macvitals-physical-runtime.lock}"
 }
 
+physical_runtime_lock_validate_directory() {
+  local lock_dir="$1"
+  [[ "${lock_dir}" == /* && "${lock_dir}" == *.lock && "${lock_dir}" != *$'\n'* ]] || {
+    printf 'Physical runtime lock path must be an absolute .lock path: %s\n' "${lock_dir}" >&2
+    return 2
+  }
+  if [[ -e "${lock_dir}" || -L "${lock_dir}" ]]; then
+    [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || {
+      printf 'Physical runtime lock path is not a safe directory: %s\n' "${lock_dir}" >&2
+      return 2
+    }
+  fi
+}
+
 physical_runtime_lock_owner_pid() {
   local lock_dir="$1"
   local owner_pid=""
@@ -60,6 +74,8 @@ physical_runtime_lock_try_reclaim() {
   local stale_grace_seconds="$3"
   local stale_dir
 
+  [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || return 1
+
   if [[ "${owner_pid}" =~ ^[0-9]+$ ]]; then
     physical_runtime_lock_process_is_alive "${owner_pid}" && return 1
   else
@@ -77,6 +93,7 @@ physical_runtime_lock_try_reclaim() {
 physical_runtime_lock_acquire() {
   local lock_dir timeout_seconds poll_seconds stale_grace_seconds deadline owner_pid
   lock_dir="$(physical_runtime_lock_directory)"
+  physical_runtime_lock_validate_directory "${lock_dir}" || return $?
   timeout_seconds="${MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS:-900}"
   poll_seconds="${MACVITALS_PHYSICAL_LOCK_POLL_SECONDS:-1}"
   stale_grace_seconds="${MACVITALS_PHYSICAL_LOCK_STALE_GRACE_SECONDS:-30}"
@@ -132,6 +149,11 @@ physical_runtime_lock_release() {
   local lock_dir owner_pid
   [[ "${MACVITALS_PHYSICAL_LOCK_HELD:-0}" == "1" ]] || return 0
   lock_dir="$(physical_runtime_lock_directory)"
+  if ! physical_runtime_lock_validate_directory "${lock_dir}"; then
+    MACVITALS_PHYSICAL_LOCK_HELD=0
+    export MACVITALS_PHYSICAL_LOCK_HELD
+    return 2
+  fi
   owner_pid="$(physical_runtime_lock_owner_pid "${lock_dir}")"
   if [[ "${owner_pid}" == "$$" ]]; then
     rm -rf -- "${lock_dir}"
@@ -148,7 +170,7 @@ physical_runtime_lock_self_test() {
   local helper_path temp_root lock_dir ready_file holder_pid
   helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/macvitals-physical-lock-test.XXXXXX")"
-  lock_dir="${temp_root}/lock"
+  lock_dir="${temp_root}/runtime.lock"
   ready_file="${temp_root}/ready"
   holder_pid=""
 
@@ -160,6 +182,21 @@ physical_runtime_lock_self_test() {
     rm -rf -- "${temp_root}"
   }
   trap cleanup_self_test EXIT INT TERM
+
+  MACVITALS_PHYSICAL_LOCK_DIR="${temp_root}/unsafe"
+  MACVITALS_PHYSICAL_LOCK_HELD=0
+  if physical_runtime_lock_acquire; then
+    printf '%s\n' 'Unsafe lock path unexpectedly passed validation' >&2
+    return 1
+  fi
+
+  mkdir "${temp_root}/target"
+  ln -s "${temp_root}/target" "${temp_root}/symlink.lock"
+  MACVITALS_PHYSICAL_LOCK_DIR="${temp_root}/symlink.lock"
+  if physical_runtime_lock_acquire; then
+    printf '%s\n' 'Symlink lock path unexpectedly passed validation' >&2
+    return 1
+  fi
 
   MACVITALS_PHYSICAL_LOCK_DIR="${lock_dir}"
   MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=2
