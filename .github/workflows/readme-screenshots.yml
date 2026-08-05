@@ -202,6 +202,7 @@ jobs:
           retention-days: 14
 
       - name: Commit real application screenshots
+        if: github.event_name == 'workflow_dispatch'
         run: |
           if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ] || [ "${TARGET_BRANCH}" = "feature/macvitals-v1" ]; then
             echo "Refusing to auto-commit README screenshots to a protected branch"
