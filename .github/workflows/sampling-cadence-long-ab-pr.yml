@@ -1,0 +1,407 @@
+name: Sampling Cadence Matched Long A-B
+
+on:
+  pull_request:
+    branches:
+      - perf/provider-stack-long-baseline
+    paths:
+      - MacVitals/Monitoring/MetricsCoordinator.swift
+      - MacVitals/Monitoring/SamplingActivityLease.swift
+      - MacVitalsTests/SamplingActivityLeaseTests.swift
+      - scripts/run_exact_long_idle_baseline.sh
+      - scripts/collect_runtime_metrics.py
+      - scripts/collect_runtime_metrics.sh
+      - scripts/report_runtime_resources.py
+      - scripts/summarize_provider_timings.py
+      - .github/workflows/sampling-cadence-long-ab-pr.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  measure-matched-long-cadence:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 180
+    outputs:
+      source_sha: ${{ steps.verify-source.outputs.source_sha }}
+      runner_name: ${{ steps.verify-source.outputs.runner_name }}
+      source_run_id: ${{ steps.verify-source.outputs.source_run_id }}
+      measurement_outcome: ${{ steps.measurement.outcome }}
+    env:
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-CadenceLongAB
+      RESULTS_ROOT: ${{ github.workspace }}/sampling-cadence-long-results
+      RUNNER_IDLE_TIMEOUT_SECONDS: 900
+      MACVITALS_PHYSICAL_LOCK_DIR: /tmp/macvitals-physical-runtime.lock
+      RUN_COUNT: 3
+      WARMUP_SECONDS: 300
+      MEASURE_SECONDS: 1800
+      SAMPLE_SECONDS: 2
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact source and ancestry
+        id: verify-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          git merge-base --is-ancestor \
+            7462578a8e622fd409d7bf1269a6c2b451676514 \
+            "${ACTUAL_SHA}"
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          test "$(uname -m)" = arm64
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
+            echo 'Forbidden pet code found in exact candidate' >&2
+            exit 1
+          }
+          echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "source_sha=${ACTUAL_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "runner_name=${RUNNER_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "source_run_id=${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Build and test exact ARM64 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/materialize_app_icon.py
+          xcodegen generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}-Tests" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            test -only-testing:MacVitalsTests/SamplingActivityLeaseTests
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+          APP_PATH="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          test -x "${APP_PATH}/Contents/MacOS/MacVitals"
+          file "${APP_PATH}/Contents/MacOS/MacVitals" | grep -q arm64
+          echo "APP_PATH=${APP_PATH}" >> "${GITHUB_ENV}"
+
+      - name: Run three matched AC idle measurements
+        id: measurement
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The harness delegates CPU/RSS evidence to the canonical collector.
+          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
+          bash scripts/run_exact_long_idle_baseline.sh \
+            "${APP_PATH}" \
+            "${SOURCE_SHA}" \
+            "${RESULTS_ROOT}" 2>&1 | tee sampling-cadence-long.log
+
+      - name: Stage long evidence outside workspace
+        if: always() && steps.verify-source.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CACHE_BASE="${HOME}/Library/Caches/MacVitals-CI/cadence-long"
+          FINAL_ROOT="${CACHE_BASE}/${SOURCE_SHA}"
+          TEMP_ROOT="${FINAL_ROOT}.tmp.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${TEMP_ROOT}"
+          mkdir -p "${TEMP_ROOT}"
+          if [[ -d "${RESULTS_ROOT}" ]]; then
+            cp -R "${RESULTS_ROOT}" "${TEMP_ROOT}/sampling-cadence-long-results"
+          fi
+          if [[ -f sampling-cadence-long.log ]]; then
+            cp sampling-cadence-long.log "${TEMP_ROOT}/sampling-cadence-long.log"
+          fi
+
+          python3 - \
+            "${TEMP_ROOT}" \
+            "${SOURCE_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${RUNNER_NAME}" \
+            '${{ steps.measurement.outcome }}' <<'PY'
+          import hashlib
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          files = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file():
+                  continue
+              files.append({
+                  "path": str(path.relative_to(root)),
+                  "bytes": path.stat().st_size,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              })
+          if not files:
+              raise SystemExit("long measurement produced no recoverable evidence")
+          manifest = {
+              "schemaVersion": 1,
+              "sourceSha": sys.argv[2],
+              "sourceWorkflowRunId": sys.argv[3],
+              "sourceRunnerName": sys.argv[4],
+              "measurementOutcome": sys.argv[5],
+              "stagedAtUTC": datetime.now(timezone.utc).isoformat(),
+              "files": files,
+          }
+          (root / "recovery-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+
+          chmod -R go-rwx "${TEMP_ROOT}"
+          mkdir -p "${CACHE_BASE}"
+          rm -rf "${FINAL_ROOT}"
+          mv "${TEMP_ROOT}" "${FINAL_ROOT}"
+          echo "MACVITALS_CADENCE_LONG_RECOVERY source_sha=${SOURCE_SHA} path=${FINAL_ROOT}"
+
+  publish-matched-long-cadence:
+    needs: measure-matched-long-cadence
+    if: always() && needs.measure-matched-long-cadence.result != 'cancelled'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 25
+    env:
+      EXPECTED_SOURCE_SHA: ${{ needs.measure-matched-long-cadence.outputs.source_sha }}
+      EXPECTED_RUNNER_NAME: ${{ needs.measure-matched-long-cadence.outputs.runner_name }}
+      SOURCE_RUN_ID: ${{ needs.measure-matched-long-cadence.outputs.source_run_id }}
+      MEASUREMENT_OUTCOME: ${{ needs.measure-matched-long-cadence.outputs.measurement_outcome }}
+    steps:
+      - name: Locate and verify staged bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${EXPECTED_SOURCE_SHA}"
+          test "${RUNNER_NAME}" = "${EXPECTED_RUNNER_NAME}"
+          RECOVERY_ROOT="${HOME}/Library/Caches/MacVitals-CI/cadence-long/${EXPECTED_SOURCE_SHA}"
+          test -d "${RECOVERY_ROOT}"
+          test -f "${RECOVERY_ROOT}/recovery-manifest.json"
+
+          python3 - "${RECOVERY_ROOT}" "${EXPECTED_SOURCE_SHA}" "${SOURCE_RUN_ID}" "${EXPECTED_RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          manifest = json.loads((root / "recovery-manifest.json").read_text())
+          if manifest.get("sourceSha") != sys.argv[2]:
+              raise SystemExit("recovery source SHA mismatch")
+          if manifest.get("sourceWorkflowRunId") != sys.argv[3]:
+              raise SystemExit("recovery source run mismatch")
+          if manifest.get("sourceRunnerName") != sys.argv[4]:
+              raise SystemExit("recovery runner mismatch")
+          for entry in manifest.get("files", []):
+              path = root / entry["path"]
+              if not path.is_file():
+                  raise SystemExit(f"missing staged file: {entry['path']}")
+              if path.stat().st_size != int(entry["bytes"]):
+                  raise SystemExit(f"size mismatch: {entry['path']}")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                  raise SystemExit(f"digest mismatch: {entry['path']}")
+          print(
+              "MACVITALS_CADENCE_LONG_RECOVERY_VERIFIED "
+              f"source_sha={sys.argv[2]} files={len(manifest.get('files', []))}")
+          PY
+          echo "RECOVERY_ROOT=${RECOVERY_ROOT}" >> "${GITHUB_ENV}"
+
+      - name: Validate matched long cadence evidence
+        id: long_gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "${RECOVERY_ROOT}" "${EXPECTED_SOURCE_SHA}" "${MEASUREMENT_OUTCOME}" <<'PY'
+          import hashlib
+          import json
+          import statistics
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          source_sha = sys.argv[2]
+          measurement_outcome = sys.argv[3]
+          results = root / "sampling-cadence-long-results"
+          errors = []
+          runs = []
+
+          if measurement_outcome != "success":
+              errors.append(f"measurement step outcome was {measurement_outcome!r}")
+
+          try:
+              scenario = json.loads((results / "scenario.json").read_text())
+              aggregate = json.loads((results / "aggregate-summary.json").read_text())
+              if scenario.get("sourceSha") != source_sha:
+                  errors.append("scenario source SHA mismatch")
+              if aggregate.get("sourceSha") != source_sha:
+                  errors.append("aggregate source SHA mismatch")
+              if int(aggregate.get("runCount", 0)) != 3:
+                  errors.append("aggregate run count is not 3")
+
+              for run_number in range(1, 4):
+                  run_root = results / f"run-{run_number}"
+                  resource = json.loads((run_root / "resource-summary.json").read_text())
+                  provider = json.loads((run_root / "provider-summary.json").read_text())
+                  if resource.get("sourceSha") != source_sha:
+                      errors.append(f"run {run_number}: resource source SHA mismatch")
+                  samples = int(resource.get("measurement", {}).get("sampleCount", 0))
+                  if samples < 900:
+                      errors.append(f"run {run_number}: process sample count {samples} < 900")
+                  process = resource.get("process", {})
+                  if process.get("aliveAtEnd") is not True:
+                      errors.append(f"run {run_number}: app was not alive at end")
+                  if process.get("identityStable") is not True:
+                      errors.append(f"run {run_number}: PID identity was not stable")
+
+                  records = int(provider.get("records", provider.get("cycleCount", 0)))
+                  if records < 890:
+                      errors.append(f"run {run_number}: provider records {records} < 890")
+                  coverage = float(provider.get("observed_duration_s", 0))
+                  if coverage < 1800:
+                      errors.append(f"run {run_number}: provider coverage {coverage:.3f}s < 1800s")
+                  interval = provider.get("observed_interval_s", {})
+                  mean_interval = float(interval.get("mean", 0))
+                  p95_interval = float(interval.get("p95", 0))
+                  if not 1.8 <= mean_interval <= 2.3:
+                      errors.append(
+                          f"run {run_number}: mean cadence {mean_interval:.6f}s outside 1.8–2.3s")
+                  if p95_interval >= 2.5:
+                      errors.append(
+                          f"run {run_number}: p95 cadence {p95_interval:.6f}s is not below 2.5s")
+
+                  cpu = resource["measurement"]["cpuPercent"]
+                  rss = resource["measurement"]["residentMemoryMiB"]
+                  total = provider["providers"]["total_ms"]
+                  run = {
+                      "run": run_number,
+                      "providerRecords": records,
+                      "providerCoverageSeconds": coverage,
+                      "intervalMeanSeconds": mean_interval,
+                      "intervalP95Seconds": p95_interval,
+                      "cpuMeanPercent": float(cpu["mean"]),
+                      "cpuP95Percent": float(cpu["p95"]),
+                      "cpuMaxPercent": float(cpu["max"]),
+                      "rssMeanMiB": float(rss["mean"]),
+                      "rssP95MiB": float(rss["p95"]),
+                      "rssPeakMiB": float(rss["peak"]),
+                      "rssGrowthMiB": float(rss["growth"]),
+                      "providerTotalMeanMs": float(total["mean_ms"]),
+                      "providerTotalP95Ms": float(total["p95_ms"]),
+                      "providerTotalMaxMs": float(total["max_ms"]),
+                  }
+                  runs.append(run)
+                  print(
+                      "MACVITALS_CADENCE_LONG_RUN "
+                      f"run={run_number} interval_mean_s={mean_interval:.6f} "
+                      f"interval_p95_s={p95_interval:.6f} "
+                      f"cpu_mean_pct={run['cpuMeanPercent']:.3f} "
+                      f"rss_growth_mib={run['rssGrowthMiB']:.3f}")
+          except Exception as exc:
+              errors.append(f"evidence parsing failed: {exc}")
+
+          medians = {}
+          if len(runs) == 3:
+              for key in (
+                  "intervalMeanSeconds",
+                  "intervalP95Seconds",
+                  "cpuMeanPercent",
+                  "cpuP95Percent",
+                  "rssMeanMiB",
+                  "rssP95MiB",
+                  "rssPeakMiB",
+                  "rssGrowthMiB",
+                  "providerTotalMeanMs",
+                  "providerTotalP95Ms",
+              ):
+                  medians[key] = statistics.median(run[key] for run in runs)
+
+          summary = {
+              "schemaVersion": 1,
+              "sourceSha": source_sha,
+              "measurementOutcome": measurement_outcome,
+              "passed": not errors,
+              "errors": errors,
+              "runs": runs,
+              "medians": medians,
+          }
+          summary_path = root / "matched-long-cadence-summary.json"
+          summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+          manifest_path = root / "recovery-manifest.json"
+          manifest = json.loads(manifest_path.read_text())
+          manifest["files"] = [
+              entry for entry in manifest.get("files", [])
+              if entry.get("path") != summary_path.name
+          ]
+          manifest["files"].append({
+              "path": summary_path.name,
+              "bytes": summary_path.stat().st_size,
+              "sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+          })
+          manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+          if medians:
+              print(
+                  "MACVITALS_CADENCE_LONG_MEDIANS "
+                  f"source_sha={source_sha} "
+                  f"interval_mean_s={medians['intervalMeanSeconds']:.6f} "
+                  f"interval_p95_s={medians['intervalP95Seconds']:.6f} "
+                  f"cpu_mean_pct={medians['cpuMeanPercent']:.3f} "
+                  f"rss_growth_mib={medians['rssGrowthMiB']:.3f}")
+          if errors:
+              for error in errors:
+                  print(f"cadence long gate: {error}", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+          grep -q 'MACVITALS_RESOURCE_SUMMARY' "${RECOVERY_ROOT}/sampling-cadence-long.log"
+          grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' "${RECOVERY_ROOT}/sampling-cadence-long.log"
+          grep -q 'MACVITALS_LONG_BASELINE_SUMMARY' "${RECOVERY_ROOT}/sampling-cadence-long.log"
+
+      - name: Upload matched long cadence evidence
+        if: always() && env.RECOVERY_ROOT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sampling-cadence-long-ab-${{ env.EXPECTED_SOURCE_SHA }}
+          path: ${{ env.RECOVERY_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve matched long gate failure
+        if: always() && (env.MEASUREMENT_OUTCOME != 'success' || steps.long_gate.outcome != 'success')
+        shell: bash
+        run: |
+          echo "matched long cadence gate failed; uploaded recovery evidence is retained" >&2
+          exit 1
+
+      - name: Remove published recovery bundle
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOVERY_ROOT:-}"
+          rm -rf "${RECOVERY_ROOT}"

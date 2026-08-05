@@ -1,0 +1,191 @@
+name: Sampling Cadence Activity A-B
+
+on:
+  pull_request:
+    branches:
+      - perf/provider-stack-long-baseline
+    paths:
+      - MacVitals/Monitoring/MetricsCoordinator.swift
+      - MacVitals/Monitoring/SamplingActivityLease.swift
+      - MacVitalsTests/SamplingActivityLeaseTests.swift
+      - .github/workflows/sampling-cadence-ab-pr.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  measure-sampling-cadence:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 35
+    env:
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-CadenceAB
+      RESULTS_ROOT: ${{ github.workspace }}/sampling-cadence-results
+      RUNNER_IDLE_TIMEOUT_SECONDS: 900
+      MACVITALS_PHYSICAL_LOCK_DIR: /tmp/macvitals-physical-runtime.lock
+      RUN_COUNT: 1
+      WARMUP_SECONDS: 60
+      MEASURE_SECONDS: 600
+      SAMPLE_SECONDS: 2
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify source and ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          git merge-base --is-ancestor \
+            7462578a8e622fd409d7bf1269a6c2b451676514 \
+            "${ACTUAL_SHA}"
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          test "$(uname -m)" = arm64
+          echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Build and test exact ARM64 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/materialize_app_icon.py
+          xcodegen generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}-Tests" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            test -only-testing:MacVitalsTests/SamplingActivityLeaseTests
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+          APP_PATH="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          test -x "${APP_PATH}/Contents/MacOS/MacVitals"
+          file "${APP_PATH}/Contents/MacOS/MacVitals" | grep -q arm64
+          echo "APP_PATH=${APP_PATH}" >> "${GITHUB_ENV}"
+
+      - name: Run short exact AC cadence measurement
+        id: cadence_measurement
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The harness delegates canonical CPU/RSS collection to scripts/collect_runtime_metrics.sh.
+          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
+          bash scripts/run_exact_long_idle_baseline.sh \
+            "${APP_PATH}" \
+            "${SOURCE_SHA}" \
+            "${RESULTS_ROOT}" 2>&1 | tee sampling-cadence.log
+
+      - name: Validate cadence and resource evidence
+        if: steps.cadence_measurement.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "${RESULTS_ROOT}" "${SOURCE_SHA}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          source_sha = sys.argv[2]
+          scenario = json.loads((root / "scenario.json").read_text())
+          resource = json.loads((root / "run-1/resource-summary.json").read_text())
+          provider = json.loads((root / "run-1/provider-summary.json").read_text())
+
+          if scenario.get("sourceSha") != source_sha:
+              raise SystemExit("scenario source SHA mismatch")
+          if resource.get("sourceSha") != source_sha:
+              raise SystemExit("resource source SHA mismatch")
+          if int(resource["measurement"]["sampleCount"]) < 290:
+              raise SystemExit("insufficient process samples")
+          if int(provider.get("records", 0)) <= 0:
+              raise SystemExit("provider timing records are empty")
+          if float(provider.get("observed_duration_s", 0)) < 600:
+              raise SystemExit("provider timing coverage is incomplete")
+
+          interval = provider["observed_interval_s"]
+          mean_interval = float(interval["mean"])
+          p95_interval = float(interval["p95"])
+          if not 1.8 <= mean_interval <= 2.3:
+              raise SystemExit(f"mean cadence outside target: {mean_interval:.6f}s")
+          if p95_interval >= 2.5:
+              raise SystemExit(f"p95 cadence outside target: {p95_interval:.6f}s")
+
+          cpu = resource["measurement"]["cpuPercent"]
+          rss = resource["measurement"]["residentMemoryMiB"]
+          print(
+              "MACVITALS_CADENCE_AB_RESULT "
+              f"source_sha={source_sha} "
+              f"interval_mean_s={mean_interval:.6f} "
+              f"interval_p95_s={p95_interval:.6f} "
+              f"cpu_mean_pct={float(cpu['mean']):.3f} "
+              f"cpu_p95_pct={float(cpu['p95']):.3f} "
+              f"rss_mean_mib={float(rss['mean']):.3f} "
+              f"rss_growth_mib={float(rss['growth']):.3f}")
+          PY
+          grep -q 'MACVITALS_RESOURCE_SUMMARY' sampling-cadence.log
+          grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' sampling-cadence.log
+
+      - name: Show cadence failure context
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          echo "measurement_outcome=${{ steps.cadence_measurement.outcome }}"
+          if [[ -f sampling-cadence.log ]]; then
+            echo "--- sampling-cadence.log (last 200 lines) ---"
+            tail -n 200 sampling-cadence.log
+          else
+            echo "sampling-cadence.log is missing"
+          fi
+          if [[ -d "${RESULTS_ROOT}" ]]; then
+            echo "--- captured result files ---"
+            find "${RESULTS_ROOT}" -type f -print | sort
+          else
+            echo "results directory is missing"
+          fi
+
+      - name: Upload cadence A-B evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sampling-cadence-ab-${{ env.SOURCE_SHA }}
+          path: |
+            sampling-cadence.log
+            sampling-cadence-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve cadence measurement failure
+        if: always() && steps.cadence_measurement.outcome != 'success'
+        shell: bash
+        run: |
+          echo "cadence measurement failed; diagnostics were preserved" >&2
+          exit 1

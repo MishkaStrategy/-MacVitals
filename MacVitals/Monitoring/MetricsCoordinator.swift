@@ -59,6 +59,7 @@ final class MetricsCoordinator: ObservableObject {
 
   private static let maximumHistoryCapacity = 3_600
   private let sampler = SystemSampler()
+  private let samplingActivity: SamplingActivityLease
   private var cpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
   private var memoryBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
   private var gpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
@@ -71,6 +72,15 @@ final class MetricsCoordinator: ObservableObject {
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
 
+  init(samplingActivity: SamplingActivityLease = SamplingActivityLease()) {
+    self.samplingActivity = samplingActivity
+  }
+
+  deinit {
+    samplingTask?.cancel()
+    samplingActivity.stop()
+  }
+
   func start() {
     start(resetBeforeSampling: false)
   }
@@ -78,6 +88,7 @@ final class MetricsCoordinator: ObservableObject {
   func stop() {
     samplingTask?.cancel()
     samplingTask = nil
+    samplingActivity.stop()
     isRunning = false
   }
 
@@ -98,6 +109,7 @@ final class MetricsCoordinator: ObservableObject {
 
   private func start(resetBeforeSampling: Bool) {
     guard samplingTask == nil else { return }
+    samplingActivity.start()
     isRunning = true
     let sampler = self.sampler
     samplingTask = Task { [weak self, sampler] in
