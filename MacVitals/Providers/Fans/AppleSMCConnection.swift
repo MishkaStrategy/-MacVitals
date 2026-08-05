@@ -37,6 +37,26 @@ nonisolated struct AppleSMCKeyValue: Sendable, Equatable {
   let dataType: String
 }
 
+nonisolated struct AppleSMCKeyMetadata: Sendable, Equatable {
+  let dataSize: UInt32
+  let dataType: UInt32
+}
+
+nonisolated final class AppleSMCKeyMetadataCache {
+  typealias Loader = () throws -> AppleSMCKeyMetadata
+
+  private var values: [UInt32: AppleSMCKeyMetadata] = [:]
+
+  var count: Int { values.count }
+
+  func value(for key: UInt32, loader: Loader) throws -> AppleSMCKeyMetadata {
+    if let cached = values[key] { return cached }
+    let loaded = try loader()
+    values[key] = loaded
+    return loaded
+  }
+}
+
 nonisolated protocol AppleSMCReading: Sendable {
   func readKey(_ key: String) throws -> AppleSMCKeyValue
 }
@@ -48,6 +68,7 @@ nonisolated protocol AppleSMCWriting: AppleSMCReading {
 nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable {
   private let connection: io_connect_t
   private let lock = NSLock()
+  private let keyMetadataCache = AppleSMCKeyMetadataCache()
 
   init() throws {
     guard let matching = IOServiceMatching("AppleSMC") else {
@@ -105,20 +126,15 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
   func writeKey(_ key: String, bytes: [UInt8]) throws {
     try lock.withLock {
       let keyCode = try Self.fourCharacterCode(key)
-      var infoInput = AppleSMCParam()
-      infoInput.key = keyCode
-      infoInput.data8 = AppleSMCCommand.readKeyInfo.rawValue
-      let infoOutput = try call(infoInput)
-      try Self.validateFirmwareResult(infoOutput.result)
-
-      let size = Int(infoOutput.keyInfo.dataSize)
-      guard (1...32).contains(size), bytes.count == size else {
+      let metadata = try keyMetadataLocked(keyCode)
+      let size = Int(metadata.dataSize)
+      guard bytes.count == size else {
         throw AppleSMCError.invalidPayload
       }
 
       var writeInput = AppleSMCParam()
       writeInput.key = keyCode
-      writeInput.keyInfo.dataSize = infoOutput.keyInfo.dataSize
+      writeInput.keyInfo.dataSize = metadata.dataSize
       writeInput.data8 = AppleSMCCommand.writeBytes.rawValue
       writeInput.bytes = Self.bytesTuple(bytes)
       let output = try call(writeInput)
@@ -128,18 +144,12 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
 
   private func readKeyLocked(_ key: String) throws -> AppleSMCKeyValue {
     let keyCode = try Self.fourCharacterCode(key)
-    var infoInput = AppleSMCParam()
-    infoInput.key = keyCode
-    infoInput.data8 = AppleSMCCommand.readKeyInfo.rawValue
-    let infoOutput = try call(infoInput)
-    try Self.validateFirmwareResult(infoOutput.result)
-
-    let size = Int(infoOutput.keyInfo.dataSize)
-    guard (1...32).contains(size) else { throw AppleSMCError.invalidPayload }
+    let metadata = try keyMetadataLocked(keyCode)
+    let size = Int(metadata.dataSize)
 
     var readInput = AppleSMCParam()
     readInput.key = keyCode
-    readInput.keyInfo.dataSize = infoOutput.keyInfo.dataSize
+    readInput.keyInfo.dataSize = metadata.dataSize
     readInput.data8 = AppleSMCCommand.readBytes.rawValue
     let readOutput = try call(readInput)
     try Self.validateFirmwareResult(readOutput.result)
@@ -147,8 +157,24 @@ nonisolated final class AppleSMCConnection: AppleSMCWriting, @unchecked Sendable
     let bytes = withUnsafeBytes(of: readOutput.bytes) { rawBuffer in
       Array(rawBuffer.prefix(size))
     }
-    let type = Self.fourCharacterString(infoOutput.keyInfo.dataType)
+    let type = Self.fourCharacterString(metadata.dataType)
     return AppleSMCKeyValue(bytes: bytes, dataType: type)
+  }
+
+  private func keyMetadataLocked(_ keyCode: UInt32) throws -> AppleSMCKeyMetadata {
+    try keyMetadataCache.value(for: keyCode) {
+      var infoInput = AppleSMCParam()
+      infoInput.key = keyCode
+      infoInput.data8 = AppleSMCCommand.readKeyInfo.rawValue
+      let infoOutput = try call(infoInput)
+      try Self.validateFirmwareResult(infoOutput.result)
+
+      let size = Int(infoOutput.keyInfo.dataSize)
+      guard (1...32).contains(size) else { throw AppleSMCError.invalidPayload }
+      return AppleSMCKeyMetadata(
+        dataSize: infoOutput.keyInfo.dataSize,
+        dataType: infoOutput.keyInfo.dataType)
+    }
   }
 
   private func call(_ input: AppleSMCParam) throws -> AppleSMCParam {
