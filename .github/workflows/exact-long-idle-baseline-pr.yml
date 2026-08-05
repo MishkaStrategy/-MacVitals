@@ -1,9 +1,9 @@
-name: Exact Long Idle Baseline PR Gate
+name: Exact Provider Stack Long Baseline
 
 on:
   pull_request:
     branches:
-      - perf/process-ui-render-cache
+      - perf/provider-stack-benchmark
     paths:
       - MacVitals/**
       - MacVitalsTests/**
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-long-idle-baseline-${{ github.event.pull_request.number || github.ref }}
+  group: exact-provider-stack-long-baseline-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -45,6 +45,9 @@ jobs:
           test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
           git merge-base --is-ancestor \
             4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          git merge-base --is-ancestor \
+            b333b39d67b79ac6b511f6e5371b413a7b422a19 \
             "${ACTUAL_SHA}"
           test "$(uname -m)" = arm64
           ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
@@ -110,7 +113,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exact-long-idle-baseline-${{ github.event.pull_request.head.sha || github.sha }}
+          name: exact-provider-stack-long-baseline-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             long-idle-baseline.log
             long-idle-baseline-results/
