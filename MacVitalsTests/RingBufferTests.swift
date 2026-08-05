@@ -18,6 +18,40 @@ final class RingBufferTests: XCTestCase {
     XCTAssertEqual(buffer.capacity, 4)
   }
 
+  func testShrinkingWrappedBufferKeepsNewestValuesInOrder() {
+    var buffer = RingBuffer<Int>(capacity: 5)
+    for value in 1...9 { buffer.append(value) }
+
+    buffer.resize(to: 3)
+
+    XCTAssertEqual(buffer.capacity, 3)
+    XCTAssertEqual(buffer.values, [7, 8, 9])
+    buffer.append(10)
+    XCTAssertEqual(buffer.values, [8, 9, 10])
+  }
+
+  func testExpandingBufferPreservesHistoryAndNewCapacity() {
+    var buffer = RingBuffer<Int>(capacity: 3)
+    for value in 1...5 { buffer.append(value) }
+
+    buffer.resize(to: 6)
+    buffer.append(6)
+    buffer.append(7)
+
+    XCTAssertEqual(buffer.capacity, 6)
+    XCTAssertEqual(buffer.values, [3, 4, 5, 6, 7])
+  }
+
+  func testResizeNormalizesNonPositiveCapacity() {
+    var buffer = RingBuffer<Int>(capacity: 4)
+    for value in 1...4 { buffer.append(value) }
+
+    buffer.resize(to: 0)
+
+    XCTAssertEqual(buffer.capacity, 1)
+    XCTAssertEqual(buffer.values, [4])
+  }
+
   func testCapacityIsNormalizedAndSingleSlotWraps() {
     var buffer = RingBuffer<Int>(capacity: 0)
     XCTAssertEqual(buffer.capacity, 1)
