@@ -8,8 +8,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let coordinator = MetricsCoordinator()
   let fanControl = FanControlClient()
   private let notificationCoordinator = NotificationCoordinator()
+  private let terminationGate = ApplicationTerminationGate()
   private var statusController: StatusItemController?
   private var cancellables = Set<AnyCancellable>()
+  private var terminationTimeoutTask: Task<Void, Never>?
+  private weak var pendingTerminationApplication: NSApplication?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
@@ -55,12 +58,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  func applicationWillTerminate(_ notification: Notification) {
-    // Termination must never start helper registration or open System Settings.
-    // Restore automatic control only when an already-approved helper is ready.
-    if fanControl.state.canControl {
-      fanControl.setAllAutomatic()
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard FanTerminationPolicy.shouldDelayTermination(for: fanControl.state) else {
+      return .terminateNow
     }
+    guard terminationGate.begin() else { return .terminateLater }
+
+    pendingTerminationApplication = sender
+    terminationTimeoutTask = Task { [weak self] in
+      do {
+        try await Task.sleep(
+          nanoseconds: FanTerminationPolicy.restoreTimeoutNanoseconds)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled else { return }
+      self?.finishPendingTermination()
+    }
+
+    fanControl.restoreAllAutomaticForTermination { [weak self] _ in
+      self?.finishPendingTermination()
+    }
+    return .terminateLater
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    terminationTimeoutTask?.cancel()
+    terminationTimeoutTask = nil
+    pendingTerminationApplication = nil
+    terminationGate.cancel()
     fanControl.invalidateConnection()
     coordinator.stop()
     coordinator.onSnapshot = nil
@@ -68,5 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     LifecycleMonitor.shared.stop()
     cancellables.removeAll()
     Logger.lifecycle.info("MacVitals stopped")
+  }
+
+  private func finishPendingTermination() {
+    terminationGate.complete { [self] in
+      terminationTimeoutTask?.cancel()
+      terminationTimeoutTask = nil
+      let application = pendingTerminationApplication
+      pendingTerminationApplication = nil
+      application?.reply(toApplicationShouldTerminate: true)
+    }
   }
 }
