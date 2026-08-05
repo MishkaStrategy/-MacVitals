@@ -91,6 +91,8 @@ jobs:
           echo "APP_PATH=${APP_PATH}" >> "${GITHUB_ENV}"
 
       - name: Run short exact AC cadence measurement
+        id: cadence_measurement
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -100,6 +102,7 @@ jobs:
             "${RESULTS_ROOT}" 2>&1 | tee sampling-cadence.log
 
       - name: Validate cadence and resource evidence
+        if: steps.cadence_measurement.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -148,7 +151,27 @@ jobs:
           grep -q 'MACVITALS_RESOURCE_SUMMARY' sampling-cadence.log
           grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' sampling-cadence.log
 
+      - name: Show cadence failure context
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          echo "measurement_outcome=${{ steps.cadence_measurement.outcome }}"
+          if [[ -f sampling-cadence.log ]]; then
+            echo "--- sampling-cadence.log (last 200 lines) ---"
+            tail -n 200 sampling-cadence.log
+          else
+            echo "sampling-cadence.log is missing"
+          fi
+          if [[ -d "${RESULTS_ROOT}" ]]; then
+            echo "--- captured result files ---"
+            find "${RESULTS_ROOT}" -type f -maxdepth 4 -print | sort
+          else
+            echo "results directory is missing"
+          fi
+
       - name: Upload cadence A-B evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sampling-cadence-ab-${{ env.SOURCE_SHA }}
@@ -157,3 +180,10 @@ jobs:
             sampling-cadence-results/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve cadence measurement failure
+        if: always() && steps.cadence_measurement.outcome != 'success'
+        shell: bash
+        run: |
+          echo "cadence measurement failed; diagnostics were preserved" >&2
+          exit 1
