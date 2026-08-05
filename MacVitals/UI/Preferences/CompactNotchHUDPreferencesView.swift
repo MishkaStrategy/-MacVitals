@@ -247,6 +247,7 @@ struct CompactNotchHUDPreferencesView: View {
         .font(.subheadline.weight(.semibold))
       }
       .toggleStyle(.switch)
+      .accessibilityIdentifier("notchHUDSimulatedDisplayToggle")
     }
   }
 
