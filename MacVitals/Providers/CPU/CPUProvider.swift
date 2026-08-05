@@ -48,6 +48,11 @@ nonisolated enum CPUUsageCalculator {
 final class CPUProvider: @unchecked Sendable {
   private var previous: CPUTicks?
   private let lock = NSLock()
+  private let hostPort: MachHostPortLease
+
+  init(hostPort: MachHostPortLease = .shared) {
+    self.hostPort = hostPort
+  }
 
   func resetBaseline() { lock.withLock { previous = nil } }
 
@@ -96,7 +101,7 @@ final class CPUProvider: @unchecked Sendable {
       MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
     let result = withUnsafeMutablePointer(to: &load) {
       $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-        host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+        host_statistics(hostPort.name, HOST_CPU_LOAD_INFO, $0, &count)
       }
     }
     guard result == KERN_SUCCESS else { return nil }
