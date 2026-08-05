@@ -39,9 +39,10 @@ actor ProcessMetricsSamplingCenter {
     runningApplications: [RunningApplicationDescriptor],
     minimumInterval: TimeInterval
   ) async -> ProcessMetricsSnapshot {
-    let freshnessWindow = max(0.25, minimumInterval * 0.8)
-    if cachedSnapshot.timestamp != .distantPast,
-      Date().timeIntervalSince(cachedSnapshot.timestamp) < freshnessWindow
+    if ProcessSamplingCachePolicy.isFresh(
+      timestamp: cachedSnapshot.timestamp,
+      now: Date(),
+      minimumInterval: minimumInterval)
     {
       return cachedSnapshot
     }
@@ -58,10 +59,21 @@ actor ProcessMetricsSamplingCenter {
     inFlight = InFlightSample(id: requestID, task: task)
     let snapshot = await task.value
 
-    if inFlight?.id == requestID {
-      cachedSnapshot = subscribers.isEmpty ? .empty : snapshot
+    switch ProcessSamplingCachePolicy.resultDisposition(
+      requestID: requestID,
+      activeRequestID: inFlight?.id,
+      hasSubscribers: !subscribers.isEmpty)
+    {
+    case .commit:
+      cachedSnapshot = snapshot
       inFlight = nil
+    case .clearOnly:
+      cachedSnapshot = .empty
+      inFlight = nil
+    case .ignore:
+      break
     }
+
     return snapshot
   }
 }
@@ -128,7 +140,8 @@ final class ProcessConsumersMonitor: ObservableObject {
   private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
     NSWorkspace.shared.runningApplications.compactMap { application in
       guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
-      let name = application.localizedName
+      let name =
+        application.localizedName
         ?? application.bundleIdentifier
         ?? L10n.string("Unknown process")
       return RunningApplicationDescriptor(
@@ -212,7 +225,8 @@ struct ProcessConsumersView: View {
     .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
     .overlay(
       RoundedRectangle(cornerRadius: 12)
-        .stroke(.quaternary.opacity(0.35), lineWidth: 1))
+        .stroke(.quaternary.opacity(0.35), lineWidth: 1)
+    )
     .accessibilityIdentifier("processConsumers.\(metric.rawValue)")
     .onReceive(monitor.$snapshot) { snapshot in
       updatePresentation(from: snapshot)
@@ -359,13 +373,20 @@ struct ProcessConsumersView: View {
   private var note: String {
     switch metric {
     case .cpu:
-      return L10n.string("Application helpers are grouped under their parent app. CPU use can exceed 100% on multicore Macs.")
+      return L10n.string(
+        "Application helpers are grouped under their parent app. CPU use can exceed 100% on multicore Macs."
+      )
     case .memory:
-      return L10n.string("Memory uses physical footprint and combines helper processes belonging to the same app.")
+      return L10n.string(
+        "Memory uses physical footprint and combines helper processes belonging to the same app.")
     case .gpu:
-      return L10n.string("macOS does not expose public per-app GPU percentages. This ranking is a relative estimate from energy counters and graphics helper activity.")
+      return L10n.string(
+        "macOS does not expose public per-app GPU percentages. This ranking is a relative estimate from energy counters and graphics helper activity."
+      )
     case .energy:
-      return L10n.string("This is current energy impact, not historical battery drain. Exact battery watts per app are not exposed by macOS.")
+      return L10n.string(
+        "This is current energy impact, not historical battery drain. Exact battery watts per app are not exposed by macOS."
+      )
     }
   }
 
