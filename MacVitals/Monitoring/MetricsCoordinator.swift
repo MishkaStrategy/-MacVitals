@@ -57,19 +57,36 @@ final class MetricsCoordinator: ObservableObject {
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
 
-  private static let maximumHistoryCapacity = 3_600
   private let sampler = SystemSampler()
-  private var cpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var memoryBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var gpuBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var batteryBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var temperatureBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var cpuBuffer: RingBuffer<TimedPoint>
+  private var memoryBuffer: RingBuffer<TimedPoint>
+  private var gpuBuffer: RingBuffer<TimedPoint>
+  private var batteryBuffer: RingBuffer<TimedPoint>
+  private var temperatureBuffer: RingBuffer<TimedPoint>
   private var temperatureSensorBuffers: [String: RingBuffer<TimedPoint>] = [:]
-  private var systemPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var batteryPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
-  private var adapterInputPowerBuffer = RingBuffer<TimedPoint>(capacity: maximumHistoryCapacity)
+  private var systemPowerBuffer: RingBuffer<TimedPoint>
+  private var batteryPowerBuffer: RingBuffer<TimedPoint>
+  private var adapterInputPowerBuffer: RingBuffer<TimedPoint>
   private var fanBuffers: [Int: RingBuffer<TimedPoint>] = [:]
   private var samplingTask: Task<Void, Never>?
+  private var configuredInterval: TimeInterval
+  private var historyCapacity: Int
+
+  init() {
+    let interval = SamplingIntervalPolicy.normalized(
+      UserDefaults.standard.double(forKey: "samplingInterval"))
+    let capacity = SamplingIntervalPolicy.historyCapacity(for: interval)
+    configuredInterval = interval
+    historyCapacity = capacity
+    cpuBuffer = RingBuffer(capacity: capacity)
+    memoryBuffer = RingBuffer(capacity: capacity)
+    gpuBuffer = RingBuffer(capacity: capacity)
+    batteryBuffer = RingBuffer(capacity: capacity)
+    temperatureBuffer = RingBuffer(capacity: capacity)
+    systemPowerBuffer = RingBuffer(capacity: capacity)
+    batteryPowerBuffer = RingBuffer(capacity: capacity)
+    adapterInputPowerBuffer = RingBuffer(capacity: capacity)
+  }
 
   func start() {
     start(resetBeforeSampling: false)
@@ -79,6 +96,13 @@ final class MetricsCoordinator: ObservableObject {
     samplingTask?.cancel()
     samplingTask = nil
     isRunning = false
+  }
+
+  func setSamplingInterval(_ interval: TimeInterval) {
+    let normalized = SamplingIntervalPolicy.normalized(interval)
+    guard normalized != configuredInterval else { return }
+    configuredInterval = normalized
+    resizeHistoryBuffers(to: SamplingIntervalPolicy.historyCapacity(for: normalized))
   }
 
   func handleSleep() {
@@ -92,8 +116,7 @@ final class MetricsCoordinator: ObservableObject {
   }
 
   private var currentInterval: TimeInterval {
-    SamplingIntervalPolicy.normalized(
-      UserDefaults.standard.double(forKey: "samplingInterval"))
+    configuredInterval
   }
 
   private func start(resetBeforeSampling: Bool) {
@@ -152,7 +175,7 @@ final class MetricsCoordinator: ObservableObject {
     for sensor in sensors {
       temperatureSensorBuffers[
         sensor.id,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(timestamp: snapshot.timestamp, value: sensor.celsius))
     }
 
@@ -160,7 +183,7 @@ final class MetricsCoordinator: ObservableObject {
     for id in missingIDs {
       temperatureSensorBuffers[
         id,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
     }
   }
@@ -172,7 +195,7 @@ final class MetricsCoordinator: ObservableObject {
     for fan in fans {
       fanBuffers[
         fan.index,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(timestamp: snapshot.timestamp, value: fan.currentRPM))
     }
 
@@ -180,7 +203,7 @@ final class MetricsCoordinator: ObservableObject {
     for index in missingIndexes {
       fanBuffers[
         index,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
     }
   }
@@ -199,15 +222,43 @@ final class MetricsCoordinator: ObservableObject {
     for id in Array(temperatureSensorBuffers.keys) {
       temperatureSensorBuffers[
         id,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(value: nil, discontinuity: true))
     }
 
     for index in Array(fanBuffers.keys) {
       fanBuffers[
         index,
-        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+        default: RingBuffer<TimedPoint>(capacity: historyCapacity)
       ].append(TimedPoint(value: nil, discontinuity: true))
+    }
+  }
+
+  private func resizeHistoryBuffers(to requestedCapacity: Int) {
+    let nextCapacity = max(1, requestedCapacity)
+    guard nextCapacity != historyCapacity else { return }
+    historyCapacity = nextCapacity
+
+    cpuBuffer.resize(to: nextCapacity)
+    memoryBuffer.resize(to: nextCapacity)
+    gpuBuffer.resize(to: nextCapacity)
+    batteryBuffer.resize(to: nextCapacity)
+    temperatureBuffer.resize(to: nextCapacity)
+    systemPowerBuffer.resize(to: nextCapacity)
+    batteryPowerBuffer.resize(to: nextCapacity)
+    adapterInputPowerBuffer.resize(to: nextCapacity)
+
+    for id in Array(temperatureSensorBuffers.keys) {
+      temperatureSensorBuffers[
+        id,
+        default: RingBuffer<TimedPoint>(capacity: nextCapacity)
+      ].resize(to: nextCapacity)
+    }
+    for index in Array(fanBuffers.keys) {
+      fanBuffers[
+        index,
+        default: RingBuffer<TimedPoint>(capacity: nextCapacity)
+      ].resize(to: nextCapacity)
     }
   }
 }
