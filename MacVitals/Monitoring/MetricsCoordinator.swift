@@ -88,6 +88,10 @@ final class MetricsCoordinator: ObservableObject {
     adapterInputPowerBuffer = RingBuffer(capacity: capacity)
   }
 
+  deinit {
+    samplingTask?.cancel()
+  }
+
   func start() {
     start(resetBeforeSampling: false)
   }
@@ -130,16 +134,22 @@ final class MetricsCoordinator: ObservableObject {
 
       while !Task.isCancelled {
         let result = await sampler.sample()
-        guard !Task.isCancelled else { break }
-
-        let interval = self?.currentInterval ?? SamplingIntervalPolicy.defaultValue
-        self?.consume(result, configuredInterval: interval)
+        let interval: TimeInterval
+        do {
+          guard !Task.isCancelled, let self else { break }
+          interval = self.currentInterval
+          self.consume(result, configuredInterval: interval)
+        }
 
         let nanos = SamplingIntervalPolicy.sleepNanoseconds(
           intervalSeconds: interval,
           elapsedMilliseconds: result.timings.totalMilliseconds)
         if nanos > 0 {
-          try? await Task.sleep(nanoseconds: nanos)
+          do {
+            try await Task.sleep(nanoseconds: nanos)
+          } catch {
+            break
+          }
         } else {
           await Task.yield()
         }
