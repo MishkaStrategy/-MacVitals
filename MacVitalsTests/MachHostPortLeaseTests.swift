@@ -29,11 +29,12 @@ final class MachHostPortLeaseTests: XCTestCase {
 
   func testNullPortIsNotReleased() {
     let recorder = PortLifecycleRecorder()
+    let nullPort = host_t(MACH_PORT_NULL)
     var lease: MachHostPortLease? = MachHostPortLease(
-      acquire: { MACH_PORT_NULL },
+      acquire: { nullPort },
       release: { name in recorder.recordRelease(name) })
 
-    XCTAssertEqual(lease?.name, MACH_PORT_NULL)
+    XCTAssertEqual(lease?.name, nullPort)
     lease = nil
 
     XCTAssertEqual(recorder.releasedNames, [])
