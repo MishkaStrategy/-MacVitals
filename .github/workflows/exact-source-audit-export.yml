@@ -1,0 +1,62 @@
+name: Exact Source Audit Export
+
+on:
+  pull_request:
+    branches:
+      - perf/process-ui-render-cache
+    paths:
+      - .github/workflows/exact-source-audit-export.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-exact-source:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact audit head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify provenance and create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ github.event.pull_request.head.sha || github.sha }}'
+          actual="$(git rev-parse HEAD)"
+          test "${actual}" = "${expected}"
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${actual}"
+
+          output="exact-source-audit-${actual}.tar.gz"
+          paths=(MacVitals MacVitalsTests MacVitalsUITests scripts .github project.yml)
+          for optional in docs README.md CONTRIBUTING.md SECURITY.md MACVITALS_OPTIMIZATION_AUDIT.md; do
+            [[ -e "${optional}" ]] && paths+=("${optional}")
+          done
+          COPYFILE_DISABLE=1 tar \
+            --exclude='.DS_Store' \
+            --exclude='*.xcresult' \
+            --exclude='DerivedData*' \
+            --exclude='build' \
+            --exclude='dist' \
+            -czf "${output}" "${paths[@]}"
+          shasum -a 256 "${output}" > exact-source-audit.sha256
+          printf 'source_sha=%s\narchive=%s\n' "${actual}" "${output}" \
+            > exact-source-audit-provenance.txt
+
+      - name: Upload exact source audit artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-source-audit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            exact-source-audit-*.tar.gz
+            exact-source-audit.sha256
+            exact-source-audit-provenance.txt
+          if-no-files-found: error
+          retention-days: 7
