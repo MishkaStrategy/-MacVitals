@@ -83,8 +83,8 @@ jobs:
                   raise SystemExit(f"run {run_number}: resource source SHA mismatch")
               if int(resource["measurement"]["sampleCount"]) < 900:
                   raise SystemExit(f"run {run_number}: insufficient process samples")
-              if int(provider["cycleCount"]) < 890:
-                  raise SystemExit(f"run {run_number}: insufficient provider cycles")
+              if int(provider["records"]) < 890:
+                  raise SystemExit(f"run {run_number}: insufficient provider timing records")
 
           print(
               "MACVITALS_RECOVERY_VERIFIED "
