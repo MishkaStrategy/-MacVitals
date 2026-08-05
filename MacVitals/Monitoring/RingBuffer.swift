@@ -54,7 +54,7 @@ nonisolated enum HistoryChartSegmentation {
 nonisolated struct RingBuffer<Element: Sendable>: Sendable {
   private var storage: [Element] = []
   private var startIndex = 0
-  let capacity: Int
+  private(set) var capacity: Int
 
   init(capacity: Int) {
     self.capacity = max(1, capacity)
@@ -80,6 +80,17 @@ nonisolated struct RingBuffer<Element: Sendable>: Sendable {
 
     storage[startIndex] = element
     startIndex = (startIndex + 1) % capacity
+  }
+
+  mutating func resize(to requestedCapacity: Int) {
+    let nextCapacity = max(1, requestedCapacity)
+    guard nextCapacity != capacity else { return }
+
+    let retained = Array(values.suffix(nextCapacity))
+    storage = retained
+    storage.reserveCapacity(nextCapacity)
+    startIndex = 0
+    capacity = nextCapacity
   }
 
   mutating func removeAll() {
