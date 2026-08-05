@@ -145,6 +145,8 @@ jobs:
             cropX = source.size.width - cropWidth
           case "center":
             cropX = (source.size.width - cropWidth) / 2
+          case "status":
+            cropX = max(0, source.size.width - 900)
           default:
             fatalError("Unsupported alignment: \(alignment)")
           }
@@ -177,7 +179,7 @@ jobs:
 
           status_image="${screenshot_dir}/status-bar-overview.png"
           hud_image="${screenshot_dir}/notch-hud.png"
-          swift "${crop_script}" "${status_image}" 640 820 right
+          swift "${crop_script}" "${status_image}" 640 820 status
           swift "${crop_script}" "${hud_image}" 1200 120 center
 
           test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 6
