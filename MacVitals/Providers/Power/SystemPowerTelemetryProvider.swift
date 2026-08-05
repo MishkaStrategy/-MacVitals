@@ -1,5 +1,4 @@
 import Foundation
-import IOKit
 
 nonisolated struct SystemPowerTelemetryReading: Sendable, Equatable {
   let systemLoadWatts: Double
@@ -17,19 +16,8 @@ nonisolated enum SystemPowerTelemetryNormalizer {
 
 struct SystemPowerTelemetryProvider: Sendable {
   func sample() -> SystemPowerTelemetryReading? {
-    let service = IOServiceGetMatchingService(
-      kIOMainPortDefault,
-      IOServiceMatching("AppleSmartBattery"))
-    guard service != 0 else { return nil }
-    defer { IOObjectRelease(service) }
-
-    var properties: Unmanaged<CFMutableDictionary>?
-    guard IORegistryEntryCreateCFProperties(
-      service,
-      &properties,
-      kCFAllocatorDefault,
-      0) == KERN_SUCCESS,
-      let dictionary = properties?.takeRetainedValue() as? [String: Any],
+    let dictionary = SmartBatteryRegistryCache.shared.snapshot()
+    guard
       let telemetry = dictionary["PowerTelemetryData"] as? [String: Any],
       let systemLoad = SystemPowerTelemetryNormalizer.watts(
         fromMilliwatts: telemetry["SystemLoad"]),

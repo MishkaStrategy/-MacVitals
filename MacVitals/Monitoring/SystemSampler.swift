@@ -1,6 +1,43 @@
 import Dispatch
 import Foundation
 
+nonisolated final class ProviderTimingAppendWriter {
+  private static let newline = Data([0x0A])
+
+  private let handle: FileHandle
+
+  init?(url: URL) {
+    let directory = url.deletingLastPathComponent()
+    do {
+      try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true)
+      if !FileManager.default.fileExists(atPath: url.path) {
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+          return nil
+        }
+      }
+      handle = try FileHandle(forWritingTo: url)
+      try handle.seekToEnd()
+    } catch {
+      return nil
+    }
+  }
+
+  deinit {
+    try? handle.close()
+  }
+
+  func append(_ data: Data) {
+    do {
+      try handle.write(contentsOf: data)
+      try handle.write(contentsOf: Self.newline)
+    } catch {
+      return
+    }
+  }
+}
+
 nonisolated enum BatterylessPowerAssessment {
   static func make(battery: BatteryStats?) -> PowerAssessment? {
     guard battery?.present == false else { return nil }
@@ -64,11 +101,11 @@ actor SystemSampler {
   private let temperatureProvider = TemperatureProvider()
   private let fanProvider = FanProvider()
   private var evaluator = ChargerSufficiencyEvaluator()
-  private let providerTimingDiagnosticsURL: URL? = {
+  private let providerTimingWriter: ProviderTimingAppendWriter? = {
     guard let path = ProcessInfo.processInfo.environment["MACVITALS_PROVIDER_TIMINGS_PATH"],
       !path.isEmpty
     else { return nil }
-    return URL(fileURLWithPath: path)
+    return ProviderTimingAppendWriter(url: URL(fileURLWithPath: path))
   }()
 
   func resetForDiscontinuity() {
@@ -210,7 +247,7 @@ actor SystemSampler {
     powerModelMilliseconds: Double,
     totalMilliseconds: Double
   ) {
-    guard let providerTimingDiagnosticsURL else { return }
+    guard let providerTimingWriter else { return }
 
     let record: [String: Any] = [
       "timestamp": timestamp.timeIntervalSince1970,
@@ -227,22 +264,6 @@ actor SystemSampler {
     ]
     guard let json = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
     else { return }
-
-    let directory = providerTimingDiagnosticsURL.deletingLastPathComponent()
-    try? FileManager.default.createDirectory(
-      at: directory,
-      withIntermediateDirectories: true)
-    if !FileManager.default.fileExists(atPath: providerTimingDiagnosticsURL.path) {
-      FileManager.default.createFile(atPath: providerTimingDiagnosticsURL.path, contents: nil)
-    }
-    guard let handle = try? FileHandle(forWritingTo: providerTimingDiagnosticsURL) else { return }
-    defer { try? handle.close() }
-    do {
-      try handle.seekToEnd()
-      try handle.write(contentsOf: json)
-      try handle.write(contentsOf: Data([0x0A]))
-    } catch {
-      return
-    }
+    providerTimingWriter.append(json)
   }
 }

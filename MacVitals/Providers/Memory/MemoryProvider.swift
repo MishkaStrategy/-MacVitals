@@ -36,6 +36,22 @@ private nonisolated struct SwapSnapshot: Sendable, Equatable {
   let freeBytes: UInt64
 }
 
+private nonisolated struct MemoryHardwareSnapshot: Sendable {
+  let physicalMemory: UInt64
+  let pageSize: UInt64?
+
+  static let current: MemoryHardwareSnapshot = {
+    var rawPageSize: vm_size_t = 0
+    let result = host_page_size(mach_host_self(), &rawPageSize)
+    let pageSize = result == KERN_SUCCESS && rawPageSize > 0
+      ? UInt64(rawPageSize)
+      : nil
+    return MemoryHardwareSnapshot(
+      physicalMemory: ProcessInfo.processInfo.physicalMemory,
+      pageSize: pageSize)
+  }()
+}
+
 struct MemoryProvider: Sendable {
   private let pressureProvider: any MemoryPressureProviding
 
@@ -59,16 +75,14 @@ struct MemoryProvider: Sendable {
         source: .machHostStatistics, message: "host_statistics64 failed: \(result)")
     }
 
-    var pageSize: vm_size_t = 0
-    let pageSizeResult = host_page_size(mach_host_self(), &pageSize)
-    guard pageSizeResult == KERN_SUCCESS, pageSize > 0 else {
+    let hardware = MemoryHardwareSnapshot.current
+    guard let page = hardware.pageSize else {
       return .unavailable(
         unit: .bytes, availability: .providerError,
-        source: .machHostStatistics, message: "host_page_size failed: \(pageSizeResult)")
+        source: .machHostStatistics, message: "host_page_size failed")
     }
 
-    let page = UInt64(pageSize)
-    let physical = ProcessInfo.processInfo.physicalMemory
+    let physical = hardware.physicalMemory
     let active = MemoryMath.bytes(pages: UInt64(stats.active_count), pageSize: page)
     let inactive = MemoryMath.bytes(pages: UInt64(stats.inactive_count), pageSize: page)
     let wired = MemoryMath.bytes(pages: UInt64(stats.wire_count), pageSize: page)
