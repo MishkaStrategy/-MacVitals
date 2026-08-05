@@ -96,6 +96,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The harness delegates canonical CPU/RSS collection to scripts/collect_runtime_metrics.sh.
+          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
           bash scripts/run_exact_long_idle_baseline.sh \
             "${APP_PATH}" \
             "${SOURCE_SHA}" \
@@ -128,7 +130,7 @@ jobs:
           if float(provider.get("observed_duration_s", 0)) < 600:
               raise SystemExit("provider timing coverage is incomplete")
 
-          interval = provider["actual_interval_s"]
+          interval = provider["observed_interval_s"]
           mean_interval = float(interval["mean"])
           p95_interval = float(interval["p95"])
           if not 1.8 <= mean_interval <= 2.3:
@@ -165,7 +167,7 @@ jobs:
           fi
           if [[ -d "${RESULTS_ROOT}" ]]; then
             echo "--- captured result files ---"
-            find "${RESULTS_ROOT}" -type f -maxdepth 4 -print | sort
+            find "${RESULTS_ROOT}" -type f -print | sort
           else
             echo "results directory is missing"
           fi
