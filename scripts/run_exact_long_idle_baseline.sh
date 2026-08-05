@@ -11,8 +11,12 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 MEASURE_SECONDS="${MEASURE_SECONDS:-1800}"
 SAMPLE_SECONDS="${SAMPLE_SECONDS:-2}"
 RUN_COUNT="${RUN_COUNT:-3}"
+RUNNER_IDLE_TIMEOUT_SECONDS="${RUNNER_IDLE_TIMEOUT_SECONDS:-900}"
+LOCK_DIR="${MACVITALS_PHYSICAL_LOCK_DIR:-/tmp/macvitals-physical-runtime.lock}"
 PREFS_BACKUP="${OUTPUT_ROOT}/preferences-before.plist"
 PREFS_EXISTED=0
+PREFS_SNAPSHOT_TAKEN=0
+LOCK_HELD=0
 TEST_PID=""
 
 mkdir -p "${OUTPUT_ROOT}"
@@ -20,6 +24,53 @@ mkdir -p "${OUTPUT_ROOT}"
 fail() {
   echo "long-baseline: $*" >&2
   exit 1
+}
+
+acquire_runner_lock() {
+  local deadline=$((SECONDS + RUNNER_IDLE_TIMEOUT_SECONDS))
+  local owner_pid=""
+  local stale_dir=""
+
+  while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+    owner_pid=""
+    if [[ -r "${LOCK_DIR}/owner-pid" ]]; then
+      read -r owner_pid < "${LOCK_DIR}/owner-pid" || owner_pid=""
+    fi
+
+    if [[ "${owner_pid}" =~ ^[0-9]+$ ]] && ! kill -0 "${owner_pid}" 2>/dev/null; then
+      stale_dir="${LOCK_DIR}.stale.$$"
+      if mv "${LOCK_DIR}" "${stale_dir}" 2>/dev/null; then
+        rm -rf "${stale_dir}"
+        continue
+      fi
+    fi
+
+    if ((SECONDS >= deadline)); then
+      fail "physical runtime lock remained busy for ${RUNNER_IDLE_TIMEOUT_SECONDS}s"
+    fi
+    sleep 2
+  done
+
+  printf '%s\n' "$$" > "${LOCK_DIR}/owner-pid"
+  printf 'source_sha=%s\nstarted_utc=%s\n' \
+    "${SOURCE_SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "${LOCK_DIR}/owner-metadata"
+  LOCK_HELD=1
+}
+
+release_runner_lock() {
+  local owner_pid=""
+  if [[ "${LOCK_HELD}" != "1" ]]; then
+    return
+  fi
+
+  if [[ -r "${LOCK_DIR}/owner-pid" ]]; then
+    read -r owner_pid < "${LOCK_DIR}/owner-pid" || owner_pid=""
+  fi
+  if [[ "${owner_pid}" == "$$" ]]; then
+    rm -rf "${LOCK_DIR}"
+  fi
+  LOCK_HELD=0
 }
 
 cleanup_process() {
@@ -60,14 +111,30 @@ wait_for_no_macvitals() {
   fail "MacVitals remained alive ${context}"
 }
 
+wait_for_runner_idle() {
+  local context="$1"
+  local deadline=$((SECONDS + RUNNER_IDLE_TIMEOUT_SECONDS))
+
+  while pgrep -x MacVitals >/dev/null 2>&1; do
+    if ((SECONDS >= deadline)); then
+      pgrep -flx MacVitals >&2 || true
+      fail "runner remained busy ${context} for ${RUNNER_IDLE_TIMEOUT_SECONDS}s"
+    fi
+    sleep 2
+  done
+}
+
 restore_preferences() {
   cleanup_process
-  if [[ "${PREFS_EXISTED}" == "1" && -s "${PREFS_BACKUP}" ]]; then
-    defaults import "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null
-  else
-    defaults delete "${DOMAIN}" >/dev/null 2>&1 || true
+  if [[ "${PREFS_SNAPSHOT_TAKEN}" == "1" ]]; then
+    if [[ "${PREFS_EXISTED}" == "1" && -s "${PREFS_BACKUP}" ]]; then
+      defaults import "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null
+    else
+      defaults delete "${DOMAIN}" >/dev/null 2>&1 || true
+    fi
+    killall cfprefsd >/dev/null 2>&1 || true
   fi
-  killall cfprefsd >/dev/null 2>&1 || true
+  release_runner_lock
 }
 trap restore_preferences EXIT INT TERM
 
@@ -75,17 +142,20 @@ trap restore_preferences EXIT INT TERM
 [[ -x "${EXECUTABLE}" ]] || fail "MacVitals executable is missing"
 [[ "$(uname -m)" == "arm64" ]] || fail "runner is not arm64"
 file "${EXECUTABLE}" | grep -q 'arm64' || fail "MacVitals executable is not arm64"
+[[ "${RUNNER_IDLE_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || fail "runner idle timeout is not an integer"
+((RUNNER_IDLE_TIMEOUT_SECONDS > 0)) || fail "runner idle timeout must be positive"
 
 POWER_STATE="$(pmset -g batt | head -n 1)"
 [[ "${POWER_STATE}" == *"AC Power"* ]] || fail "runner is not connected to AC power: ${POWER_STATE}"
 
-if pgrep -x MacVitals >/dev/null 2>&1; then
-  fail "a MacVitals process was already running before the test"
-fi
+acquire_runner_lock
+wait_for_runner_idle "before the test"
 
+rm -f "${PREFS_BACKUP}"
 if defaults export "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null 2>&1; then
   PREFS_EXISTED=1
 fi
+PREFS_SNAPSHOT_TAKEN=1
 
 DUAL_CONFIGURATION_HEX="$(python3 - <<'PY'
 import json
@@ -131,7 +201,8 @@ cat > "${OUTPUT_ROOT}/scenario.json" <<EOF
   "warmupSecondsPerRun": ${WARMUP_SECONDS},
   "measurementSecondsPerRun": ${MEASURE_SECONDS},
   "collectorIntervalSeconds": ${SAMPLE_SECONDS},
-  "runCount": ${RUN_COUNT}
+  "runCount": ${RUN_COUNT},
+  "runnerIdleTimeoutSeconds": ${RUNNER_IDLE_TIMEOUT_SECONDS}
 }
 EOF
 
