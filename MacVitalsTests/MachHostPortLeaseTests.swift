@@ -7,23 +7,24 @@ import XCTest
 final class MachHostPortLeaseTests: XCTestCase {
   func testLeaseAcquiresAndReleasesExactlyOnce() {
     let recorder = PortLifecycleRecorder()
+    let expectedPort = host_t(42)
     var lease: MachHostPortLease? = MachHostPortLease(
       acquire: {
         recorder.recordAcquire()
-        return 42
+        return expectedPort
       },
       release: { name in
         recorder.recordRelease(name)
       })
 
-    XCTAssertEqual(lease?.name, 42)
+    XCTAssertEqual(lease?.name, expectedPort)
     XCTAssertEqual(recorder.acquireCount, 1)
     XCTAssertEqual(recorder.releasedNames, [])
 
     lease = nil
 
     XCTAssertEqual(recorder.acquireCount, 1)
-    XCTAssertEqual(recorder.releasedNames, [42])
+    XCTAssertEqual(recorder.releasedNames, [expectedPort])
   }
 
   func testNullPortIsNotReleased() {
