@@ -17,6 +17,15 @@ private struct MenuBarStatusSegmentLayout {
 }
 
 nonisolated enum MenuBarStatusTitleRenderer {
+  @MainActor private static let whiteSymbolConfiguration =
+    NSImage.SymbolConfiguration(hierarchicalColor: .white)
+  @MainActor private static let fallbackAttributes: [NSAttributedString.Key: Any] = [
+    .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+    .foregroundColor: NSColor.white,
+  ]
+  @MainActor private static var valueAttributesCache:
+    [String: [NSAttributedString.Key: Any]] = [:]
+
   static func segments(
     snapshot: SystemSnapshot,
     metrics: [MenuMetric]
@@ -118,10 +127,6 @@ nonisolated enum MenuBarStatusTitleRenderer {
           height: icon.size.height)
         icon.draw(in: iconRect)
       } else {
-        let fallbackAttributes: [NSAttributedString.Key: Any] = [
-          .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-          .foregroundColor: NSColor.white,
-        ]
         let fallback = "·" as NSString
         let fallbackSize = fallback.size(withAttributes: fallbackAttributes)
         fallback.draw(
@@ -269,8 +274,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
       return nil
     }
 
-    let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
-    let image = source.withSymbolConfiguration(whiteConfiguration) ?? source
+    let image = source.withSymbolConfiguration(whiteSymbolConfiguration) ?? source
     image.size = source.size
     image.isTemplate = false
     return image
@@ -280,8 +284,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
   private static func fallbackLightImage() -> NSImage {
     let source = MenuBarIconCatalog.minimalImage(for: .cpu, state: .normal)
       ?? NSImage(size: NSSize(width: 12, height: 18))
-    let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
-    let image = source.withSymbolConfiguration(whiteConfiguration) ?? source
+    let image = source.withSymbolConfiguration(whiteSymbolConfiguration) ?? source
     image.isTemplate = false
     return image
   }
@@ -290,6 +293,9 @@ nonisolated enum MenuBarStatusTitleRenderer {
   private static func valueAttributes(
     for state: MenuBarIconState
   ) -> [NSAttributedString.Key: Any] {
+    let key = state.rawValue
+    if let cached = valueAttributesCache[key] { return cached }
+
     let weight: NSFont.Weight
     switch state {
     case .normal: weight = .regular
@@ -297,10 +303,12 @@ nonisolated enum MenuBarStatusTitleRenderer {
     case .critical: weight = .semibold
     }
 
-    return [
+    let attributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: weight),
       .foregroundColor: NSColor.white,
       .kern: -0.15,
     ]
+    valueAttributesCache[key] = attributes
+    return attributes
   }
 }
