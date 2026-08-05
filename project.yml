@@ -164,3 +164,15 @@ schemes:
       targets:
         MacVitals: all
         MacVitalsUITests: all
+  MacVitalsReadmeScreenshots:
+    build:
+      targets:
+        MacVitalsFanHelper: all
+        MacVitals: all
+        MacVitalsUITests: [test]
+    test:
+      gatherCoverageData: false
+      language: ru
+      region: RU
+      targets:
+        - MacVitalsUITests

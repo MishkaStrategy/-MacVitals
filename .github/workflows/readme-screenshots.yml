@@ -2,9 +2,16 @@ name: README Screenshots
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - feature/macvitals-v1
+    paths:
+      - .github/workflows/readme-screenshots.yml
+      - MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests.swift
+      - project.yml
 
 concurrency:
-  group: readme-screenshots-${{ github.ref }}
+  group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -13,11 +20,13 @@ permissions:
 jobs:
   capture:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: feature/macvitals-v1
+          ref: ${{ env.TARGET_BRANCH }}
           persist-credentials: true
 
       - name: Materialize application icon
@@ -34,13 +43,39 @@ jobs:
           result_bundle="${RUNNER_TEMP}/MacVitals-readme-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.xcresult"
           export_dir="${RUNNER_TEMP}/macvitals-readme-export"
           screenshot_dir="docs/screenshots"
-          rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}"
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+          diagnostics_dir="readme-screenshot-diagnostics"
+          rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}" "${diagnostics_dir}"
+          mkdir -p "${diagnostics_dir}"
+
+          set +e
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitalsReadmeScreenshots \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             -resultBundlePath "${result_bundle}" \
             clean test \
-            -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots \
+            -only-testing:MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests/testCaptureStatusBarAndHUDScreenshots \
+            2>&1 | tee "${diagnostics_dir}/xcodebuild.log"
+          xcode_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ -d "${result_bundle}" ]; then
+            xcrun xcresulttool get test-results summary \
+              --path "${result_bundle}" \
+              > "${diagnostics_dir}/test-summary.json" 2>&1 || true
+            xcrun xcresulttool get test-results tests \
+              --path "${result_bundle}" \
+              > "${diagnostics_dir}/test-details.json" 2>&1 || true
+            ditto -c -k --sequesterRsrc --keepParent \
+              "${result_bundle}" "${diagnostics_dir}/MacVitals-readme.xcresult.zip" || true
+          fi
+
+          if [ "${xcode_status}" -ne 0 ]; then
+            echo "README screenshot UI tests failed with status ${xcode_status}"
+            tail -n 300 "${diagnostics_dir}/xcodebuild.log" || true
+            exit "${xcode_status}"
+          fi
+
           xcrun xcresulttool export attachments \
             --path "${result_bundle}" \
             --output-path "${export_dir}"
@@ -54,12 +89,18 @@ jobs:
           screenshot_dir = Path(sys.argv[2])
           manifest = json.loads((export_dir / "manifest.json").read_text())
           expected = {
+              "status-bar-overview",
+              "notch-hud",
               "preferences-general",
               "preferences-menu-bar",
               "preferences-fans",
               "preferences-diagnostics",
           }
-          attachments = manifest[0]["attachments"]
+          attachments = [
+              attachment
+              for record in manifest
+              for attachment in record.get("attachments", [])
+          ]
           found = set()
           screenshot_dir.mkdir(parents=True, exist_ok=True)
           for attachment in attachments:
@@ -76,14 +117,97 @@ jobs:
                   f"extra={sorted(found - expected)}"
               )
           PY
-          test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
-          for image in "${screenshot_dir}"/*.png; do
+
+          crop_script="${RUNNER_TEMP}/crop-readme-screenshot.swift"
+          cat > "${crop_script}" <<'SWIFT'
+          import AppKit
+          import Foundation
+
+          guard CommandLine.arguments.count == 5 else {
+            fatalError("Expected path, width, height and horizontal alignment")
+          }
+
+          let path = CommandLine.arguments[1]
+          guard
+            let targetWidth = Double(CommandLine.arguments[2]),
+            let targetHeight = Double(CommandLine.arguments[3]),
+            let source = NSImage(contentsOfFile: path)
+          else {
+            fatalError("Unable to load screenshot or dimensions")
+          }
+
+          let cropWidth = min(CGFloat(targetWidth), source.size.width)
+          let cropHeight = min(CGFloat(targetHeight), source.size.height)
+          let alignment = CommandLine.arguments[4]
+          let cropX: CGFloat
+          switch alignment {
+          case "right":
+            cropX = source.size.width - cropWidth
+          case "center":
+            cropX = (source.size.width - cropWidth) / 2
+          case "status":
+            cropX = max(0, source.size.width - 900)
+          default:
+            fatalError("Unsupported alignment: \(alignment)")
+          }
+
+          let cropRect = NSRect(
+            x: cropX,
+            y: source.size.height - cropHeight,
+            width: cropWidth,
+            height: cropHeight)
+          let targetSize = NSSize(width: targetWidth, height: targetHeight)
+          let output = NSImage(size: targetSize)
+          output.lockFocus()
+          NSGraphicsContext.current?.imageInterpolation = .high
+          source.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: cropRect,
+            operation: .copy,
+            fraction: 1)
+          output.unlockFocus()
+
+          guard
+            let tiff = output.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:])
+          else {
+            fatalError("Unable to encode cropped screenshot")
+          }
+          try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+          SWIFT
+
+          status_image="${screenshot_dir}/status-bar-overview.png"
+          hud_image="${screenshot_dir}/notch-hud.png"
+          swift "${crop_script}" "${status_image}" 640 820 status
+          swift "${crop_script}" "${hud_image}" 1200 120 center
+
+          test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 6
+          for image in "${screenshot_dir}"/preferences-*.png; do
             test "$(sips -g pixelWidth "${image}" | awk '/pixelWidth/ {print $2}')" -eq 900
             test "$(sips -g pixelHeight "${image}" | awk '/pixelHeight/ {print $2}')" -eq 728
           done
+          test "$(sips -g pixelWidth "${status_image}" | awk '/pixelWidth/ {print $2}')" -eq 640
+          test "$(sips -g pixelHeight "${status_image}" | awk '/pixelHeight/ {print $2}')" -eq 820
+          test "$(sips -g pixelWidth "${hud_image}" | awk '/pixelWidth/ {print $2}')" -eq 1200
+          test "$(sips -g pixelHeight "${hud_image}" | awk '/pixelHeight/ {print $2}')" -eq 120
+
+      - name: Upload screenshot diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: readme-screenshot-diagnostics-${{ github.sha }}
+          path: readme-screenshot-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Commit real application screenshots
+        if: github.event_name == 'workflow_dispatch'
         run: |
+          if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ] || [ "${TARGET_BRANCH}" = "feature/macvitals-v1" ]; then
+            echo "Refusing to auto-commit README screenshots to a protected branch"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/screenshots/*.png
@@ -91,8 +215,12 @@ jobs:
             echo "README screenshots are already current"
             exit 0
           fi
-          git commit -m "docs: refresh real MacVitals screenshots"
-          git push origin HEAD:feature/macvitals-v1
+          git commit -m "docs: refresh real HUD and status bar screenshots"
+          git reset --hard HEAD
+          git clean -fd
+          git fetch origin "${TARGET_BRANCH}"
+          git rebase "origin/${TARGET_BRANCH}"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
