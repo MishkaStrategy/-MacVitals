@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORIGINAL="${SCRIPT_DIR}/run_ci_physical_validation.sh"
 HARDENED="${SCRIPT_DIR}/run_physical_validation_hardened.py"
 XCRUN_SHIM="${SCRIPT_DIR}/xcrun_physical_hardened.sh"
+LOCK_HELPER="${SCRIPT_DIR}/physical_runtime_lock.sh"
 TEMP_RUNNER=""
 SHIM_ROOT=""
 
@@ -18,12 +19,16 @@ fail() {
 cleanup() {
   [[ -z "${TEMP_RUNNER}" ]] || rm -f -- "${TEMP_RUNNER}"
   [[ -z "${SHIM_ROOT}" ]] || rm -rf -- "${SHIM_ROOT}"
+  physical_runtime_lock_release
 }
 trap cleanup EXIT HUP INT TERM
 
-for path in "${ORIGINAL}" "${HARDENED}" "${XCRUN_SHIM}"; do
+for path in "${ORIGINAL}" "${HARDENED}" "${XCRUN_SHIM}" "${LOCK_HELPER}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || fail "Required hardened physical runner file is missing or unsafe: ${path}"
 done
+
+# shellcheck source=physical_runtime_lock.sh
+source "${LOCK_HELPER}"
 
 build_hardened_runner() {
   local target="$1"
@@ -293,6 +298,7 @@ chmod 700 "${SHIM_ROOT}/xcrun"
 
 TEMP_RUNNER="${SCRIPT_DIR}/.run_ci_physical_validation_hardened.$$.sh"
 build_hardened_runner "${TEMP_RUNNER}"
+physical_runtime_lock_acquire || exit $?
 PATH="${SHIM_ROOT}:${PATH}" \
 PYTHONPATH="${SCRIPT_DIR}" \
 PYTHONNOUSERSITE=1 \
