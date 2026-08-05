@@ -2,24 +2,84 @@ import AppKit
 import Combine
 import SwiftUI
 
+actor ProcessMetricsSamplingCenter {
+  static let shared = ProcessMetricsSamplingCenter()
+
+  private let provider = ProcessMetricsProvider()
+  private var subscribers: Set<UUID> = []
+  private var cachedSnapshot: ProcessMetricsSnapshot = .empty
+  private var inFlight: Task<ProcessMetricsSnapshot, Never>?
+
+  func subscribe(_ id: UUID) async {
+    let wasIdle = subscribers.isEmpty
+    subscribers.insert(id)
+    if wasIdle {
+      cachedSnapshot = .empty
+      await provider.reset()
+    }
+  }
+
+  func unsubscribe(_ id: UUID) {
+    subscribers.remove(id)
+    if subscribers.isEmpty {
+      cachedSnapshot = .empty
+      inFlight?.cancel()
+      inFlight = nil
+    }
+  }
+
+  func sample(
+    runningApplications: [RunningApplicationDescriptor],
+    minimumInterval: TimeInterval
+  ) async -> ProcessMetricsSnapshot {
+    let freshnessWindow = max(0.25, minimumInterval * 0.8)
+    if cachedSnapshot.timestamp != .distantPast,
+      Date().timeIntervalSince(cachedSnapshot.timestamp) < freshnessWindow
+    {
+      return cachedSnapshot
+    }
+
+    if let inFlight {
+      return await inFlight.value
+    }
+
+    let provider = self.provider
+    let task = Task {
+      await provider.sample(runningApplications: runningApplications)
+    }
+    inFlight = task
+    let snapshot = await task.value
+    cachedSnapshot = snapshot
+    inFlight = nil
+    return snapshot
+  }
+}
+
 @MainActor
 final class ProcessConsumersMonitor: ObservableObject {
   @Published private(set) var snapshot: ProcessMetricsSnapshot = .empty
   @Published private(set) var isRunning = false
 
-  private let provider = ProcessMetricsProvider()
+  private let center = ProcessMetricsSamplingCenter.shared
   private var task: Task<Void, Never>?
 
   func start(interval: TimeInterval) {
     guard task == nil else { return }
     isRunning = true
     let refreshInterval = min(30, max(1, interval))
-    task = Task { [weak self, provider] in
-      await provider.reset()
+    let subscriberID = UUID()
+    task = Task { [weak self, center] in
+      await center.subscribe(subscriberID)
+      defer {
+        Task { await center.unsubscribe(subscriberID) }
+      }
+
       while !Task.isCancelled {
         guard let self else { break }
         let applications = self.runningApplicationDescriptors()
-        let next = await provider.sample(runningApplications: applications)
+        let next = await center.sample(
+          runningApplications: applications,
+          minimumInterval: refreshInterval)
         guard !Task.isCancelled else { break }
         self.snapshot = next
         let nanoseconds = UInt64(refreshInterval * 1_000_000_000)
