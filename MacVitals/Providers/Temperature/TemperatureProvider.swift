@@ -59,19 +59,20 @@ final class TemperatureProvider: @unchecked Sendable {
 
     var readings = smcReadings
     if let battery {
-      readings.removeAll { $0.id == "battery.iokit" }
-      readings.append(
-        TemperatureReading(
-          id: "battery.iokit",
-          name: TemperatureL10n.string("Battery temperature"),
-          category: .battery,
-          celsius: battery,
-          source: .iokitRegistry,
-          isPrimary: true))
+      let batteryReading = TemperatureReading(
+        id: "battery.iokit",
+        name: TemperatureL10n.string("Battery temperature"),
+        category: .battery,
+        celsius: battery,
+        source: .iokitRegistry,
+        isPrimary: true)
+      let insertionIndex = readings.firstIndex {
+        Self.readingSort(batteryReading, $0)
+      } ?? readings.endIndex
+      readings.insert(batteryReading, at: insertionIndex)
     }
-    readings.sort(by: Self.readingSort)
 
-    let maximum = readings.map(\.celsius).max()
+    let maximum = readings.max { $0.celsius < $1.celsius }?.celsius
     guard processorReading != nil || battery != nil || !readings.isEmpty else {
       return MetricValue(
         value: nil,
@@ -112,6 +113,7 @@ final class TemperatureProvider: @unchecked Sendable {
     guard let source = smcConnection() else { return cachedSMCReadings }
     let keys = temperatureKeys(source: source)
     let readings = keys.compactMap { reading(key: $0, source: source) }
+      .sorted(by: Self.readingSort)
     cachedSMCReadings = readings
     lastSMCSampleAt = now
     return readings
@@ -187,12 +189,24 @@ final class TemperatureProvider: @unchecked Sendable {
   }
 
   private static func readingSort(_ lhs: TemperatureReading, _ rhs: TemperatureReading) -> Bool {
-    let categories = TemperatureSensorCategory.allCases
-    let lhsIndex = categories.firstIndex(of: lhs.category) ?? categories.count
-    let rhsIndex = categories.firstIndex(of: rhs.category) ?? categories.count
-    if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
+    let lhsRank = categoryRank(lhs.category)
+    let rhsRank = categoryRank(rhs.category)
+    if lhsRank != rhsRank { return lhsRank < rhsRank }
     if lhs.isPrimary != rhs.isPrimary { return lhs.isPrimary }
     if lhs.name != rhs.name { return lhs.name < rhs.name }
     return (lhs.key ?? lhs.id) < (rhs.key ?? rhs.id)
+  }
+
+  private static func categoryRank(_ category: TemperatureSensorCategory) -> Int {
+    switch category {
+    case .processor: return 0
+    case .graphics: return 1
+    case .memory: return 2
+    case .storage: return 3
+    case .battery: return 4
+    case .power: return 5
+    case .enclosure: return 6
+    case .other: return 7
+    }
   }
 }
