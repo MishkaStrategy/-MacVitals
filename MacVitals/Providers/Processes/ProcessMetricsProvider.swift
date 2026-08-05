@@ -181,6 +181,25 @@ nonisolated enum ProcessCollectionSanitizer {
   }
 }
 
+nonisolated enum ProcessNameReusePolicy {
+  static func reusableName(
+    previous: ProcessCounterSample?,
+    pid: pid_t,
+    startTime: UInt64,
+    unknownName: String
+  ) -> String? {
+    guard startTime > 0,
+      let previous,
+      previous.pid == pid,
+      previous.startTime == startTime,
+      previous.name != unknownName
+    else {
+      return nil
+    }
+    return previous.name
+  }
+}
+
 actor ProcessMetricsProvider {
   private struct ProcessIdentity: Hashable {
     let pid: pid_t
@@ -367,11 +386,21 @@ actor ProcessMetricsProvider {
       diskWrite = nil
     }
 
+    let unknownName = L10n.string("Unknown process")
+    let identity = ProcessIdentity(pid: pid, startTime: startTime)
+    let name =
+      ProcessNameReusePolicy.reusableName(
+        previous: previousSamples[identity],
+        pid: pid,
+        startTime: startTime,
+        unknownName: unknownName)
+      ?? processName(pid: pid, fallback: unknownName)
+
     return ProcessCounterSample(
       pid: pid,
       parentPID: bsdResult == expectedBSDSize ? pid_t(bsdInfo.pbi_ppid) : 0,
       startTime: startTime,
-      name: processName(pid: pid),
+      name: name,
       cpuTimeNanoseconds: cpuTime,
       physicalFootprintBytes: footprint,
       energyNanojoules: energy,
@@ -379,14 +408,14 @@ actor ProcessMetricsProvider {
       diskWriteBytes: diskWrite)
   }
 
-  private func processName(pid: pid_t) -> String {
+  private func processName(pid: pid_t, fallback: String) -> String {
     var buffer = [CChar](repeating: 0, count: Int(MAXCOMLEN) + 1)
     let length = buffer.withUnsafeMutableBytes { bytes -> Int32 in
       proc_name(pid, bytes.baseAddress, UInt32(bytes.count))
     }
-    guard length > 0 else { return L10n.string("Unknown process") }
+    guard length > 0 else { return fallback }
     return buffer.withUnsafeBufferPointer { pointer in
-      guard let base = pointer.baseAddress else { return L10n.string("Unknown process") }
+      guard let base = pointer.baseAddress else { return fallback }
       return String(cString: base)
     }
   }
