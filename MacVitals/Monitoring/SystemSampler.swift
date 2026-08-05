@@ -64,6 +64,12 @@ actor SystemSampler {
   private let temperatureProvider = TemperatureProvider()
   private let fanProvider = FanProvider()
   private var evaluator = ChargerSufficiencyEvaluator()
+  private let providerTimingDiagnosticsURL: URL? = {
+    guard let path = ProcessInfo.processInfo.environment["MACVITALS_PROVIDER_TIMINGS_PATH"],
+      !path.isEmpty
+    else { return nil }
+    return URL(fileURLWithPath: path)
+  }()
 
   func resetForDiscontinuity() {
     cpuProvider.resetBaseline()
@@ -78,12 +84,14 @@ actor SystemSampler {
     let (memory, memoryMilliseconds) = measure { memoryProvider.sample() }
     let (battery, batteryMilliseconds) = measure { batteryProvider.sample() }
     let (adapter, adapterMilliseconds) = measure { adapterProvider.sample() }
-    let telemetry = powerTelemetryProvider.sample()
+    let (telemetry, powerTelemetryMilliseconds) = measure { powerTelemetryProvider.sample() }
     let (gpu, gpuMilliseconds) = measure { gpuProvider.sample() }
     let now = Date()
-    let temperature = temperatureProvider.sample(
-      batteryTemperatureCelsius: battery.value?.temperatureCelsius,
-      now: now)
+    let (temperature, temperatureMilliseconds) = measure {
+      temperatureProvider.sample(
+        batteryTemperatureCelsius: battery.value?.temperatureCelsius,
+        now: now)
+    }
     let (fans, fanMilliseconds) = measure { fanProvider.sample() }
     let batteryValue = battery.value
     let adapterValue = adapter.value
@@ -150,6 +158,9 @@ actor SystemSampler {
       fans: fans,
       power: power)
     let totalEnd = DispatchTime.now().uptimeNanoseconds
+    let totalMilliseconds = SamplingTimingMath.milliseconds(
+      startNanoseconds: totalStart,
+      endNanoseconds: totalEnd)
     let timings = SamplingTimings(
       cpuMilliseconds: cpuMilliseconds,
       memoryMilliseconds: memoryMilliseconds,
@@ -158,9 +169,20 @@ actor SystemSampler {
       gpuMilliseconds: gpuMilliseconds,
       fanMilliseconds: fanMilliseconds,
       powerModelMilliseconds: powerModelMilliseconds,
-      totalMilliseconds: SamplingTimingMath.milliseconds(
-        startNanoseconds: totalStart,
-        endNanoseconds: totalEnd))
+      totalMilliseconds: totalMilliseconds)
+
+    recordProviderTimings(
+      timestamp: now,
+      cpuMilliseconds: cpuMilliseconds,
+      memoryMilliseconds: memoryMilliseconds,
+      batteryMilliseconds: batteryMilliseconds,
+      adapterMilliseconds: adapterMilliseconds,
+      powerTelemetryMilliseconds: powerTelemetryMilliseconds,
+      gpuMilliseconds: gpuMilliseconds,
+      temperatureMilliseconds: temperatureMilliseconds,
+      fanMilliseconds: fanMilliseconds,
+      powerModelMilliseconds: powerModelMilliseconds,
+      totalMilliseconds: totalMilliseconds)
 
     return SampleResult(snapshot: snapshot, timings: timings)
   }
@@ -173,5 +195,54 @@ actor SystemSampler {
       value,
       SamplingTimingMath.milliseconds(startNanoseconds: start, endNanoseconds: end)
     )
+  }
+
+  private func recordProviderTimings(
+    timestamp: Date,
+    cpuMilliseconds: Double,
+    memoryMilliseconds: Double,
+    batteryMilliseconds: Double,
+    adapterMilliseconds: Double,
+    powerTelemetryMilliseconds: Double,
+    gpuMilliseconds: Double,
+    temperatureMilliseconds: Double,
+    fanMilliseconds: Double,
+    powerModelMilliseconds: Double,
+    totalMilliseconds: Double
+  ) {
+    guard let providerTimingDiagnosticsURL else { return }
+
+    let record: [String: Any] = [
+      "timestamp": timestamp.timeIntervalSince1970,
+      "cpu_ms": cpuMilliseconds,
+      "memory_ms": memoryMilliseconds,
+      "battery_ms": batteryMilliseconds,
+      "adapter_ms": adapterMilliseconds,
+      "power_telemetry_ms": powerTelemetryMilliseconds,
+      "gpu_ms": gpuMilliseconds,
+      "temperature_ms": temperatureMilliseconds,
+      "fan_ms": fanMilliseconds,
+      "power_model_ms": powerModelMilliseconds,
+      "total_ms": totalMilliseconds,
+    ]
+    guard let json = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+    else { return }
+
+    let directory = providerTimingDiagnosticsURL.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true)
+    if !FileManager.default.fileExists(atPath: providerTimingDiagnosticsURL.path) {
+      FileManager.default.createFile(atPath: providerTimingDiagnosticsURL.path, contents: nil)
+    }
+    guard let handle = try? FileHandle(forWritingTo: providerTimingDiagnosticsURL) else { return }
+    defer { try? handle.close() }
+    do {
+      try handle.seekToEnd()
+      try handle.write(contentsOf: json)
+      try handle.write(contentsOf: Data([0x0A]))
+    } catch {
+      return
+    }
   }
 }
