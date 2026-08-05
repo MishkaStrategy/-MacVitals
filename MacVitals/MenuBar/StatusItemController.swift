@@ -50,6 +50,7 @@ final class StatusItemController: NSObject {
       button.imageHugsTitle = true
       button.contentTintColor = nil
       button.setAccessibilityIdentifier("macVitalsStatusItem")
+      button.setAccessibilityLabel("MacVitals")
     }
 
     Publishers.CombineLatest4(
@@ -180,13 +181,11 @@ final class StatusItemController: NSObject {
         lastStatusSegments = statusSegments
       }
 
-      button.setAccessibilityLabel("MacVitals")
       let accessibilityValue = MenuBarRenderer.render(snapshot: snapshot, metrics: normalized)
       if accessibilityValue != lastAccessibilityValue {
         button.setAccessibilityValue(accessibilityValue)
         lastAccessibilityValue = accessibilityValue
       }
     }
-    statusItem.length = NSStatusItem.variableLength
   }
 }
