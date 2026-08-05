@@ -1,0 +1,118 @@
+name: Exact Long Idle Baseline PR Gate
+
+on:
+  pull_request:
+    branches:
+      - perf/process-ui-render-cache
+    paths:
+      - MacVitals/**
+      - MacVitalsTests/**
+      - scripts/run_exact_long_idle_baseline.sh
+      - scripts/collect_runtime_metrics.py
+      - scripts/collect_runtime_metrics.sh
+      - scripts/report_runtime_resources.py
+      - scripts/summarize_provider_timings.py
+      - .github/workflows/exact-long-idle-baseline-pr.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exact-long-idle-baseline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  exact-long-idle-baseline:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 140
+    env:
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
+      RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
+    steps:
+      - name: Checkout exact optimization head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact source and ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          test "$(uname -m)" = arm64
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
+            echo 'Forbidden pet code found in exact candidate' >&2
+            exit 1
+          }
+          echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Generate project and build exact Release arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/materialize_app_icon.py
+          xcodegen generate
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+          APP_PATH="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          test -x "${APP_PATH}/Contents/MacOS/MacVitals"
+          file "${APP_PATH}/Contents/MacOS/MacVitals" | grep -q arm64
+          echo "APP_PATH=${APP_PATH}" >> "${GITHUB_ENV}"
+
+      - name: Run three exact AC idle measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/run_exact_long_idle_baseline.sh \
+            "${APP_PATH}" \
+            "${SOURCE_SHA}" \
+            "${RESULTS_ROOT}" | tee long-idle-baseline.log
+
+      - name: Validate evidence contract
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${RESULTS_ROOT}/scenario.json"
+          test -f "${RESULTS_ROOT}/aggregate-summary.json"
+          for run_number in 1 2 3; do
+            test -s "${RESULTS_ROOT}/run-${run_number}/provider-timings.jsonl"
+            test -f "${RESULTS_ROOT}/run-${run_number}/provider-summary.json"
+            test -f "${RESULTS_ROOT}/run-${run_number}/resource-summary.json"
+            find "${RESULTS_ROOT}/run-${run_number}/process" -name samples.csv -type f -print -quit | grep -q .
+            find "${RESULTS_ROOT}/run-${run_number}/process" -name summary.json -type f -print -quit | grep -q .
+          done
+          grep -q 'MACVITALS_RESOURCE_SUMMARY' long-idle-baseline.log
+          grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' long-idle-baseline.log
+          grep -q 'MACVITALS_LONG_BASELINE_SUMMARY' long-idle-baseline.log
+
+      - name: Upload exact long-baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-long-idle-baseline-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            long-idle-baseline.log
+            long-idle-baseline-results/
+          if-no-files-found: error
+          retention-days: 30
