@@ -170,12 +170,6 @@ final class StatusItemController: NSObject {
       configuration: notchHUDConfiguration)
 
     if let button = statusItem.button {
-      button.title = ""
-      button.attributedTitle = NSAttributedString(string: "")
-      button.imagePosition = .imageOnly
-      button.imageScaling = .scaleNone
-      button.contentTintColor = nil
-
       let statusSegments = MenuBarStatusTitleRenderer.segments(
         snapshot: snapshot,
         metrics: normalized)
