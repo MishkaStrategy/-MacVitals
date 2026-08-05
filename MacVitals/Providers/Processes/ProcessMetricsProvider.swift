@@ -241,7 +241,9 @@ actor ProcessMetricsProvider {
 
   func sample(runningApplications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     let now = Date()
-    let samplesByPID = ProcessCollectionSanitizer.samplesByPID(readAllProcesses())
+    let unknownProcessName = L10n.string("Unknown process")
+    let samplesByPID = ProcessCollectionSanitizer.samplesByPID(
+      readAllProcesses(unknownName: unknownProcessName))
     let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
     let applicationsByPID = ProcessCollectionSanitizer.applicationsByPID(runningApplications)
     var accumulators: [String: ApplicationAccumulator] = [:]
@@ -260,7 +262,8 @@ actor ProcessMetricsProvider {
         for: sample,
         samplesByPID: samplesByPID,
         applicationsByPID: applicationsByPID)
-      var accumulator = accumulators[descriptor.id]
+      var accumulator =
+        accumulators[descriptor.id]
         ?? ApplicationAccumulator(descriptor: descriptor)
 
       accumulator.processCount += 1
@@ -297,7 +300,8 @@ actor ProcessMetricsProvider {
       let accountedEnergy = accumulator.hasEnergy ? accumulator.energyWatts : 0
       let cpuComponent = accumulator.cpuPercent * 0.08
       let ioComponent = accumulator.diskBytesPerSecond / 1_048_576 * 0.04
-      let graphicsMultiplier = accumulator.graphicsSignal > 0 ? 1 + accumulator.graphicsSignal : 0.18
+      let graphicsMultiplier =
+        accumulator.graphicsSignal > 0 ? 1 + accumulator.graphicsSignal : 0.18
       return max(0, (accountedEnergy * 3 + cpuComponent + ioComponent) * graphicsMultiplier)
     }
     let energyScores = ProcessCounterCalculator.normalizedScores(energyRaw)
@@ -328,7 +332,7 @@ actor ProcessMetricsProvider {
       energyCountersAvailable: energyCountersAvailable)
   }
 
-  private func readAllProcesses() -> [ProcessCounterSample] {
+  private func readAllProcesses(unknownName: String) -> [ProcessCounterSample] {
     let requestedCount = max(512, Int(proc_listallpids(nil, 0)) + 64)
     var pids = [pid_t](repeating: 0, count: requestedCount)
     let returned = pids.withUnsafeMutableBytes { buffer -> Int32 in
@@ -338,11 +342,11 @@ actor ProcessMetricsProvider {
 
     let populatedCount = min(Int(returned), pids.count)
     return ProcessCollectionSanitizer.uniquePIDs(pids.prefix(populatedCount)).compactMap { pid in
-      readProcess(pid: pid)
+      readProcess(pid: pid, unknownName: unknownName)
     }
   }
 
-  private func readProcess(pid: pid_t) -> ProcessCounterSample? {
+  private func readProcess(pid: pid_t, unknownName: String) -> ProcessCounterSample? {
     var usage = rusage_info_v6()
     let usageResult: Int32 = withUnsafeMutablePointer(to: &usage) { pointer in
       var rawPointer: rusage_info_t? = UnsafeMutableRawPointer(pointer)
@@ -386,7 +390,6 @@ actor ProcessMetricsProvider {
       diskWrite = nil
     }
 
-    let unknownName = L10n.string("Unknown process")
     let identity = ProcessIdentity(pid: pid, startTime: startTime)
     let name =
       ProcessNameReusePolicy.reusableName(
