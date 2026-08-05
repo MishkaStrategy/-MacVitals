@@ -1,0 +1,113 @@
+name: Recover Provider Stack Long Baseline Evidence
+
+on:
+  pull_request:
+    branches:
+      - perf/provider-stack-long-baseline
+    paths:
+      - .github/workflows/recover-provider-stack-long-baseline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-long-baseline-evidence-publish
+  cancel-in-progress: false
+
+jobs:
+  recover-staged-evidence:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    env:
+      EXPECTED_SOURCE_SHA: 7462578a8e622fd409d7bf1269a6c2b451676514
+      EXPECTED_SOURCE_RUN_ID: "31002026601"
+      EXPECTED_SOURCE_RUNNER_NAME: mac-MacBook-Pro-MishkaStrategy-06
+    steps:
+      - name: Locate and verify staged evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECOVERY_ROOT="${HOME}/Library/Caches/MacVitals-CI/long-baseline/${EXPECTED_SOURCE_SHA}"
+          test -d "${RECOVERY_ROOT}"
+          test -f "${RECOVERY_ROOT}/recovery-manifest.json"
+
+          python3 - "${RECOVERY_ROOT}" "${EXPECTED_SOURCE_SHA}" "${EXPECTED_SOURCE_RUN_ID}" "${EXPECTED_SOURCE_RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          expected_sha = sys.argv[2]
+          expected_run_id = sys.argv[3]
+          expected_source_runner = sys.argv[4]
+          manifest = json.loads((root / "recovery-manifest.json").read_text())
+
+          if manifest.get("sourceSha") != expected_sha:
+              raise SystemExit("recovery source SHA mismatch")
+          if manifest.get("sourceWorkflowRunId") != expected_run_id:
+              raise SystemExit("recovery source run mismatch")
+          if manifest.get("sourceRunnerName") != expected_source_runner:
+              raise SystemExit("recovery source runner mismatch")
+
+          files = manifest.get("files", [])
+          if not files:
+              raise SystemExit("recovery manifest contains no files")
+          for entry in files:
+              path = root / entry["path"]
+              if not path.is_file():
+                  raise SystemExit(f"missing staged file: {entry['path']}")
+              if path.stat().st_size != int(entry["bytes"]):
+                  raise SystemExit(f"size mismatch: {entry['path']}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != entry["sha256"]:
+                  raise SystemExit(f"digest mismatch: {entry['path']}")
+
+          results = root / "long-idle-baseline-results"
+          scenario = json.loads((results / "scenario.json").read_text())
+          aggregate = json.loads((results / "aggregate-summary.json").read_text())
+          if scenario.get("sourceSha") != expected_sha:
+              raise SystemExit("scenario source SHA mismatch")
+          if aggregate.get("sourceSha") != expected_sha:
+              raise SystemExit("aggregate source SHA mismatch")
+          if int(aggregate.get("runCount", 0)) != 3:
+              raise SystemExit("aggregate run count mismatch")
+
+          for run_number in range(1, 4):
+              run_root = results / f"run-{run_number}"
+              resource = json.loads((run_root / "resource-summary.json").read_text())
+              provider = json.loads((run_root / "provider-summary.json").read_text())
+              if resource.get("sourceSha") != expected_sha:
+                  raise SystemExit(f"run {run_number}: resource source SHA mismatch")
+              if int(resource["measurement"]["sampleCount"]) < 900:
+                  raise SystemExit(f"run {run_number}: insufficient process samples")
+              if int(provider["cycleCount"]) < 890:
+                  raise SystemExit(f"run {run_number}: insufficient provider cycles")
+
+          print(
+              "MACVITALS_RECOVERY_VERIFIED "
+              f"source_sha={expected_sha} source_run_id={expected_run_id} "
+              f"source_runner={expected_source_runner} "
+              f"publish_runner={os.environ.get('RUNNER_NAME', 'unknown')} "
+              f"files={len(files)}")
+          PY
+
+          echo "RECOVERY_ROOT=${RECOVERY_ROOT}" >> "${GITHUB_ENV}"
+
+      - name: Upload recovered exact long-baseline evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-provider-stack-long-baseline-${{ env.EXPECTED_SOURCE_SHA }}
+          path: ${{ env.RECOVERY_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove published recovery bundle
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOVERY_ROOT:-}"
+          rm -rf "${RECOVERY_ROOT}"
