@@ -23,15 +23,41 @@ fail() {
 }
 
 cleanup_process() {
-  if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
-    kill -TERM "${TEST_PID}" 2>/dev/null || true
+  local pid="${TEST_PID}"
+  if [[ -z "${pid}" ]]; then
+    return
+  fi
+
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -TERM "${pid}" 2>/dev/null || true
     for _ in {1..50}; do
-      kill -0 "${TEST_PID}" 2>/dev/null || break
+      kill -0 "${pid}" 2>/dev/null || break
       sleep 0.1
     done
-    kill -KILL "${TEST_PID}" 2>/dev/null || true
   fi
+
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -KILL "${pid}" 2>/dev/null || true
+  fi
+
+  # The app is a direct child of this harness. Reap it before checking the
+  # global process table so a short-lived zombie cannot fail the next-run gate.
+  wait "${pid}" 2>/dev/null || true
+  for _ in {1..50}; do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -0 "${pid}" 2>/dev/null && fail "test process ${pid} could not be reaped"
   TEST_PID=""
+}
+
+wait_for_no_macvitals() {
+  local context="$1"
+  for _ in {1..50}; do
+    pgrep -x MacVitals >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  fail "MacVitals remained alive ${context}"
 }
 
 restore_preferences() {
@@ -117,9 +143,7 @@ for run_number in $(seq 1 "${RUN_COUNT}"); do
   APP_LOG="${RUN_ROOT}/app.log"
   mkdir -p "${RUN_ROOT}" "${PROCESS_ROOT}"
 
-  if pgrep -x MacVitals >/dev/null 2>&1; then
-    fail "MacVitals was unexpectedly running before run ${run_number}"
-  fi
+  wait_for_no_macvitals "before run ${run_number}"
 
   MACVITALS_PROVIDER_TIMINGS_PATH="${PROVIDER_JSONL}" \
     "${EXECUTABLE}" >"${APP_LOG}" 2>&1 &
@@ -155,20 +179,22 @@ for run_number in $(seq 1 "${RUN_COUNT}"); do
     --configured-interval 2
 
   cleanup_process
-  pgrep -x MacVitals >/dev/null 2>&1 && fail "MacVitals remained alive after run ${run_number} cleanup"
+  wait_for_no_macvitals "after run ${run_number} cleanup"
   sleep 2
 done
 
-python3 - "${OUTPUT_ROOT}" <<'PY'
+python3 - "${OUTPUT_ROOT}" "${RUN_COUNT}" <<'PY'
 import json
 import statistics
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
+expected_run_count = int(sys.argv[2])
 reports = [json.loads(path.read_text()) for path in sorted(root.glob("run-*/resource-summary.json"))]
-if len(reports) < 1:
-    raise SystemExit("no resource reports")
+if len(reports) != expected_run_count:
+    raise SystemExit(
+        f"expected {expected_run_count} resource reports, found {len(reports)}")
 
 def values(*keys):
     result = []
