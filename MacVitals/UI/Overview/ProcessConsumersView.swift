@@ -70,21 +70,32 @@ final class ProcessConsumersMonitor: ObservableObject {
     let subscriberID = UUID()
     task = Task { [weak self, center] in
       await center.subscribe(subscriberID)
-      defer {
-        Task { await center.unsubscribe(subscriberID) }
-      }
 
       while !Task.isCancelled {
-        guard let self else { break }
-        let applications = self.runningApplicationDescriptors()
+        let applications: [RunningApplicationDescriptor]
+        do {
+          guard let self else { break }
+          applications = self.runningApplicationDescriptors()
+        }
+
         let next = await center.sample(
           runningApplications: applications,
           minimumInterval: refreshInterval)
-        guard !Task.isCancelled else { break }
-        self.snapshot = next
+
+        do {
+          guard !Task.isCancelled, let self else { break }
+          self.snapshot = next
+        }
+
         let nanoseconds = UInt64(refreshInterval * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanoseconds)
+        do {
+          try await Task.sleep(nanoseconds: nanoseconds)
+        } catch {
+          break
+        }
       }
+
+      await center.unsubscribe(subscriberID)
     }
   }
 
