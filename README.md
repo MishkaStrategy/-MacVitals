@@ -20,7 +20,7 @@ CPU, memory, battery, power, temperatures, processes, fan telemetry, a configura
 
 <p align="center">
   <a href="docs/screenshots/status-bar-overview.png">
-    <img src="docs/screenshots/status-bar-overview.png" alt="Real MacVitals status bar and overview popover" width="1000">
+    <img src="docs/screenshots/status-bar-overview.png" alt="Real MacVitals status bar and overview popover" width="640">
   </a>
 </p>
 
