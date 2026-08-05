@@ -20,7 +20,7 @@ CPU, память, батарея, питание, температуры, пр�
 
 <p align="center">
   <a href="docs/screenshots/status-bar-overview.png">
-    <img src="docs/screenshots/status-bar-overview.png" alt="Реальный status bar и обзор MacVitals" width="1000">
+    <img src="docs/screenshots/status-bar-overview.png" alt="Реальный status bar и обзор MacVitals" width="640">
   </a>
 </p>
 
