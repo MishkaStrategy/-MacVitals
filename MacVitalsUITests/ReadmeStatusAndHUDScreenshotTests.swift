@@ -37,9 +37,10 @@ final class ReadmeStatusAndHUDScreenshotTests: XCTestCase {
     selectTab("Индикатор выреза", in: app)
     ensureToggle(identifier: "notchHUDEnabledToggle", isOn: true, in: app)
     ensureToggle(
-      label: "Показывать имитацию контура на экранах без выреза",
+      identifier: "notchHUDSimulatedDisplayToggle",
       isOn: true,
-      in: app)
+      in: app,
+      scrollIfNeeded: true)
 
     app.typeKey("w", modifierFlags: .command)
     Thread.sleep(forTimeInterval: 1)
@@ -87,6 +88,7 @@ final class ReadmeStatusAndHUDScreenshotTests: XCTestCase {
     identifier: String,
     isOn expectedState: Bool,
     in app: XCUIApplication,
+    scrollIfNeeded: Bool = false,
     file: StaticString = #filePath,
     line: UInt = #line
   ) {
@@ -95,29 +97,24 @@ final class ReadmeStatusAndHUDScreenshotTests: XCTestCase {
       app.checkBoxes.matching(identifier: identifier).firstMatch,
       app.descendants(matching: .any).matching(identifier: identifier).firstMatch,
     ]
+
+    if scrollIfNeeded, !candidates.contains(where: { $0.exists }) {
+      let scrollView = app.scrollViews.matching(identifier: "notchHUDIntegratedSettings").firstMatch
+      let fallbackScrollView = app.scrollViews.firstMatch
+      let activeScrollView = scrollView.exists ? scrollView : fallbackScrollView
+      if activeScrollView.waitForExistence(timeout: 2) {
+        for _ in 0..<6 {
+          activeScrollView.swipeUp()
+          Thread.sleep(forTimeInterval: 0.25)
+          if candidates.contains(where: { $0.exists }) {
+            break
+          }
+        }
+      }
+    }
+
     guard let toggle = candidates.first(where: { $0.waitForExistence(timeout: 2) }) else {
       XCTFail("Missing toggle identifier: \(identifier)", file: file, line: line)
-      return
-    }
-    setToggle(toggle, isOn: expectedState)
-  }
-
-  private func ensureToggle(
-    label: String,
-    isOn expectedState: Bool,
-    in app: XCUIApplication,
-    file: StaticString = #filePath,
-    line: UInt = #line
-  ) {
-    let predicate = NSPredicate(format: "label == %@", label)
-    let candidates = [
-      app.switches.matching(predicate).firstMatch,
-      app.checkBoxes.matching(predicate).firstMatch,
-      app.buttons.matching(predicate).firstMatch,
-      app.descendants(matching: .any).matching(predicate).firstMatch,
-    ]
-    guard let toggle = candidates.first(where: { $0.waitForExistence(timeout: 2) }) else {
-      XCTFail("Missing toggle label: \(label)", file: file, line: line)
       return
     }
     setToggle(toggle, isOn: expectedState)
