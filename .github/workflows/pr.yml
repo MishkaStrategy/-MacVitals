@@ -42,6 +42,7 @@ jobs:
 
       - name: Upload native build diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-build-diagnostics
@@ -61,6 +62,7 @@ jobs:
 
       - name: Upload native test diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-test-diagnostics
@@ -83,6 +85,7 @@ jobs:
 
       - name: Upload release package diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-package-diagnostics
@@ -116,6 +119,7 @@ jobs:
 
       - name: Upload hosted physical harness smoke
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: physical-validation-harness-hosted-smoke-arm64
@@ -191,6 +195,7 @@ jobs:
 
       - name: Upload native UI build diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: native-ui-build-diagnostics
@@ -279,6 +284,7 @@ jobs:
 
       - name: Upload Gitleaks report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gitleaks-results.sarif
