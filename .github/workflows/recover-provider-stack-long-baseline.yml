@@ -75,6 +75,7 @@ jobs:
           if int(aggregate.get("runCount", 0)) != 3:
               raise SystemExit("aggregate run count mismatch")
 
+          measured_seconds = float(scenario["measurementSecondsPerRun"])
           for run_number in range(1, 4):
               run_root = results / f"run-{run_number}"
               resource = json.loads((run_root / "resource-summary.json").read_text())
@@ -83,8 +84,10 @@ jobs:
                   raise SystemExit(f"run {run_number}: resource source SHA mismatch")
               if int(resource["measurement"]["sampleCount"]) < 900:
                   raise SystemExit(f"run {run_number}: insufficient process samples")
-              if int(provider["records"]) < 890:
-                  raise SystemExit(f"run {run_number}: insufficient provider timing records")
+              if int(provider.get("records", 0)) <= 0:
+                  raise SystemExit(f"run {run_number}: provider timing records are empty")
+              if float(provider.get("observed_duration_s", 0)) < measured_seconds:
+                  raise SystemExit(f"run {run_number}: provider timing coverage is incomplete")
 
           print(
               "MACVITALS_RECOVERY_VERIFIED "
