@@ -39,7 +39,7 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
 @MainActor
 final class MetricsCoordinator: ObservableObject {
   @Published private(set) var snapshot: SystemSnapshot = .empty
-  @Published private(set) var samplingHealth: SamplingHealth?
+  private(set) var samplingHealth: SamplingHealth?
   @Published private(set) var isRunning = false
 
   var cpuHistory: [TimedPoint] { cpuBuffer.values }
@@ -126,10 +126,10 @@ final class MetricsCoordinator: ObservableObject {
 
   private func consume(_ result: SampleResult, configuredInterval: TimeInterval) {
     let newSnapshot = result.snapshot
-    snapshot = newSnapshot
     samplingHealth = SamplingHealth(
       timings: result.timings,
       configuredIntervalSeconds: configuredInterval)
+    snapshot = newSnapshot
     onSnapshot?(newSnapshot)
 
     let historyPoints = SnapshotHistoryPoints.make(from: newSnapshot)
