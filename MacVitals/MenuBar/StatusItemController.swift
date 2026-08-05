@@ -12,6 +12,8 @@ final class StatusItemController: NSObject {
   private let coordinator: MetricsCoordinator
   private let settings: SettingsStore
   private let fanControl: FanControlClient
+  private var lastStatusSegments: [MenuBarStatusSegment]?
+  private var lastAccessibilityValue: String?
 
   init(
     coordinator: MetricsCoordinator,
@@ -175,12 +177,23 @@ final class StatusItemController: NSObject {
       button.imagePosition = .imageOnly
       button.imageScaling = .scaleNone
       button.contentTintColor = nil
-      button.image = MenuBarStatusTitleRenderer.lightImage(
+
+      let statusSegments = MenuBarStatusTitleRenderer.segments(
         snapshot: snapshot,
         metrics: normalized)
+      if statusSegments != lastStatusSegments {
+        button.image = MenuBarStatusTitleRenderer.lightImage(
+          snapshot: snapshot,
+          metrics: normalized)
+        lastStatusSegments = statusSegments
+      }
+
       button.setAccessibilityLabel("MacVitals")
-      button.setAccessibilityValue(
-        MenuBarRenderer.render(snapshot: snapshot, metrics: normalized))
+      let accessibilityValue = MenuBarRenderer.render(snapshot: snapshot, metrics: normalized)
+      if accessibilityValue != lastAccessibilityValue {
+        button.setAccessibilityValue(accessibilityValue)
+        lastAccessibilityValue = accessibilityValue
+      }
     }
     statusItem.length = NSStatusItem.variableLength
   }
