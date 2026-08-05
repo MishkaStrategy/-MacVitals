@@ -244,6 +244,7 @@ final class FanControlClient: ObservableObject {
   }
 
   func invalidateConnection() {
+    terminationRestoreRequestID = nil
     connection?.invalidationHandler = nil
     connection?.interruptionHandler = nil
     connection?.invalidate()
