@@ -108,6 +108,7 @@ def self_test() -> None:
 
     unit_only = "xcodebuild test -only-testing:MacVitalsTests"
     assert validate_text(Path("unit.yml"), unit_only) == []
+    assert validate([]) == []
     print("Runtime resource policy self-test passed")
 
 
@@ -124,11 +125,13 @@ def main() -> int:
     if args.self_test:
         self_test()
         return 0
+    if not args.paths and not args.base_ref:
+        fail("Provide paths or --base-ref")
+
     paths = list(args.paths)
     if args.base_ref:
         paths.extend(changed_paths(args.base_ref))
-    if not paths:
-        fail("Provide paths or --base-ref")
+
     errors = validate(paths)
     if errors:
         print("Runtime resource evidence policy failed:", file=sys.stderr)
