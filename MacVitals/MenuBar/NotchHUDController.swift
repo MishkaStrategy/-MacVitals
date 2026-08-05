@@ -10,6 +10,7 @@ final class NotchHUDController {
   private var panel: NSPanel?
   private var enabled = false
   private var activeScreenNumber: NSNumber?
+  private var lastPanelFrame: NSRect?
 
   var isEnabled: Bool { enabled }
 
@@ -71,9 +72,11 @@ final class NotchHUDController {
       return
     }
 
-    activeScreenNumber = screen.deviceDescription[
+    let screenNumber = screen.deviceDescription[
       NSDeviceDescriptionKey("NSScreenNumber")
     ] as? NSNumber
+    let screenChanged = activeScreenNumber != screenNumber
+    activeScreenNumber = screenNumber
 
     let hardwareGeometry = NotchHUDLayout.hardwareNotchGeometry(
       screenFrame: screen.frame,
@@ -89,12 +92,21 @@ final class NotchHUDController {
       safeAreaTop: safeAreaTop,
       configuration: configuration,
       notchGeometry: hardwareGeometry)
-    panel.setFrame(frame, display: true)
-    panel.orderFrontRegardless()
-    writeDiagnostics(event: "ordered", screen: screen, frame: frame)
 
-    DispatchQueue.main.async { [weak self, weak screen] in
-      self?.writeDiagnostics(event: "ordered-next-run-loop", screen: screen, frame: frame)
+    if lastPanelFrame != frame {
+      panel.setFrame(frame, display: true)
+      lastPanelFrame = frame
+    }
+
+    if !panel.isVisible || screenChanged {
+      panel.orderFrontRegardless()
+      writeDiagnostics(event: "ordered", screen: screen, frame: frame)
+
+      DispatchQueue.main.async { [weak self, weak screen] in
+        self?.writeDiagnostics(event: "ordered-next-run-loop", screen: screen, frame: frame)
+      }
+    } else {
+      writeDiagnostics(event: "updated", screen: screen, frame: frame)
     }
   }
 
