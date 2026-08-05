@@ -60,6 +60,7 @@ final class FanControlClient: ObservableObject {
 
   private let service = SMAppService.daemon(plistName: FanControlServiceConstants.daemonPlistName)
   private var connection: NSXPCConnection?
+  private var terminationRestoreRequestID: UUID?
 
   func refreshStatus() {
     guard FanControlSigningIdentity.isDeveloperIDControlBuild() else {
@@ -211,7 +212,39 @@ final class FanControlClient: ObservableObject {
     }
   }
 
+  func restoreAllAutomaticForTermination(
+    completion: @escaping @MainActor @Sendable (Bool) -> Void
+  ) {
+    let requestID = UUID()
+    terminationRestoreRequestID = requestID
+
+    let finish: @Sendable (Bool) -> Void = { [weak self] success in
+      Task { @MainActor [weak self] in
+        guard let self, self.terminationRestoreRequestID == requestID else { return }
+        self.terminationRestoreRequestID = nil
+        completion(success)
+      }
+    }
+
+    guard state.canControl, let connection else {
+      finish(false)
+      return
+    }
+
+    let remote = connection.remoteObjectProxyWithErrorHandler { _ in
+      finish(false)
+    }
+    guard let helper = remote as? FanControlXPCProtocol else {
+      finish(false)
+      return
+    }
+    helper.setAllFansAutomatic { success, _ in
+      finish(success)
+    }
+  }
+
   func invalidateConnection() {
+    terminationRestoreRequestID = nil
     connection?.invalidationHandler = nil
     connection?.interruptionHandler = nil
     connection?.invalidate()
