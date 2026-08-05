@@ -22,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self?.settings.setNotificationAuthorizationState(state)
     }
 
+    settings.$samplingInterval
+      .removeDuplicates()
+      .sink { [weak self] interval in
+        self?.coordinator.setSamplingInterval(interval)
+      }
+      .store(in: &cancellables)
+
     settings.$notificationsEnabled
       .combineLatest(
         settings.$memoryAlertsEnabled.combineLatest(settings.$memoryAlertThreshold),
