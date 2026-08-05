@@ -40,23 +40,28 @@ private nonisolated struct MemoryHardwareSnapshot: Sendable {
   let physicalMemory: UInt64
   let pageSize: UInt64?
 
-  static let current: MemoryHardwareSnapshot = {
+  init(hostPort: host_t) {
     var rawPageSize: vm_size_t = 0
-    let result = host_page_size(mach_host_self(), &rawPageSize)
-    let pageSize = result == KERN_SUCCESS && rawPageSize > 0
+    let result = host_page_size(hostPort, &rawPageSize)
+    pageSize = result == KERN_SUCCESS && rawPageSize > 0
       ? UInt64(rawPageSize)
       : nil
-    return MemoryHardwareSnapshot(
-      physicalMemory: ProcessInfo.processInfo.physicalMemory,
-      pageSize: pageSize)
-  }()
+    physicalMemory = ProcessInfo.processInfo.physicalMemory
+  }
 }
 
 struct MemoryProvider: Sendable {
   private let pressureProvider: any MemoryPressureProviding
+  private let hostPort: MachHostPortLease
+  private let hardware: MemoryHardwareSnapshot
 
-  init(pressureProvider: any MemoryPressureProviding = MemoryPressureMonitor()) {
+  init(
+    pressureProvider: any MemoryPressureProviding = MemoryPressureMonitor(),
+    hostPort: MachHostPortLease = .shared
+  ) {
     self.pressureProvider = pressureProvider
+    self.hostPort = hostPort
+    hardware = MemoryHardwareSnapshot(hostPort: hostPort.name)
   }
 
   func sample() -> MetricValue<MemoryStats> {
@@ -66,7 +71,7 @@ struct MemoryProvider: Sendable {
       MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
     let result = withUnsafeMutablePointer(to: &stats) {
       $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-        host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+        host_statistics64(hostPort.name, HOST_VM_INFO64, $0, &count)
       }
     }
     guard result == KERN_SUCCESS else {
@@ -75,7 +80,6 @@ struct MemoryProvider: Sendable {
         source: .machHostStatistics, message: "host_statistics64 failed: \(result)")
     }
 
-    let hardware = MemoryHardwareSnapshot.current
     guard let page = hardware.pageSize else {
       return .unavailable(
         unit: .bytes, availability: .providerError,
