@@ -270,8 +270,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
     }
 
     let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
-    let configured = source.withSymbolConfiguration(whiteConfiguration) ?? source
-    let image = configured.copy() as? NSImage ?? configured
+    let image = source.withSymbolConfiguration(whiteConfiguration) ?? source
     image.size = source.size
     image.isTemplate = false
     return image
@@ -282,8 +281,7 @@ nonisolated enum MenuBarStatusTitleRenderer {
     let source = MenuBarIconCatalog.minimalImage(for: .cpu, state: .normal)
       ?? NSImage(size: NSSize(width: 12, height: 18))
     let whiteConfiguration = NSImage.SymbolConfiguration(hierarchicalColor: .white)
-    let configured = source.withSymbolConfiguration(whiteConfiguration) ?? source
-    let image = configured.copy() as? NSImage ?? configured
+    let image = source.withSymbolConfiguration(whiteConfiguration) ?? source
     image.isTemplate = false
     return image
   }

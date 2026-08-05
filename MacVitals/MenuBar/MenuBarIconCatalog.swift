@@ -7,6 +7,9 @@ nonisolated enum MenuBarIconState: String, CaseIterable, Sendable {
 }
 
 nonisolated enum MenuBarIconCatalog {
+  @MainActor private static var imageCache: [String: NSImage] = [:]
+  @MainActor private static var minimalImageCache: [String: NSImage] = [:]
+
   static func symbolName(for metric: MenuMetric, state: MenuBarIconState) -> String {
     switch (metric, state) {
     case (.battery, .normal): return "battery.75percent"
@@ -115,6 +118,11 @@ nonisolated enum MenuBarIconCatalog {
 
   @MainActor
   static func image(for metric: MenuMetric, state: MenuBarIconState) -> NSImage? {
+    let key = cacheKey(metric: metric, state: state)
+    if let cached = imageCache[key] {
+      return cached.copy() as? NSImage ?? cached
+    }
+
     let name = symbolName(for: metric, state: state)
     guard let base = NSImage(
       systemSymbolName: name,
@@ -125,11 +133,17 @@ nonisolated enum MenuBarIconCatalog {
     let image = base.withSymbolConfiguration(configuration) ?? base
     image.isTemplate = true
     image.size = NSSize(width: 18, height: 18)
-    return image
+    imageCache[key] = image
+    return image.copy() as? NSImage ?? image
   }
 
   @MainActor
   static func minimalImage(for metric: MenuMetric, state: MenuBarIconState) -> NSImage? {
+    let key = cacheKey(metric: metric, state: state)
+    if let cached = minimalImageCache[key] {
+      return cached.copy() as? NSImage ?? cached
+    }
+
     let base = minimalSymbolCandidates(for: metric, state: state)
       .lazy
       .compactMap {
@@ -148,7 +162,12 @@ nonisolated enum MenuBarIconCatalog {
     let aspectRatio = sourceSize.height > 0 ? sourceSize.width / sourceSize.height : 1
     let targetWidth = min(14, max(8, targetHeight * aspectRatio))
     image.size = NSSize(width: targetWidth, height: targetHeight)
-    return image
+    minimalImageCache[key] = image
+    return image.copy() as? NSImage ?? image
+  }
+
+  private static func cacheKey(metric: MenuMetric, state: MenuBarIconState) -> String {
+    "\(metric.rawValue).\(state.rawValue)"
   }
 
   private static func loadState(
