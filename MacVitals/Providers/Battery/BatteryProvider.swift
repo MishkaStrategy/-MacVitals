@@ -348,22 +348,7 @@ final class BatteryProvider: @unchecked Sendable {
   }
 
   private func readSmartBatteryRegistry() -> [String: Any] {
-    let service = IOServiceGetMatchingService(
-      kIOMainPortDefault,
-      IOServiceMatching("AppleSmartBattery"))
-    guard service != 0 else { return [:] }
-    defer { IOObjectRelease(service) }
-
-    var properties: Unmanaged<CFMutableDictionary>?
-    guard
-      IORegistryEntryCreateCFProperties(
-        service,
-        &properties,
-        kCFAllocatorDefault,
-        0) == KERN_SUCCESS,
-      let dictionary = properties?.takeRetainedValue() as? [String: Any]
-    else { return [:] }
-    return dictionary
+    SmartBatteryRegistryCache.shared.snapshot()
   }
 
   private static func readHardwareModel() -> String? {
