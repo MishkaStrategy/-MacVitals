@@ -1,0 +1,116 @@
+name: Salvage Exact Long Baseline Evidence
+
+on:
+  pull_request:
+    branches:
+      - perf/provider-stack-long-baseline
+    paths:
+      - .github/workflows/salvage-exact-long-baseline-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  salvage-evidence:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    env:
+      EXPECTED_SOURCE_SHA: 7e70b6269b8a1c60b9338b3f8a0dfc74f2021216
+      SOURCE_RUN_ID: '31000123080'
+      RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
+    steps:
+      - name: Validate preserved exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -d "${RESULTS_ROOT}"
+          test -f "${RESULTS_ROOT}/scenario.json"
+          test -f "${RESULTS_ROOT}/aggregate-summary.json"
+
+          python3 - "${RESULTS_ROOT}" "${EXPECTED_SOURCE_SHA}" "${SOURCE_RUN_ID}" <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          expected_sha = sys.argv[2]
+          source_run_id = sys.argv[3]
+
+          scenario = json.loads((root / "scenario.json").read_text())
+          aggregate = json.loads((root / "aggregate-summary.json").read_text())
+          if scenario.get("sourceSha") != expected_sha:
+              raise SystemExit("scenario source SHA mismatch")
+          if aggregate.get("sourceSha") != expected_sha:
+              raise SystemExit("aggregate source SHA mismatch")
+          if aggregate.get("runCount") != 3:
+              raise SystemExit("aggregate does not contain exactly three runs")
+
+          manifest = []
+          for run_number in range(1, 4):
+              run_root = root / f"run-{run_number}"
+              process_summaries = list((run_root / "process").glob("**/summary.json"))
+              process_samples = list((run_root / "process").glob("**/samples.csv"))
+              required = [
+                  run_root / "provider-timings.jsonl",
+                  run_root / "provider-summary.json",
+                  run_root / "resource-summary.json",
+              ]
+              if len(process_summaries) != 1 or len(process_samples) != 1:
+                  raise SystemExit(f"run {run_number}: process evidence cardinality mismatch")
+              required.extend([process_summaries[0], process_samples[0]])
+              for path in required:
+                  if not path.is_file() or path.stat().st_size == 0:
+                      raise SystemExit(f"run {run_number}: missing evidence {path}")
+
+              resource = json.loads((run_root / "resource-summary.json").read_text())
+              provider = json.loads((run_root / "provider-summary.json").read_text())
+              if resource.get("sourceSha") != expected_sha:
+                  raise SystemExit(f"run {run_number}: resource source SHA mismatch")
+              sample_count = int(resource["measurement"]["sampleCount"])
+              cycle_count = int(provider["cycleCount"])
+              if sample_count < 900:
+                  raise SystemExit(f"run {run_number}: only {sample_count} process samples")
+              if cycle_count < 890:
+                  raise SystemExit(f"run {run_number}: only {cycle_count} provider cycles")
+
+              for path in required:
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  manifest.append({
+                      "path": str(path.relative_to(root)),
+                      "bytes": path.stat().st_size,
+                      "sha256": digest,
+                  })
+
+          provenance = {
+              "schemaVersion": 1,
+              "evidenceSourceSha": expected_sha,
+              "sourceWorkflowRunId": source_run_id,
+              "salvageWorkflowRunId": os.environ.get("GITHUB_RUN_ID"),
+              "salvageWorkflowSha": os.environ.get("GITHUB_SHA"),
+              "validatedAtUTC": datetime.now(timezone.utc).isoformat(),
+              "fileManifest": manifest,
+          }
+          (root / "salvage-provenance.json").write_text(
+              json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+          print(
+              "MACVITALS_SALVAGED_EVIDENCE "
+              f"source_sha={expected_sha} source_run_id={source_run_id} "
+              f"files={len(manifest)}")
+          PY
+
+      - name: Upload preserved exact long-baseline evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-provider-stack-long-baseline-${{ env.EXPECTED_SOURCE_SHA }}-salvaged
+          path: long-idle-baseline-results/
+          if-no-files-found: error
+          retention-days: 30
