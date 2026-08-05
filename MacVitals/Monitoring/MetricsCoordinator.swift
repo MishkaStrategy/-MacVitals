@@ -196,14 +196,14 @@ final class MetricsCoordinator: ObservableObject {
     batteryPowerBuffer.append(point)
     adapterInputPowerBuffer.append(point)
 
-    for id in temperatureSensorBuffers.keys {
+    for id in Array(temperatureSensorBuffers.keys) {
       temperatureSensorBuffers[
         id,
         default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
       ].append(TimedPoint(value: nil, discontinuity: true))
     }
 
-    for index in fanBuffers.keys {
+    for index in Array(fanBuffers.keys) {
       fanBuffers[
         index,
         default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
