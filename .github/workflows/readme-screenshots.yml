@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/readme-screenshots.yml
       - MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests.swift
+      - project.yml
 
 concurrency:
   group: readme-screenshots-${{ github.event.pull_request.number || github.ref }}
@@ -43,7 +44,7 @@ jobs:
           export_dir="${RUNNER_TEMP}/macvitals-readme-export"
           screenshot_dir="docs/screenshots"
           rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}"
-          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitalsReadmeScreenshots \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             -resultBundlePath "${result_bundle}" \
