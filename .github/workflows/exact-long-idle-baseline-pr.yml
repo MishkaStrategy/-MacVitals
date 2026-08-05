@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-provider-stack-long-baseline-${{ github.event.pull_request.number || github.ref }}
+  group: macvitals-physical-runtime
   cancel-in-progress: false
 
 jobs:
@@ -29,6 +29,8 @@ jobs:
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
+      RUNNER_IDLE_TIMEOUT_SECONDS: 900
+      MACVITALS_PHYSICAL_LOCK_DIR: /tmp/macvitals-physical-runtime.lock
     steps:
       - name: Checkout exact optimization head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
