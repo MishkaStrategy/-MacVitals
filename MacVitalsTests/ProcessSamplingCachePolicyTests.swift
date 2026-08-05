@@ -32,4 +32,44 @@ final class ProcessSamplingCachePolicyTests: XCTestCase {
     XCTAssertEqual(ProcessSamplingCachePolicy.freshnessWindow(minimumInterval: 0), 0.25)
     XCTAssertEqual(ProcessSamplingCachePolicy.freshnessWindow(minimumInterval: 10), 8)
   }
+
+  func testCurrentRequestWithSubscribersCommitsResult() {
+    let requestID = UUID()
+
+    XCTAssertEqual(
+      ProcessSamplingCachePolicy.resultDisposition(
+        requestID: requestID,
+        activeRequestID: requestID,
+        hasSubscribers: true),
+      .commit)
+  }
+
+  func testCurrentRequestWithoutSubscribersOnlyClearsInFlightState() {
+    let requestID = UUID()
+
+    XCTAssertEqual(
+      ProcessSamplingCachePolicy.resultDisposition(
+        requestID: requestID,
+        activeRequestID: requestID,
+        hasSubscribers: false),
+      .clearOnly)
+  }
+
+  func testStaleRequestCannotMutateCurrentState() {
+    XCTAssertEqual(
+      ProcessSamplingCachePolicy.resultDisposition(
+        requestID: UUID(),
+        activeRequestID: UUID(),
+        hasSubscribers: true),
+      .ignore)
+  }
+
+  func testCompletedRequestIsIgnoredAfterInFlightStateWasCleared() {
+    XCTAssertEqual(
+      ProcessSamplingCachePolicy.resultDisposition(
+        requestID: UUID(),
+        activeRequestID: nil,
+        hasSubscribers: false),
+      .ignore)
+  }
 }
