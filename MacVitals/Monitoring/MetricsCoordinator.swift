@@ -150,16 +150,18 @@ final class MetricsCoordinator: ObservableObject {
     let observedIDs = Set(sensors.map(\.id))
 
     for sensor in sensors {
-      var buffer = temperatureSensorBuffers[sensor.id]
-        ?? RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
-      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: sensor.celsius))
-      temperatureSensorBuffers[sensor.id] = buffer
+      temperatureSensorBuffers[
+        sensor.id,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(timestamp: snapshot.timestamp, value: sensor.celsius))
     }
 
-    for id in Array(temperatureSensorBuffers.keys) where !observedIDs.contains(id) {
-      guard var buffer = temperatureSensorBuffers[id] else { continue }
-      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
-      temperatureSensorBuffers[id] = buffer
+    let missingIDs = temperatureSensorBuffers.keys.filter { !observedIDs.contains($0) }
+    for id in missingIDs {
+      temperatureSensorBuffers[
+        id,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
     }
   }
 
@@ -168,16 +170,18 @@ final class MetricsCoordinator: ObservableObject {
     let observedIndexes = Set(fans.map(\.index))
 
     for fan in fans {
-      var buffer = fanBuffers[fan.index]
-        ?? RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
-      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: fan.currentRPM))
-      fanBuffers[fan.index] = buffer
+      fanBuffers[
+        fan.index,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(timestamp: snapshot.timestamp, value: fan.currentRPM))
     }
 
-    for index in Array(fanBuffers.keys) where !observedIndexes.contains(index) {
-      guard var buffer = fanBuffers[index] else { continue }
-      buffer.append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
-      fanBuffers[index] = buffer
+    let missingIndexes = fanBuffers.keys.filter { !observedIndexes.contains($0) }
+    for index in missingIndexes {
+      fanBuffers[
+        index,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(timestamp: snapshot.timestamp, value: nil))
     }
   }
 
@@ -193,15 +197,17 @@ final class MetricsCoordinator: ObservableObject {
     adapterInputPowerBuffer.append(point)
 
     for id in Array(temperatureSensorBuffers.keys) {
-      guard var buffer = temperatureSensorBuffers[id] else { continue }
-      buffer.append(TimedPoint(value: nil, discontinuity: true))
-      temperatureSensorBuffers[id] = buffer
+      temperatureSensorBuffers[
+        id,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(value: nil, discontinuity: true))
     }
 
     for index in Array(fanBuffers.keys) {
-      guard var buffer = fanBuffers[index] else { continue }
-      buffer.append(TimedPoint(value: nil, discontinuity: true))
-      fanBuffers[index] = buffer
+      fanBuffers[
+        index,
+        default: RingBuffer<TimedPoint>(capacity: Self.maximumHistoryCapacity)
+      ].append(TimedPoint(value: nil, discontinuity: true))
     }
   }
 }
