@@ -56,7 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    fanControl.setAllAutomatic()
+    // Termination must never start helper registration or open System Settings.
+    // Restore automatic control only when an already-approved helper is ready.
+    if fanControl.state.canControl {
+      fanControl.setAllAutomatic()
+    }
     fanControl.invalidateConnection()
     coordinator.stop()
     coordinator.onSnapshot = nil
