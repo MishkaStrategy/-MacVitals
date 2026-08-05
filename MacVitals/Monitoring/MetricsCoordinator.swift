@@ -39,18 +39,21 @@ nonisolated struct SnapshotHistoryPoints: Sendable, Equatable {
 @MainActor
 final class MetricsCoordinator: ObservableObject {
   @Published private(set) var snapshot: SystemSnapshot = .empty
-  @Published private(set) var cpuHistory: [TimedPoint] = []
-  @Published private(set) var memoryHistory: [TimedPoint] = []
-  @Published private(set) var gpuHistory: [TimedPoint] = []
-  @Published private(set) var batteryHistory: [TimedPoint] = []
-  @Published private(set) var temperatureHistory: [TimedPoint] = []
-  @Published private(set) var temperatureSensorHistory: [String: [TimedPoint]] = [:]
-  @Published private(set) var systemPowerHistory: [TimedPoint] = []
-  @Published private(set) var batteryPowerHistory: [TimedPoint] = []
-  @Published private(set) var adapterInputPowerHistory: [TimedPoint] = []
-  @Published private(set) var fanHistory: [Int: [TimedPoint]] = [:]
   @Published private(set) var samplingHealth: SamplingHealth?
   @Published private(set) var isRunning = false
+
+  var cpuHistory: [TimedPoint] { cpuBuffer.values }
+  var memoryHistory: [TimedPoint] { memoryBuffer.values }
+  var gpuHistory: [TimedPoint] { gpuBuffer.values }
+  var batteryHistory: [TimedPoint] { batteryBuffer.values }
+  var temperatureHistory: [TimedPoint] { temperatureBuffer.values }
+  var temperatureSensorHistory: [String: [TimedPoint]] {
+    temperatureSensorBuffers.mapValues(\.values)
+  }
+  var systemPowerHistory: [TimedPoint] { systemPowerBuffer.values }
+  var batteryPowerHistory: [TimedPoint] { batteryPowerBuffer.values }
+  var adapterInputPowerHistory: [TimedPoint] { adapterInputPowerBuffer.values }
+  var fanHistory: [Int: [TimedPoint]] { fanBuffers.mapValues(\.values) }
 
   var onSnapshot: ((SystemSnapshot) -> Void)?
 
@@ -81,7 +84,7 @@ final class MetricsCoordinator: ObservableObject {
   func handleSleep() {
     stop()
     appendDiscontinuity()
-    publishHistory()
+    objectWillChange.send()
   }
 
   func handleWake() {
@@ -140,7 +143,6 @@ final class MetricsCoordinator: ObservableObject {
     adapterInputPowerBuffer.append(historyPoints.adapterInputPower)
     appendTemperatureSensorHistory(from: newSnapshot)
     appendFanHistory(from: newSnapshot)
-    publishHistory()
   }
 
   private func appendTemperatureSensorHistory(from snapshot: SystemSnapshot) {
@@ -201,18 +203,5 @@ final class MetricsCoordinator: ObservableObject {
       buffer.append(TimedPoint(value: nil, discontinuity: true))
       fanBuffers[index] = buffer
     }
-  }
-
-  private func publishHistory() {
-    cpuHistory = cpuBuffer.values
-    memoryHistory = memoryBuffer.values
-    gpuHistory = gpuBuffer.values
-    batteryHistory = batteryBuffer.values
-    temperatureHistory = temperatureBuffer.values
-    temperatureSensorHistory = temperatureSensorBuffers.mapValues(\.values)
-    systemPowerHistory = systemPowerBuffer.values
-    batteryPowerHistory = batteryPowerBuffer.values
-    adapterInputPowerHistory = adapterInputPowerBuffer.values
-    fanHistory = fanBuffers.mapValues(\.values)
   }
 }
