@@ -181,6 +181,25 @@ nonisolated enum ProcessCollectionSanitizer {
   }
 }
 
+nonisolated enum ProcessNameReusePolicy {
+  static func reusableName(
+    previous: ProcessCounterSample?,
+    pid: pid_t,
+    startTime: UInt64,
+    unknownName: String
+  ) -> String? {
+    guard startTime > 0,
+      let previous,
+      previous.pid == pid,
+      previous.startTime == startTime,
+      previous.name != unknownName
+    else {
+      return nil
+    }
+    return previous.name
+  }
+}
+
 actor ProcessMetricsProvider {
   private struct ProcessIdentity: Hashable {
     let pid: pid_t
@@ -222,7 +241,9 @@ actor ProcessMetricsProvider {
 
   func sample(runningApplications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     let now = Date()
-    let samplesByPID = ProcessCollectionSanitizer.samplesByPID(readAllProcesses())
+    let unknownProcessName = L10n.string("Unknown process")
+    let samplesByPID = ProcessCollectionSanitizer.samplesByPID(
+      readAllProcesses(unknownName: unknownProcessName))
     let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
     let applicationsByPID = ProcessCollectionSanitizer.applicationsByPID(runningApplications)
     var accumulators: [String: ApplicationAccumulator] = [:]
@@ -241,7 +262,8 @@ actor ProcessMetricsProvider {
         for: sample,
         samplesByPID: samplesByPID,
         applicationsByPID: applicationsByPID)
-      var accumulator = accumulators[descriptor.id]
+      var accumulator =
+        accumulators[descriptor.id]
         ?? ApplicationAccumulator(descriptor: descriptor)
 
       accumulator.processCount += 1
@@ -278,7 +300,8 @@ actor ProcessMetricsProvider {
       let accountedEnergy = accumulator.hasEnergy ? accumulator.energyWatts : 0
       let cpuComponent = accumulator.cpuPercent * 0.08
       let ioComponent = accumulator.diskBytesPerSecond / 1_048_576 * 0.04
-      let graphicsMultiplier = accumulator.graphicsSignal > 0 ? 1 + accumulator.graphicsSignal : 0.18
+      let graphicsMultiplier =
+        accumulator.graphicsSignal > 0 ? 1 + accumulator.graphicsSignal : 0.18
       return max(0, (accountedEnergy * 3 + cpuComponent + ioComponent) * graphicsMultiplier)
     }
     let energyScores = ProcessCounterCalculator.normalizedScores(energyRaw)
@@ -309,7 +332,7 @@ actor ProcessMetricsProvider {
       energyCountersAvailable: energyCountersAvailable)
   }
 
-  private func readAllProcesses() -> [ProcessCounterSample] {
+  private func readAllProcesses(unknownName: String) -> [ProcessCounterSample] {
     let requestedCount = max(512, Int(proc_listallpids(nil, 0)) + 64)
     var pids = [pid_t](repeating: 0, count: requestedCount)
     let returned = pids.withUnsafeMutableBytes { buffer -> Int32 in
@@ -319,11 +342,11 @@ actor ProcessMetricsProvider {
 
     let populatedCount = min(Int(returned), pids.count)
     return ProcessCollectionSanitizer.uniquePIDs(pids.prefix(populatedCount)).compactMap { pid in
-      readProcess(pid: pid)
+      readProcess(pid: pid, unknownName: unknownName)
     }
   }
 
-  private func readProcess(pid: pid_t) -> ProcessCounterSample? {
+  private func readProcess(pid: pid_t, unknownName: String) -> ProcessCounterSample? {
     var usage = rusage_info_v6()
     let usageResult: Int32 = withUnsafeMutablePointer(to: &usage) { pointer in
       var rawPointer: rusage_info_t? = UnsafeMutableRawPointer(pointer)
@@ -367,11 +390,20 @@ actor ProcessMetricsProvider {
       diskWrite = nil
     }
 
+    let identity = ProcessIdentity(pid: pid, startTime: startTime)
+    let name =
+      ProcessNameReusePolicy.reusableName(
+        previous: previousSamples[identity],
+        pid: pid,
+        startTime: startTime,
+        unknownName: unknownName)
+      ?? processName(pid: pid, fallback: unknownName)
+
     return ProcessCounterSample(
       pid: pid,
       parentPID: bsdResult == expectedBSDSize ? pid_t(bsdInfo.pbi_ppid) : 0,
       startTime: startTime,
-      name: processName(pid: pid),
+      name: name,
       cpuTimeNanoseconds: cpuTime,
       physicalFootprintBytes: footprint,
       energyNanojoules: energy,
@@ -379,14 +411,14 @@ actor ProcessMetricsProvider {
       diskWriteBytes: diskWrite)
   }
 
-  private func processName(pid: pid_t) -> String {
+  private func processName(pid: pid_t, fallback: String) -> String {
     var buffer = [CChar](repeating: 0, count: Int(MAXCOMLEN) + 1)
     let length = buffer.withUnsafeMutableBytes { bytes -> Int32 in
       proc_name(pid, bytes.baseAddress, UInt32(bytes.count))
     }
-    guard length > 0 else { return L10n.string("Unknown process") }
+    guard length > 0 else { return fallback }
     return buffer.withUnsafeBufferPointer { pointer in
-      guard let base = pointer.baseAddress else { return L10n.string("Unknown process") }
+      guard let base = pointer.baseAddress else { return fallback }
       return String(cString: base)
     }
   }
