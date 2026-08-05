@@ -43,14 +43,39 @@ jobs:
           result_bundle="${RUNNER_TEMP}/MacVitals-readme-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.xcresult"
           export_dir="${RUNNER_TEMP}/macvitals-readme-export"
           screenshot_dir="docs/screenshots"
-          rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}"
+          diagnostics_dir="readme-screenshot-diagnostics"
+          rm -rf "${result_bundle}" "${export_dir}" "${screenshot_dir}" "${diagnostics_dir}"
+          mkdir -p "${diagnostics_dir}"
+
+          set +e
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitalsReadmeScreenshots \
             -destination 'platform=macOS' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             -resultBundlePath "${result_bundle}" \
             clean test \
             -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots \
-            -only-testing:MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests/testCaptureStatusBarAndHUDScreenshots
+            -only-testing:MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests/testCaptureStatusBarAndHUDScreenshots \
+            2>&1 | tee "${diagnostics_dir}/xcodebuild.log"
+          xcode_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ -d "${result_bundle}" ]; then
+            xcrun xcresulttool get test-results summary \
+              --path "${result_bundle}" \
+              > "${diagnostics_dir}/test-summary.json" 2>&1 || true
+            xcrun xcresulttool get test-results tests \
+              --path "${result_bundle}" \
+              > "${diagnostics_dir}/test-details.json" 2>&1 || true
+            ditto -c -k --sequesterRsrc --keepParent \
+              "${result_bundle}" "${diagnostics_dir}/MacVitals-readme.xcresult.zip" || true
+          fi
+
+          if [ "${xcode_status}" -ne 0 ]; then
+            echo "README screenshot UI tests failed with status ${xcode_status}"
+            tail -n 300 "${diagnostics_dir}/xcodebuild.log" || true
+            exit "${xcode_status}"
+          fi
+
           xcrun xcresulttool export attachments \
             --path "${result_bundle}" \
             --output-path "${export_dir}"
@@ -164,6 +189,15 @@ jobs:
           test "$(sips -g pixelHeight "${status_image}" | awk '/pixelHeight/ {print $2}')" -eq 820
           test "$(sips -g pixelWidth "${hud_image}" | awk '/pixelWidth/ {print $2}')" -eq 1200
           test "$(sips -g pixelHeight "${hud_image}" | awk '/pixelHeight/ {print $2}')" -eq 340
+
+      - name: Upload screenshot diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: readme-screenshot-diagnostics-${{ github.sha }}
+          path: readme-screenshot-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Commit real application screenshots
         run: |
