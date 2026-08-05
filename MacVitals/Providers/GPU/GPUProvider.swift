@@ -37,8 +37,10 @@ nonisolated enum GPUUtilizationNormalizer {
 }
 
 struct IORegistryGPUUtilizationReader: Sendable {
+  private static let acceleratorClassNames = ["IOAccelerator", "AGXAccelerator"]
+
   func read() -> Double? {
-    for className in ["IOAccelerator", "AGXAccelerator"] {
+    for className in Self.acceleratorClassNames {
       if let value = read(className: className) { return value }
     }
     return nil
@@ -51,7 +53,7 @@ struct IORegistryGPUUtilizationReader: Sendable {
     else { return nil }
     defer { IOObjectRelease(iterator) }
 
-    var dictionaries: [[String: Any]] = []
+    var maximum: Double?
     var service = IOIteratorNext(iterator)
     while service != 0 {
       let currentService = service
@@ -60,14 +62,15 @@ struct IORegistryGPUUtilizationReader: Sendable {
         "PerformanceStatistics" as CFString,
         kCFAllocatorDefault,
         0),
-        let dictionary = unmanaged.takeRetainedValue() as? [String: Any]
+        let dictionary = unmanaged.takeRetainedValue() as? [String: Any],
+        let value = GPUUtilizationNormalizer.percentage(from: dictionary)
       {
-        dictionaries.append(dictionary)
+        maximum = maximum.map { max($0, value) } ?? value
       }
       IOObjectRelease(currentService)
       service = IOIteratorNext(iterator)
     }
-    return GPUUtilizationNormalizer.percentage(from: dictionaries)
+    return maximum
   }
 }
 
@@ -96,9 +99,33 @@ nonisolated enum GPUCapabilityMapper {
   }
 }
 
+private struct GPUStaticCapability: Sendable {
+  let name: String
+  let registryID: UInt64
+  let hasUnifiedMemory: Bool
+  let isLowPower: Bool
+  let isRemovable: Bool
+  let recommendedWorkingSetBytes: UInt64
+
+  init?(device: any MTLDevice) {
+    name = device.name
+    registryID = device.registryID
+    hasUnifiedMemory = device.hasUnifiedMemory
+    isLowPower = device.isLowPower
+    isRemovable = device.isRemovable
+    recommendedWorkingSetBytes = UInt64(device.recommendedMaxWorkingSetSize)
+  }
+}
+
 struct CapabilityGPUProvider: GPUProviding {
+  private let capability: GPUStaticCapability?
+
+  init() {
+    capability = MTLCreateSystemDefaultDevice().flatMap(GPUStaticCapability.init(device:))
+  }
+
   func sample() -> MetricValue<GPUStats> {
-    guard let device = MTLCreateSystemDefaultDevice() else {
+    guard let capability else {
       return .unavailable(
         unit: .percent,
         availability: .unsupported,
@@ -108,12 +135,12 @@ struct CapabilityGPUProvider: GPUProviding {
 
     let utilization = IORegistryGPUUtilizationReader().read()
     let value = GPUCapabilityMapper.makeStats(
-      name: device.name,
-      registryID: device.registryID,
-      hasUnifiedMemory: device.hasUnifiedMemory,
-      isLowPower: device.isLowPower,
-      isRemovable: device.isRemovable,
-      recommendedWorkingSetBytes: UInt64(device.recommendedMaxWorkingSetSize),
+      name: capability.name,
+      registryID: capability.registryID,
+      hasUnifiedMemory: capability.hasUnifiedMemory,
+      isLowPower: capability.isLowPower,
+      isRemovable: capability.isRemovable,
+      recommendedWorkingSetBytes: capability.recommendedWorkingSetBytes,
       systemUtilizationPercent: utilization)
 
     return MetricValue(
