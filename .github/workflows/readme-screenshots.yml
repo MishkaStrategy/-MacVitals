@@ -2,6 +2,12 @@ name: README Screenshots
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/readme-real-hud-statusbar
+    paths:
+      - .github/workflows/readme-screenshots.yml
+      - MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests.swift
 
 concurrency:
   group: readme-screenshots-${{ github.ref }}
@@ -13,11 +19,13 @@ permissions:
 jobs:
   capture:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      TARGET_BRANCH: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: feature/macvitals-v1
+          ref: ${{ env.TARGET_BRANCH }}
           persist-credentials: true
 
       - name: Materialize application icon
@@ -40,7 +48,8 @@ jobs:
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             -resultBundlePath "${result_bundle}" \
             clean test \
-            -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots
+            -only-testing:MacVitalsUITests/MacVitalsUITests/testCaptureReadmeScreenshots \
+            -only-testing:MacVitalsUITests/ReadmeStatusAndHUDScreenshotTests/testCaptureStatusBarAndHUDScreenshots
           xcrun xcresulttool export attachments \
             --path "${result_bundle}" \
             --output-path "${export_dir}"
@@ -54,6 +63,8 @@ jobs:
           screenshot_dir = Path(sys.argv[2])
           manifest = json.loads((export_dir / "manifest.json").read_text())
           expected = {
+              "status-bar-overview",
+              "notch-hud",
               "preferences-general",
               "preferences-menu-bar",
               "preferences-fans",
@@ -76,14 +87,85 @@ jobs:
                   f"extra={sorted(found - expected)}"
               )
           PY
-          test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 4
-          for image in "${screenshot_dir}"/*.png; do
+
+          crop_script="${RUNNER_TEMP}/crop-readme-screenshot.swift"
+          cat > "${crop_script}" <<'SWIFT'
+          import AppKit
+          import Foundation
+
+          guard CommandLine.arguments.count == 5 else {
+            fatalError("Expected path, width, height and horizontal alignment")
+          }
+
+          let path = CommandLine.arguments[1]
+          guard
+            let targetWidth = Double(CommandLine.arguments[2]),
+            let targetHeight = Double(CommandLine.arguments[3]),
+            let source = NSImage(contentsOfFile: path)
+          else {
+            fatalError("Unable to load screenshot or dimensions")
+          }
+
+          let cropWidth = min(CGFloat(targetWidth), source.size.width)
+          let cropHeight = min(CGFloat(targetHeight), source.size.height)
+          let alignment = CommandLine.arguments[4]
+          let cropX: CGFloat
+          switch alignment {
+          case "right":
+            cropX = source.size.width - cropWidth
+          case "center":
+            cropX = (source.size.width - cropWidth) / 2
+          default:
+            fatalError("Unsupported alignment: \(alignment)")
+          }
+
+          let cropRect = NSRect(
+            x: cropX,
+            y: source.size.height - cropHeight,
+            width: cropWidth,
+            height: cropHeight)
+          let targetSize = NSSize(width: targetWidth, height: targetHeight)
+          let output = NSImage(size: targetSize)
+          output.lockFocus()
+          NSGraphicsContext.current?.imageInterpolation = .high
+          source.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: cropRect,
+            operation: .copy,
+            fraction: 1)
+          output.unlockFocus()
+
+          guard
+            let tiff = output.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:])
+          else {
+            fatalError("Unable to encode cropped screenshot")
+          }
+          try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+          SWIFT
+
+          status_image="${screenshot_dir}/status-bar-overview.png"
+          hud_image="${screenshot_dir}/notch-hud.png"
+          swift "${crop_script}" "${status_image}" 900 820 right
+          swift "${crop_script}" "${hud_image}" 1200 340 center
+
+          test "$(find "${screenshot_dir}" -type f -name '*.png' | wc -l | tr -d ' ')" -eq 6
+          for image in "${screenshot_dir}"/preferences-*.png; do
             test "$(sips -g pixelWidth "${image}" | awk '/pixelWidth/ {print $2}')" -eq 900
             test "$(sips -g pixelHeight "${image}" | awk '/pixelHeight/ {print $2}')" -eq 728
           done
+          test "$(sips -g pixelWidth "${status_image}" | awk '/pixelWidth/ {print $2}')" -eq 900
+          test "$(sips -g pixelHeight "${status_image}" | awk '/pixelHeight/ {print $2}')" -eq 820
+          test "$(sips -g pixelWidth "${hud_image}" | awk '/pixelWidth/ {print $2}')" -eq 1200
+          test "$(sips -g pixelHeight "${hud_image}" | awk '/pixelHeight/ {print $2}')" -eq 340
 
       - name: Commit real application screenshots
         run: |
+          if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "main" ]; then
+            echo "Refusing to auto-commit README screenshots directly to main"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/screenshots/*.png
@@ -91,8 +173,12 @@ jobs:
             echo "README screenshots are already current"
             exit 0
           fi
-          git commit -m "docs: refresh real MacVitals screenshots"
-          git push origin HEAD:feature/macvitals-v1
+          git commit -m "docs: refresh real HUD and status bar screenshots"
+          git reset --hard HEAD
+          git clean -fd
+          git fetch origin "${TARGET_BRANCH}"
+          git rebase "origin/${TARGET_BRANCH}"
+          git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Upload real application screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
