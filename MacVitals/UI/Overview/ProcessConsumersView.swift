@@ -121,9 +121,21 @@ struct ProcessConsumersView: View {
   @ObservedObject var monitor: ProcessConsumersMonitor
   let metric: ProcessConsumerMetric
   @State private var visibleCount = 5
+  @State private var applicationIcons: [pid_t: NSImage] = [:]
+
+  @MainActor
+  private static let percentFormatter: NumberFormatter = {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    formatter.maximumFractionDigits = 1
+    formatter.minimumFractionDigits = 1
+    return formatter
+  }()
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 9) {
+    let ranked = rankedApplications
+
+    return VStack(alignment: .leading, spacing: 9) {
       HStack(spacing: 8) {
         Label(title, systemImage: symbol)
           .font(.subheadline.bold())
@@ -145,7 +157,7 @@ struct ProcessConsumersView: View {
         .frame(width: 86)
       }
 
-      if rankedApplications.isEmpty {
+      if ranked.isEmpty {
         VStack(spacing: 7) {
           ProgressView()
             .controlSize(.small)
@@ -160,7 +172,7 @@ struct ProcessConsumersView: View {
       } else {
         ScrollView {
           LazyVStack(spacing: 6) {
-            ForEach(Array(rankedApplications.prefix(visibleCount).enumerated()), id: \.element.id) {
+            ForEach(Array(ranked.prefix(visibleCount).enumerated()), id: \.element.id) {
               index, application in
               applicationRow(application, rank: index + 1)
             }
@@ -181,6 +193,9 @@ struct ProcessConsumersView: View {
       RoundedRectangle(cornerRadius: 12)
         .stroke(.quaternary.opacity(0.35), lineWidth: 1))
     .accessibilityIdentifier("processConsumers.\(metric.rawValue)")
+    .onReceive(monitor.$snapshot) { _ in
+      refreshApplicationIcons()
+    }
   }
 
   private func applicationRow(_ application: ApplicationProcessUsage, rank: Int) -> some View {
@@ -227,9 +242,7 @@ struct ProcessConsumersView: View {
 
   @ViewBuilder
   private func applicationIcon(_ application: ApplicationProcessUsage) -> some View {
-    if let icon = NSWorkspace.shared.runningApplications.first(where: {
-      $0.processIdentifier == application.representativePID
-    })?.icon {
+    if let icon = applicationIcons[application.representativePID] {
       Image(nsImage: icon)
         .resizable()
         .scaledToFit()
@@ -355,12 +368,9 @@ struct ProcessConsumersView: View {
     }
   }
 
+  @MainActor
   private func decimalPercent(_ value: Double) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .decimal
-    formatter.maximumFractionDigits = 1
-    formatter.minimumFractionDigits = 1
-    return "\(formatter.string(from: NSNumber(value: value)) ?? "0.0")%"
+    "\(Self.percentFormatter.string(from: NSNumber(value: value)) ?? "0.0")%"
   }
 
   private func byteCount(_ value: UInt64) -> String {
@@ -371,5 +381,21 @@ struct ProcessConsumersView: View {
 
   private func processCountText(_ count: Int) -> String {
     count == 1 ? L10n.string("1 process") : L10n.format("%d processes", count)
+  }
+
+  @MainActor
+  private func refreshApplicationIcons() {
+    var icons: [pid_t: NSImage] = [:]
+    icons.reserveCapacity(monitor.snapshot.applications.count)
+    for application in NSWorkspace.shared.runningApplications {
+      guard !application.isTerminated,
+        application.processIdentifier > 0,
+        let icon = application.icon
+      else {
+        continue
+      }
+      icons[application.processIdentifier] = icon
+    }
+    applicationIcons = icons
   }
 }
