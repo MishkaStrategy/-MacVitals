@@ -70,7 +70,11 @@ jobs:
               "preferences-fans",
               "preferences-diagnostics",
           }
-          attachments = manifest[0]["attachments"]
+          attachments = [
+              attachment
+              for record in manifest
+              for attachment in record.get("attachments", [])
+          ]
           found = set()
           screenshot_dir.mkdir(parents=True, exist_ok=True)
           for attachment in attachments:
