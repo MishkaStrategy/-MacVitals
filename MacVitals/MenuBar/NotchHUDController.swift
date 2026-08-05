@@ -36,6 +36,12 @@ final class NotchHUDController {
   nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
 
   private let state = NotchHUDState()
+  private let diagnosticsURL: URL? = {
+    guard let path = ProcessInfo.processInfo.environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
+      !path.isEmpty
+    else { return nil }
+    return URL(fileURLWithPath: path)
+  }()
   private var panel: NSPanel?
   private var enabled = false
   private var activeScreenNumber: NSNumber?
@@ -172,11 +178,7 @@ final class NotchHUDController {
     screen: NSScreen? = nil,
     frame: NSRect? = nil
   ) {
-    guard let path = ProcessInfo.processInfo.environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
-      !path.isEmpty
-    else {
-      return
-    }
+    guard let diagnosticsURL else { return }
 
     let configuration = NotchHUDConfigurationPolicy.normalized(state.configuration)
     let primaryReading = NotchHUDReadingResolver.resolve(
@@ -249,7 +251,7 @@ final class NotchHUDController {
     else {
       return
     }
-    try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    try? data.write(to: diagnosticsURL, options: .atomic)
   }
 
   private static func makePanel() -> NSPanel {
