@@ -23,9 +23,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  exact-long-idle-baseline:
+  measure-exact-long-idle-baseline:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 180
+    outputs:
+      source_sha: ${{ steps.verify-source.outputs.source_sha }}
+      runner_name: ${{ steps.verify-source.outputs.runner_name }}
+      source_run_id: ${{ steps.verify-source.outputs.source_run_id }}
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
@@ -39,6 +43,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify exact source and ancestry
+        id: verify-source
         shell: bash
         run: |
           set -euo pipefail
@@ -57,6 +62,9 @@ jobs:
             exit 1
           }
           echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "source_sha=${ACTUAL_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "runner_name=${RUNNER_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "source_run_id=${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
 
       - name: Install XcodeGen
         shell: bash
@@ -94,7 +102,6 @@ jobs:
             "${RESULTS_ROOT}" 2>&1 | tee long-idle-baseline.log
 
       - name: Validate evidence contract
-        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -111,13 +118,141 @@ jobs:
           grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' long-idle-baseline.log
           grep -q 'MACVITALS_LONG_BASELINE_SUMMARY' long-idle-baseline.log
 
+      - name: Stage validated evidence outside workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          CACHE_BASE="${HOME}/Library/Caches/MacVitals-CI/long-baseline"
+          FINAL_ROOT="${CACHE_BASE}/${SOURCE_SHA}"
+          TEMP_ROOT="${FINAL_ROOT}.tmp.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${TEMP_ROOT}"
+          mkdir -p "${TEMP_ROOT}"
+          cp -R "${RESULTS_ROOT}" "${TEMP_ROOT}/long-idle-baseline-results"
+          cp long-idle-baseline.log "${TEMP_ROOT}/long-idle-baseline.log"
+
+          python3 - "${TEMP_ROOT}" "${SOURCE_SHA}" "${GITHUB_RUN_ID}" "${RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          source_sha = sys.argv[2]
+          source_run_id = sys.argv[3]
+          runner_name = sys.argv[4]
+          files = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file():
+                  continue
+              files.append({
+                  "path": str(path.relative_to(root)),
+                  "bytes": path.stat().st_size,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              })
+          if not files:
+              raise SystemExit("validated evidence staging produced no files")
+          manifest = {
+              "schemaVersion": 1,
+              "sourceSha": source_sha,
+              "sourceWorkflowRunId": source_run_id,
+              "sourceRunnerName": runner_name,
+              "stagedAtUTC": datetime.now(timezone.utc).isoformat(),
+              "files": files,
+          }
+          (root / "recovery-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+
+          chmod -R go-rwx "${TEMP_ROOT}"
+          mkdir -p "${CACHE_BASE}"
+          rm -rf "${FINAL_ROOT}"
+          mv "${TEMP_ROOT}" "${FINAL_ROOT}"
+          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} path=${FINAL_ROOT}"
+
+  publish-exact-long-idle-evidence:
+    needs: measure-exact-long-idle-baseline
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    env:
+      EXPECTED_SOURCE_SHA: ${{ needs.measure-exact-long-idle-baseline.outputs.source_sha }}
+      EXPECTED_RUNNER_NAME: ${{ needs.measure-exact-long-idle-baseline.outputs.runner_name }}
+      SOURCE_RUN_ID: ${{ needs.measure-exact-long-idle-baseline.outputs.source_run_id }}
+    steps:
+      - name: Locate and verify staged evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_NAME}" = "${EXPECTED_RUNNER_NAME}"
+          RECOVERY_ROOT="${HOME}/Library/Caches/MacVitals-CI/long-baseline/${EXPECTED_SOURCE_SHA}"
+          test -d "${RECOVERY_ROOT}"
+          test -f "${RECOVERY_ROOT}/recovery-manifest.json"
+
+          python3 - "${RECOVERY_ROOT}" "${EXPECTED_SOURCE_SHA}" "${SOURCE_RUN_ID}" "${EXPECTED_RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          expected_sha = sys.argv[2]
+          expected_run_id = sys.argv[3]
+          expected_runner = sys.argv[4]
+          manifest = json.loads((root / "recovery-manifest.json").read_text())
+          if manifest.get("sourceSha") != expected_sha:
+              raise SystemExit("recovery source SHA mismatch")
+          if manifest.get("sourceWorkflowRunId") != expected_run_id:
+              raise SystemExit("recovery source run mismatch")
+          if manifest.get("sourceRunnerName") != expected_runner:
+              raise SystemExit("recovery runner mismatch")
+
+          for entry in manifest.get("files", []):
+              path = root / entry["path"]
+              if not path.is_file():
+                  raise SystemExit(f"missing staged file: {entry['path']}")
+              if path.stat().st_size != int(entry["bytes"]):
+                  raise SystemExit(f"size mismatch: {entry['path']}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != entry["sha256"]:
+                  raise SystemExit(f"digest mismatch: {entry['path']}")
+
+          results = root / "long-idle-baseline-results"
+          scenario = json.loads((results / "scenario.json").read_text())
+          aggregate = json.loads((results / "aggregate-summary.json").read_text())
+          if scenario.get("sourceSha") != expected_sha:
+              raise SystemExit("scenario source SHA mismatch")
+          if aggregate.get("sourceSha") != expected_sha or aggregate.get("runCount") != 3:
+              raise SystemExit("aggregate evidence mismatch")
+          for run_number in range(1, 4):
+              run_root = results / f"run-{run_number}"
+              resource = json.loads((run_root / "resource-summary.json").read_text())
+              provider = json.loads((run_root / "provider-summary.json").read_text())
+              if resource.get("sourceSha") != expected_sha:
+                  raise SystemExit(f"run {run_number}: resource source SHA mismatch")
+              if int(resource["measurement"]["sampleCount"]) < 900:
+                  raise SystemExit(f"run {run_number}: insufficient process samples")
+              if int(provider["cycleCount"]) < 890:
+                  raise SystemExit(f"run {run_number}: insufficient provider cycles")
+          print(
+              "MACVITALS_RECOVERY_VERIFIED "
+              f"source_sha={expected_sha} source_run_id={expected_run_id} "
+              f"files={len(manifest['files'])}")
+          PY
+
+          echo "RECOVERY_ROOT=${RECOVERY_ROOT}" >> "${GITHUB_ENV}"
+
       - name: Upload exact long-baseline evidence
-        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exact-provider-stack-long-baseline-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            long-idle-baseline.log
-            long-idle-baseline-results/
+          name: exact-provider-stack-long-baseline-${{ needs.measure-exact-long-idle-baseline.outputs.source_sha }}
+          path: ${{ env.RECOVERY_ROOT }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Remove published recovery bundle
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOVERY_ROOT:-}"
+          rm -rf "${RECOVERY_ROOT}"
