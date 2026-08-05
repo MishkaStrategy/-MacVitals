@@ -67,7 +67,6 @@ final class StatusItemController: NSObject {
       }
       .store(in: &cancellables)
 
-    renderCurrentState()
     DispatchQueue.main.async { [weak self] in
       self?.renderCurrentState()
     }
@@ -127,7 +126,6 @@ final class StatusItemController: NSObject {
 
   @objc private func toggleNotchHUD() {
     settings.showAroundStatusBar.toggle()
-    renderCurrentState()
   }
 
   @objc private func openNotchHUDSettings() {
