@@ -2,6 +2,35 @@ import AppKit
 import Foundation
 import SwiftUI
 
+nonisolated struct NotchHUDRenderOutput: Equatable, Sendable {
+  let primary: NotchHUDReading
+  let secondary: NotchHUDReading?
+}
+
+nonisolated enum NotchHUDRenderOutputResolver {
+  static func resolve(
+    snapshot: SystemSnapshot,
+    configuration: NotchHUDConfiguration
+  ) -> NotchHUDRenderOutput {
+    let normalized = NotchHUDConfigurationPolicy.normalized(configuration)
+    let primary = NotchHUDReadingResolver.resolve(
+      snapshot: snapshot,
+      metric: normalized.metric,
+      warningThreshold: normalized.warningThreshold,
+      criticalThreshold: normalized.criticalThreshold)
+
+    let secondary = normalized.secondaryMetric.map { metric in
+      let defaults = metric.notchIndicatorDefaultThresholds
+      return NotchHUDReadingResolver.resolve(
+        snapshot: snapshot,
+        metric: metric,
+        warningThreshold: normalized.secondaryWarningThreshold ?? defaults.warning,
+        criticalThreshold: normalized.secondaryCriticalThreshold ?? defaults.critical)
+    }
+    return NotchHUDRenderOutput(primary: primary, secondary: secondary)
+  }
+}
+
 @MainActor
 final class NotchHUDController {
   nonisolated static let defaultsKey = "experimentalNotchHUDEnabled"
@@ -11,6 +40,7 @@ final class NotchHUDController {
   private var enabled = false
   private var activeScreenNumber: NSNumber?
   private var lastPanelFrame: NSRect?
+  private var lastRenderOutput: NotchHUDRenderOutput?
 
   var isEnabled: Bool { enabled }
 
@@ -32,10 +62,18 @@ final class NotchHUDController {
       return
     }
 
-    state.snapshot = snapshot
     let normalizedConfiguration = NotchHUDConfigurationPolicy.normalized(configuration)
-    if state.configuration != normalizedConfiguration {
+    let configurationChanged = state.configuration != normalizedConfiguration
+    if configurationChanged {
       state.configuration = normalizedConfiguration
+    }
+
+    let renderOutput = NotchHUDRenderOutputResolver.resolve(
+      snapshot: snapshot,
+      configuration: normalizedConfiguration)
+    if configurationChanged || renderOutput != lastRenderOutput {
+      state.snapshot = snapshot
+      lastRenderOutput = renderOutput
     }
     applyVisibility(preferredScreen: preferredScreen)
   }
