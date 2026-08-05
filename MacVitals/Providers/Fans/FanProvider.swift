@@ -3,25 +3,36 @@ import Foundation
 nonisolated final class FanProvider: @unchecked Sendable {
   typealias ConnectionFactory = @Sendable () throws -> any AppleSMCReading
 
+  private struct FanKeys: Sendable {
+    let index: Int
+    let current: String
+    let target: String
+    let minimum: String
+    let maximum: String
+    let modeLowercase: String
+    let modeUppercase: String
+  }
+
   private let factory: ConnectionFactory
   private let lock = NSLock()
   private var connection: (any AppleSMCReading)?
+  private var cachedFanKeys: [FanKeys]?
 
   init(factory: @escaping ConnectionFactory = { try AppleSMCConnection() }) {
     self.factory = factory
   }
 
   func resetConnection() {
-    lock.withLock { connection = nil }
+    lock.withLock {
+      connection = nil
+      cachedFanKeys = nil
+    }
   }
 
   func sample(now: Date = Date()) -> MetricValue<FanStats> {
     do {
       let source = try reader()
-      guard let rawCount = try? source.readKey("FNum"),
-        let decodedCount = AppleSMCDataDecoder.unsignedInteger(rawCount),
-        let count = FanValueNormalizer.fanCount(decodedCount)
-      else {
+      guard let keys = topology(source: source) else {
         return .init(
           value: nil,
           unit: .rpm,
@@ -33,7 +44,7 @@ nonisolated final class FanProvider: @unchecked Sendable {
           message: "Fan count could not be read safely")
       }
 
-      guard count > 0 else {
+      guard !keys.isEmpty else {
         return .init(
           value: FanStats(fans: []),
           unit: .rpm,
@@ -45,9 +56,7 @@ nonisolated final class FanProvider: @unchecked Sendable {
           message: "No controllable fan is exposed by AppleSMC")
       }
 
-      let readings = (0..<count).compactMap { index in
-        reading(index: index, source: source)
-      }
+      let readings = keys.compactMap { reading(keys: $0, source: source) }
       guard !readings.isEmpty else {
         return .init(
           value: nil,
@@ -68,7 +77,7 @@ nonisolated final class FanProvider: @unchecked Sendable {
         source: .appleSMC,
         timestamp: now,
         isEstimated: false,
-        message: readings.count == count ? nil : "Some fan values are unavailable")
+        message: readings.count == keys.count ? nil : "Some fan values are unavailable")
     } catch {
       resetConnection()
       return .init(
@@ -92,14 +101,40 @@ nonisolated final class FanProvider: @unchecked Sendable {
     }
   }
 
-  private func reading(index: Int, source: any AppleSMCReading) -> FanReading? {
+  private func topology(source: any AppleSMCReading) -> [FanKeys]? {
+    if let cached = lock.withLock({ cachedFanKeys }) {
+      return cached
+    }
+
+    guard let rawCount = try? source.readKey("FNum"),
+      let decodedCount = AppleSMCDataDecoder.unsignedInteger(rawCount),
+      let count = FanValueNormalizer.fanCount(decodedCount)
+    else {
+      return nil
+    }
+
+    let keys = (0..<count).map { index in
+      FanKeys(
+        index: index,
+        current: "F\(index)Ac",
+        target: "F\(index)Tg",
+        minimum: "F\(index)Mn",
+        maximum: "F\(index)Mx",
+        modeLowercase: "F\(index)md",
+        modeUppercase: "F\(index)Md")
+    }
+    lock.withLock { cachedFanKeys = keys }
+    return keys
+  }
+
+  private func reading(keys: FanKeys, source: any AppleSMCReading) -> FanReading? {
     FanValueNormalizer.reading(
-      index: index,
-      current: number(key: "F\(index)Ac", source: source),
-      target: number(key: "F\(index)Tg", source: source),
-      minimum: number(key: "F\(index)Mn", source: source),
-      maximum: number(key: "F\(index)Mx", source: source),
-      mode: mode(index: index, source: source))
+      index: keys.index,
+      current: number(key: keys.current, source: source),
+      target: number(key: keys.target, source: source),
+      minimum: number(key: keys.minimum, source: source),
+      maximum: number(key: keys.maximum, source: source),
+      mode: mode(keys: keys, source: source))
   }
 
   private func number(key: String, source: any AppleSMCReading) -> Double? {
@@ -107,9 +142,11 @@ nonisolated final class FanProvider: @unchecked Sendable {
     return AppleSMCDataDecoder.number(raw)
   }
 
-  private func mode(index: Int, source: any AppleSMCReading) -> FanMode {
-    for key in ["F\(index)md", "F\(index)Md"] {
-      guard let raw = try? source.readKey(key), let value = raw.bytes.first else { continue }
+  private func mode(keys: FanKeys, source: any AppleSMCReading) -> FanMode {
+    if let raw = try? source.readKey(keys.modeLowercase), let value = raw.bytes.first {
+      return FanMode.decodeSMCByte(value)
+    }
+    if let raw = try? source.readKey(keys.modeUppercase), let value = raw.bytes.first {
       return FanMode.decodeSMCByte(value)
     }
     return .unknown
