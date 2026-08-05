@@ -33,7 +33,10 @@ final class NotchHUDController {
     }
 
     state.snapshot = snapshot
-    state.configuration = NotchHUDConfigurationPolicy.normalized(configuration)
+    let normalizedConfiguration = NotchHUDConfigurationPolicy.normalized(configuration)
+    if state.configuration != normalizedConfiguration {
+      state.configuration = normalizedConfiguration
+    }
     applyVisibility(preferredScreen: preferredScreen)
   }
 
@@ -84,8 +87,15 @@ final class NotchHUDController {
       auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
       auxiliaryTopRightArea: screen.auxiliaryTopRightArea)
 
-    state.safeAreaTop = NotchHUDLayout.resolvedSafeAreaTop(safeAreaTop)
-    state.notchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth
+    let resolvedSafeAreaTop = NotchHUDLayout.resolvedSafeAreaTop(safeAreaTop)
+    if state.safeAreaTop != resolvedSafeAreaTop {
+      state.safeAreaTop = resolvedSafeAreaTop
+    }
+
+    let resolvedNotchWidth = hardwareGeometry?.width ?? NotchHUDLayout.notchWidth
+    if state.notchWidth != resolvedNotchWidth {
+      state.notchWidth = resolvedNotchWidth
+    }
 
     let frame = NotchHUDLayout.panelFrame(
       for: screen.frame,
