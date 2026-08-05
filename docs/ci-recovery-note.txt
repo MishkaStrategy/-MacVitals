@@ -1,0 +1,1 @@
+Recovery-only branch for exact provider-stack long-baseline evidence from source SHA 7462578a8e622fd409d7bf1269a6c2b451676514 and workflow run 31002026601. No application runtime is launched by the recovery workflow.
