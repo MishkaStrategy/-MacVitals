@@ -1,4 +1,4 @@
-name: Dependency runner policy
+name: Mac ARM64 runner policy
 
 on:
   pull_request:
@@ -18,16 +18,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: dependency-runner-policy-${{ github.workflow }}-${{ github.ref }}
+  group: mac-arm64-runner-policy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  audit-dependency-routing:
-    runs-on: [self-hosted, fast]
+  audit-runner-routing:
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify dependency jobs use matching runner labels
+      - name: Verify every job uses the Mac ARM64 runner
         run: python3 scripts/audit_docker_runner_routing.py
