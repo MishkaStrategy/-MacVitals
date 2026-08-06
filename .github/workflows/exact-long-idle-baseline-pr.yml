@@ -36,43 +36,71 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 180
     env:
+      HARNESS_ROOT: ${{ github.workspace }}/harness
+      SOURCE_ROOT: ${{ github.workspace }}/source
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
+      REQUESTED_HARNESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       REQUESTED_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Checkout trusted measurement harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          path: harness
+
       - name: Checkout exact optimization source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          path: source
 
-      - name: Verify exact source and ancestry
+      - name: Verify exact harness, source and ancestry
         id: verify-source
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${REQUESTED_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          test "${ACTUAL_SHA}" = "${REQUESTED_SOURCE_SHA}"
-          git merge-base --is-ancestor \
+          [[ "${REQUESTED_HARNESS_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${REQUESTED_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+
+          ACTUAL_HARNESS_SHA="$(git -C "${HARNESS_ROOT}" rev-parse HEAD)"
+          ACTUAL_SOURCE_SHA="$(git -C "${SOURCE_ROOT}" rev-parse HEAD)"
+          test "${ACTUAL_HARNESS_SHA}" = "${REQUESTED_HARNESS_SHA}"
+          test "${ACTUAL_SOURCE_SHA}" = "${REQUESTED_SOURCE_SHA}"
+
+          git -C "${HARNESS_ROOT}" merge-base --is-ancestor \
             4d143aaa082b0fb15ce86d19ba72c40557939692 \
-            "${ACTUAL_SHA}"
+            "${ACTUAL_HARNESS_SHA}"
+          git -C "${SOURCE_ROOT}" merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SOURCE_SHA}"
           test "$(uname -m)" = arm64
-          ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
-            echo 'Forbidden pet code found in exact candidate' >&2
+          ! git -C "${SOURCE_ROOT}" grep -nE 'Pet|petState|PetView' -- MacVitals || {
+            echo 'Forbidden pet code found in exact source' >&2
             exit 1
           }
-          echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
-          echo "source_sha=${ACTUAL_SHA}" >> "${GITHUB_OUTPUT}"
+
+          echo "HARNESS_SHA=${ACTUAL_HARNESS_SHA}" >> "${GITHUB_ENV}"
+          echo "SOURCE_SHA=${ACTUAL_SOURCE_SHA}" >> "${GITHUB_ENV}"
+          echo "harness_sha=${ACTUAL_HARNESS_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "source_sha=${ACTUAL_SOURCE_SHA}" >> "${GITHUB_OUTPUT}"
 
       - name: Validate replay safety helpers
         shell: bash
         run: |
           set -euo pipefail
-          bash -n scripts/physical_runtime_lock.sh
-          bash scripts/physical_runtime_lock.sh --self-test
-          python3 -m py_compile scripts/validate_long_baseline_evidence.py
-          python3 scripts/validate_long_baseline_evidence.py --self-test
+          bash -n \
+            "${HARNESS_ROOT}/scripts/physical_runtime_lock.sh" \
+            "${HARNESS_ROOT}/scripts/run_exact_long_idle_baseline.sh" \
+            "${HARNESS_ROOT}/scripts/collect_runtime_metrics.sh"
+          bash "${HARNESS_ROOT}/scripts/physical_runtime_lock.sh" --self-test
+          python3 -m py_compile \
+            "${HARNESS_ROOT}/scripts/validate_long_baseline_evidence.py"
+          python3 \
+            "${HARNESS_ROOT}/scripts/validate_long_baseline_evidence.py" \
+            --self-test
 
       - name: Install XcodeGen
         shell: bash
@@ -83,6 +111,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cd "${SOURCE_ROOT}"
           python3 scripts/materialize_app_icon.py
           xcodegen generate
           xcodebuild \
@@ -104,8 +133,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
-          bash scripts/run_exact_long_idle_baseline.sh \
+          grep -q 'scripts/collect_runtime_metrics.sh' \
+            "${HARNESS_ROOT}/scripts/run_exact_long_idle_baseline.sh"
+          bash "${HARNESS_ROOT}/scripts/run_exact_long_idle_baseline.sh" \
             "${APP_PATH}" \
             "${SOURCE_SHA}" \
             "${RESULTS_ROOT}" 2>&1 | tee long-idle-baseline.log
@@ -120,8 +150,10 @@ jobs:
             test -s "${RESULTS_ROOT}/run-${run_number}/provider-timings.jsonl"
             test -f "${RESULTS_ROOT}/run-${run_number}/provider-summary.json"
             test -f "${RESULTS_ROOT}/run-${run_number}/resource-summary.json"
-            find "${RESULTS_ROOT}/run-${run_number}/process" -name samples.csv -type f -print -quit | grep -q .
-            find "${RESULTS_ROOT}/run-${run_number}/process" -name summary.json -type f -print -quit | grep -q .
+            find "${RESULTS_ROOT}/run-${run_number}/process" \
+              -name samples.csv -type f -print -quit | grep -q .
+            find "${RESULTS_ROOT}/run-${run_number}/process" \
+              -name summary.json -type f -print -quit | grep -q .
           done
           grep -q 'MACVITALS_RESOURCE_SUMMARY' long-idle-baseline.log
           grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' long-idle-baseline.log
@@ -140,7 +172,12 @@ jobs:
           cp -R "${RESULTS_ROOT}" "${TEMP_ROOT}/long-idle-baseline-results"
           cp long-idle-baseline.log "${TEMP_ROOT}/long-idle-baseline.log"
 
-          python3 - "${TEMP_ROOT}" "${SOURCE_SHA}" "${GITHUB_RUN_ID}" "${RUNNER_NAME}" <<'PY'
+          python3 - \
+            "${TEMP_ROOT}" \
+            "${SOURCE_SHA}" \
+            "${HARNESS_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${RUNNER_NAME}" <<'PY'
           import hashlib
           import json
           import sys
@@ -161,8 +198,9 @@ jobs:
           manifest = {
               "schemaVersion": 1,
               "sourceSha": sys.argv[2],
-              "sourceWorkflowRunId": sys.argv[3],
-              "sourceRunnerName": sys.argv[4],
+              "harnessSha": sys.argv[3],
+              "sourceWorkflowRunId": sys.argv[4],
+              "sourceRunnerName": sys.argv[5],
               "stagedAtUTC": datetime.now(timezone.utc).isoformat(),
               "files": files,
           }
@@ -175,16 +213,17 @@ jobs:
           rm -rf "${FINAL_ROOT}"
           mv "${TEMP_ROOT}" "${FINAL_ROOT}"
           echo "RECOVERY_ROOT=${FINAL_ROOT}" >> "${GITHUB_ENV}"
-          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} path=${FINAL_ROOT}"
+          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} harness_sha=${HARNESS_SHA} path=${FINAL_ROOT}"
 
       - name: Verify staged evidence and provenance
         id: verify-evidence
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/validate_long_baseline_evidence.py \
+          python3 "${HARNESS_ROOT}/scripts/validate_long_baseline_evidence.py" \
             "${RECOVERY_ROOT}" \
             --expected-source-sha "${SOURCE_SHA}" \
+            --expected-harness-sha "${HARNESS_SHA}" \
             --expected-run-id "${GITHUB_RUN_ID}" \
             --expected-runner "${RUNNER_NAME}"
 
