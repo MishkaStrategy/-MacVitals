@@ -1,13 +1,6 @@
-name: Safe Physical Validation PR
+name: Safe Physical Validation Replay
 
 on:
-  pull_request:
-    branches:
-      - integration/network-history-leaders-post-notch
-    paths:
-      - .github/workflows/safe-physical-validation-pr.yml
-      - scripts/physical_runtime_lock.sh
-      - scripts/run_safe_physical_validation.sh
   workflow_dispatch:
 
 permissions:
@@ -23,7 +16,8 @@ jobs:
     timeout-minutes: 100
     env:
       PRODUCT_BASE_SHA: e4a71fda0b3ed50aabd3b92ede06d32c39ef5d40
-      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      VALIDATION_SHA: ${{ github.sha }}
+      RECOVERY_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}
       MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS: 1800
       MACVITALS_PHYSICAL_LOCK_POLL_SECONDS: 1
       MACVITALS_PHYSICAL_LOCK_STALE_GRACE_SECONDS: 30
@@ -32,7 +26,7 @@ jobs:
       - name: Checkout exact validation head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
           clean: true
@@ -58,6 +52,7 @@ jobs:
 
           expected = {
               ".github/workflows/safe-physical-validation-pr.yml",
+              "scripts/physical_preference_recovery_guard.py",
               "scripts/physical_runtime_lock.sh",
               "scripts/run_safe_physical_validation.sh",
           }
@@ -82,6 +77,8 @@ jobs:
         run: |
           set -euo pipefail
           ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
+          python3 -m py_compile scripts/physical_preference_recovery_guard.py
+          python3 scripts/physical_preference_recovery_guard.py self-test
           bash -n \
             scripts/physical_runtime_lock.sh \
             scripts/run_safe_physical_validation.sh \
@@ -115,32 +112,41 @@ jobs:
             test -d "${APP_PATH}" || status=1
             test "$(lipo -archs "${APP_PATH}/Contents/MacOS/MacVitals" 2>/dev/null)" = arm64 || status=1
           fi
-          sanitizer_status=0
-          python3 - physical-package.raw.log physical-package.log <<'PY' || sanitizer_status=$?
+          python3 - physical-package.raw.log physical-package.log <<'PY'
           from pathlib import Path
           import os
           import re
           import sys
 
           text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
-          replacements = [
-              (os.environ.get("HOME", ""), "<HOME>"),
-              (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
-              (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
-              (os.environ.get("TMPDIR", ""), "<TMPDIR>"),
-          ]
           text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
-          for value, replacement in replacements:
+          for name, replacement in (
+              ("HOME", "<HOME>"),
+              ("GITHUB_WORKSPACE", "<WORKSPACE>"),
+              ("RUNNER_TEMP", "<RUNNER_TEMP>"),
+              ("TMPDIR", "<TMPDIR>"),
+          ):
+              value = os.environ.get(name, "")
               if value:
                   text = text.replace(value, replacement)
           Path(sys.argv[2]).write_text(text, encoding="utf-8")
           PY
+          sanitizer_status=$?
           rm -f -- physical-package.raw.log
           [[ -f physical-package.log ]] && tail -n 500 physical-package.log
           if [[ ${status} -eq 0 && ${sanitizer_status} -ne 0 ]]; then
             status=${sanitizer_status}
           fi
           exit ${status}
+
+      - name: Capture durable preference recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/physical_preference_recovery_guard.py capture \
+            --domain com.mishkacher.MacVitals \
+            --token "${RECOVERY_TOKEN}" \
+            | tee preference-recovery.log
 
       - name: Run bounded fail-closed physical collection
         timeout-minutes: 70
@@ -153,33 +159,44 @@ jobs:
             "${VALIDATION_SHA}" \
             > safe-physical-validation.raw.log 2>&1
           status=$?
-          sanitizer_status=0
-          python3 - safe-physical-validation.raw.log safe-physical-validation.log <<'PY' || sanitizer_status=$?
+          python3 - safe-physical-validation.raw.log safe-physical-validation.log <<'PY'
           from pathlib import Path
           import os
           import re
           import sys
 
           text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
-          replacements = [
-              (os.environ.get("HOME", ""), "<HOME>"),
-              (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
-              (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
-              (os.environ.get("TMPDIR", ""), "<TMPDIR>"),
-              (os.environ.get("USER", ""), "<USER>"),
-          ]
           text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
-          for value, replacement in replacements:
+          for name, replacement in (
+              ("HOME", "<HOME>"),
+              ("GITHUB_WORKSPACE", "<WORKSPACE>"),
+              ("RUNNER_TEMP", "<RUNNER_TEMP>"),
+              ("TMPDIR", "<TMPDIR>"),
+              ("USER", "<USER>"),
+          ):
+              value = os.environ.get(name, "")
               if value:
                   text = text.replace(value, replacement)
           Path(sys.argv[2]).write_text(text, encoding="utf-8")
           PY
+          sanitizer_status=$?
           rm -f -- safe-physical-validation.raw.log
           [[ -f safe-physical-validation.log ]] && cat safe-physical-validation.log
           if [[ ${status} -eq 0 && ${sanitizer_status} -ne 0 ]]; then
             status=${sanitizer_status}
           fi
           exit ${status}
+
+      - name: Restore and verify durable preferences
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/physical_preference_recovery_guard.py restore \
+            --domain com.mishkacher.MacVitals \
+            --token "${RECOVERY_TOKEN}" \
+            --allow-missing \
+            2>&1 | tee -a preference-recovery.log
 
       - name: Build evidence manifest
         if: always()
@@ -207,6 +224,7 @@ jobs:
               Path("validation-changes.txt"),
               Path("physical-package.log"),
               Path("safe-physical-validation.log"),
+              Path("preference-recovery.log"),
           ]
           evidence_root = Path("physical-validation-results")
           if evidence_root.is_dir() and not evidence_root.is_symlink():
@@ -250,6 +268,7 @@ jobs:
             validation-changes.txt
             physical-package.log
             safe-physical-validation.log
+            preference-recovery.log
             physical-validation-evidence-manifest.json
             physical-validation-results/
           if-no-files-found: warn
