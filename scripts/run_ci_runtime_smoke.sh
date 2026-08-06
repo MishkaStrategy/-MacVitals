@@ -33,10 +33,8 @@ foreign_macvitals_count() {
   while IFS= read -r pid; do
     [[ "${pid}" =~ ^[0-9]+$ ]] || continue
     command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-    if [[ "${pid}" != "${app_pid}" || ( "${command_line}" != "${EXECUTABLE_PATH}" && "${command_line}" != "${EXECUTABLE_PATH} "* ) ]]; then
-      echo "Foreign MacVitals process was not terminated: pid=${pid} command=${command_line}" >&2
-      count=$((count + 1))
-    fi
+    echo "Foreign MacVitals process was not terminated: pid=${pid} command=${command_line}" >&2
+    count=$((count + 1))
   done < <(pgrep -x MacVitals 2>/dev/null || true)
   printf '%s\n' "${count}"
 }
@@ -60,10 +58,10 @@ cleanup() {
   if [[ -n "${app_pid}" ]]; then
     wait "${app_pid}" 2>/dev/null || true
   fi
+  app_pid=""
 
   foreign_count="$(foreign_macvitals_count)"
   [[ "${foreign_count}" == "0" ]] || cleanup_status=1
-  app_pid=""
 
   physical_runtime_lock_release || cleanup_status=$?
 
