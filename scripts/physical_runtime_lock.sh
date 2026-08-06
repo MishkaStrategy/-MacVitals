@@ -5,8 +5,25 @@ physical_runtime_lock_directory() {
   printf '%s\n' "${MACVITALS_PHYSICAL_LOCK_DIR:-/tmp/macvitals-physical-runtime.lock}"
 }
 
+physical_runtime_lock_owner_uid() {
+  local lock_dir="$1"
+  if stat -f %u "${lock_dir}" 2>/dev/null; then
+    return 0
+  fi
+  stat -c %u "${lock_dir}" 2>/dev/null
+}
+
+physical_runtime_lock_mode() {
+  local lock_dir="$1"
+  if stat -f %Lp "${lock_dir}" 2>/dev/null; then
+    return 0
+  fi
+  stat -c %a "${lock_dir}" 2>/dev/null
+}
+
 physical_runtime_lock_validate_directory() {
   local lock_dir="$1"
+  local owner_uid mode current_uid
   [[ "${lock_dir}" == /* && "${lock_dir}" == *.lock && "${lock_dir}" != *$'\n'* ]] || {
     printf 'Physical runtime lock path must be an absolute .lock path: %s\n' "${lock_dir}" >&2
     return 2
@@ -14,6 +31,27 @@ physical_runtime_lock_validate_directory() {
   if [[ -e "${lock_dir}" || -L "${lock_dir}" ]]; then
     [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || {
       printf 'Physical runtime lock path is not a safe directory: %s\n' "${lock_dir}" >&2
+      return 2
+    }
+    current_uid="$(id -u)"
+    owner_uid="$(physical_runtime_lock_owner_uid "${lock_dir}")" || {
+      printf 'Could not determine physical runtime lock owner: %s\n' "${lock_dir}" >&2
+      return 2
+    }
+    [[ "${owner_uid}" == "${current_uid}" ]] || {
+      printf 'Physical runtime lock is owned by a different uid: %s\n' "${lock_dir}" >&2
+      return 2
+    }
+    mode="$(physical_runtime_lock_mode "${lock_dir}")" || {
+      printf 'Could not determine physical runtime lock permissions: %s\n' "${lock_dir}" >&2
+      return 2
+    }
+    [[ "${mode}" =~ ^[0-7]{3,4}$ ]] || {
+      printf 'Physical runtime lock permissions are invalid: %s\n' "${mode}" >&2
+      return 2
+    }
+    (( (8#${mode} & 077) == 0 )) || {
+      printf 'Physical runtime lock permissions are too broad: %s (%s)\n' "${lock_dir}" "${mode}" >&2
       return 2
     }
   fi
@@ -75,7 +113,7 @@ physical_runtime_lock_try_reclaim() {
   local stale_grace_seconds="$3"
   local stale_dir
 
-  [[ -d "${lock_dir}" && ! -L "${lock_dir}" ]] || return 1
+  physical_runtime_lock_validate_directory "${lock_dir}" || return 1
   if [[ -e "${lock_dir}/preferences-recovery-required" || -L "${lock_dir}/preferences-recovery-required" ]]; then
     printf 'Physical runtime lock requires manual preference recovery: %s\n' "${lock_dir}" >&2
     return 1
@@ -132,6 +170,7 @@ physical_runtime_lock_acquire() {
       return 0
     fi
 
+    physical_runtime_lock_validate_directory "${lock_dir}" || return $?
     if [[ -e "${lock_dir}/preferences-recovery-required" || -L "${lock_dir}/preferences-recovery-required" ]]; then
       printf 'Physical runtime lock requires manual preference recovery: %s\n' "${lock_dir}" >&2
       return 1
@@ -197,10 +236,11 @@ physical_runtime_lock_release() {
 }
 
 physical_runtime_lock_self_test() {
-  local temp_root lock_dir target
+  local temp_root lock_dir target permissive_lock
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/macvitals-lock-self-test.XXXXXX")"
   lock_dir="${temp_root}/runtime.lock"
   target="${temp_root}/target"
+  permissive_lock="${temp_root}/permissive.lock"
 
   cleanup_lock_test() {
     MACVITALS_PHYSICAL_LOCK_HELD=0
@@ -222,6 +262,15 @@ physical_runtime_lock_self_test() {
     printf '%s\n' 'Symlink lock unexpectedly passed' >&2
     return 1
   fi
+
+  mkdir -m 700 "${permissive_lock}"
+  chmod 0755 "${permissive_lock}"
+  MACVITALS_PHYSICAL_LOCK_DIR="${permissive_lock}"
+  if physical_runtime_lock_acquire; then
+    printf '%s\n' 'Over-permissive lock unexpectedly passed' >&2
+    return 1
+  fi
+  rm -rf -- "${permissive_lock}"
 
   MACVITALS_PHYSICAL_LOCK_DIR="${lock_dir}"
   MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=2
