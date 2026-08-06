@@ -115,7 +115,8 @@ jobs:
             test -d "${APP_PATH}" || status=1
             test "$(lipo -archs "${APP_PATH}/Contents/MacOS/MacVitals" 2>/dev/null)" = arm64 || status=1
           fi
-          STATUS="${status}" python3 - physical-package.raw.log physical-package.log <<'PY'
+          sanitizer_status=0
+          python3 - physical-package.raw.log physical-package.log <<'PY' || sanitizer_status=$?
           from pathlib import Path
           import os
           import re
@@ -126,6 +127,7 @@ jobs:
               (os.environ.get("HOME", ""), "<HOME>"),
               (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
               (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
+              (os.environ.get("TMPDIR", ""), "<TMPDIR>"),
           ]
           text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
           for value, replacement in replacements:
@@ -134,7 +136,10 @@ jobs:
           Path(sys.argv[2]).write_text(text, encoding="utf-8")
           PY
           rm -f -- physical-package.raw.log
-          tail -n 500 physical-package.log
+          [[ -f physical-package.log ]] && tail -n 500 physical-package.log
+          if [[ ${status} -eq 0 && ${sanitizer_status} -ne 0 ]]; then
+            status=${sanitizer_status}
+          fi
           exit ${status}
 
       - name: Run bounded fail-closed physical collection
@@ -148,7 +153,8 @@ jobs:
             "${VALIDATION_SHA}" \
             > safe-physical-validation.raw.log 2>&1
           status=$?
-          python3 - safe-physical-validation.raw.log safe-physical-validation.log <<'PY'
+          sanitizer_status=0
+          python3 - safe-physical-validation.raw.log safe-physical-validation.log <<'PY' || sanitizer_status=$?
           from pathlib import Path
           import os
           import re
@@ -159,6 +165,7 @@ jobs:
               (os.environ.get("HOME", ""), "<HOME>"),
               (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
               (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
+              (os.environ.get("TMPDIR", ""), "<TMPDIR>"),
               (os.environ.get("USER", ""), "<USER>"),
           ]
           text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
@@ -168,7 +175,10 @@ jobs:
           Path(sys.argv[2]).write_text(text, encoding="utf-8")
           PY
           rm -f -- safe-physical-validation.raw.log
-          cat safe-physical-validation.log
+          [[ -f safe-physical-validation.log ]] && cat safe-physical-validation.log
+          if [[ ${status} -eq 0 && ${sanitizer_status} -ne 0 ]]; then
+            status=${sanitizer_status}
+          fi
           exit ${status}
 
       - name: Build evidence manifest
@@ -179,6 +189,7 @@ jobs:
           if [[ -d physical-validation-results ]]; then
             ! find physical-validation-results -type f \
               \( -name '*.ips' -o -name '*.crash' \) -print -quit | grep -q .
+            ! find physical-validation-results -type l -print -quit | grep -q .
           fi
           python3 - \
             "${PRODUCT_BASE_SHA}" \
