@@ -30,6 +30,7 @@ REPORTER_MARKERS = (
     "report_runtime_resources.py",
     "MACVITALS_RESOURCE_SUMMARY",
 )
+CANONICAL_PHYSICAL_WRAPPER = Path("scripts/run_safe_physical_validation.sh")
 PHYSICAL_EVIDENCE_MARKERS = (
     "run_ci_physical_validation_hardened.sh",
     "physical-validation-results",
@@ -44,14 +45,16 @@ def is_runtime_launcher(text: str) -> bool:
     return any(pattern.search(text) for pattern in RUNTIME_PATTERNS)
 
 
-def uses_canonical_physical_evidence(text: str) -> bool:
-    return all(marker in text for marker in PHYSICAL_EVIDENCE_MARKERS)
+def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
+    return path == CANONICAL_PHYSICAL_WRAPPER and all(
+        marker in text for marker in PHYSICAL_EVIDENCE_MARKERS
+    )
 
 
 def validate_text(path: Path, text: str) -> list[str]:
     if not is_runtime_launcher(text):
         return []
-    physical_evidence = uses_canonical_physical_evidence(text)
+    physical_evidence = uses_canonical_physical_evidence(path, text)
     errors: list[str] = []
     if not physical_evidence and not any(marker in text for marker in COLLECTOR_MARKERS):
         errors.append(
@@ -118,11 +121,15 @@ def self_test() -> None:
     assert validate_text(Path("workflow.yml"), wrapper) == []
 
     incomplete_physical = direct_launch + "\nbash scripts/run_ci_physical_validation_hardened.sh\n"
-    assert len(validate_text(Path("incomplete-physical.sh"), incomplete_physical)) == 2
+    assert len(validate_text(CANONICAL_PHYSICAL_WRAPPER, incomplete_physical)) == 2
 
     physical = incomplete_physical + "\npath: physical-validation-results/\n"
-    assert uses_canonical_physical_evidence(physical)
-    assert validate_text(Path("physical.yml"), physical) == []
+    assert uses_canonical_physical_evidence(CANONICAL_PHYSICAL_WRAPPER, physical)
+    assert validate_text(CANONICAL_PHYSICAL_WRAPPER, physical) == []
+
+    lookalike = Path("scripts/not-the-canonical-wrapper.sh")
+    assert not uses_canonical_physical_evidence(lookalike, physical)
+    assert len(validate_text(lookalike, physical)) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
     assert is_runtime_launcher(exact_process_probe)
