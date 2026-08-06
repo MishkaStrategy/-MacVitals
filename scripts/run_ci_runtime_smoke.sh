@@ -2,6 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
+[[ -f "${LOCK_HELPER}" && ! -L "${LOCK_HELPER}" ]] || {
+  echo "Physical runtime lock helper is missing or unsafe: ${LOCK_HELPER}" >&2
+  exit 1
+}
+# shellcheck source=physical_runtime_lock.sh
+source "${LOCK_HELPER}"
+
 APP_PATH="${1:-${APP_PATH:-${ROOT_DIR}/build/MacVitals.xcarchive/Products/Applications/MacVitals.app}}"
 EXECUTABLE_PATH="${APP_PATH}/Contents/MacOS/MacVitals"
 WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
@@ -13,6 +21,11 @@ SOURCE_SHA="${GITHUB_SHA:-unknown}"
 app_pid=""
 
 cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT INT TERM
+  set +e
+
   if [[ -n "${app_pid}" ]] && kill -0 "${app_pid}" >/dev/null 2>&1; then
     kill -TERM "${app_pid}" >/dev/null 2>&1 || true
     for _ in {1..20}; do
@@ -24,10 +37,18 @@ cleanup() {
     fi
     wait "${app_pid}" 2>/dev/null || true
   fi
+  app_pid=""
+
+  physical_runtime_lock_release || cleanup_status=$?
+
+  if [[ ${original_status} -ne 0 ]]; then
+    exit "${original_status}"
+  fi
+  exit "${cleanup_status}"
 }
 trap cleanup EXIT INT TERM
 
-for command in date find head mkdir tee tr wc python3; do
+for command in awk chmod date find head mkdir mv pgrep ps python3 rm rmdir stat tee tr wc; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "Required runtime-smoke command is unavailable: ${command}" >&2
     exit 127
@@ -54,14 +75,30 @@ done
 if [[ ! "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
   SOURCE_SHA="unknown"
 fi
-[[ -d "${APP_PATH}" ]] || {
-  echo "Packaged application is missing" >&2
+[[ -d "${APP_PATH}" && ! -L "${APP_PATH}" ]] || {
+  echo "Packaged application is missing or unsafe" >&2
   exit 1
 }
-[[ -x "${EXECUTABLE_PATH}" ]] || {
-  echo "Packaged executable is missing or not executable" >&2
+[[ -x "${EXECUTABLE_PATH}" && ! -L "${EXECUTABLE_PATH}" ]] || {
+  echo "Packaged executable is missing or unsafe" >&2
   exit 1
 }
+find "${APP_PATH}" -type l -print -quit | grep -q . && {
+  echo "Packaged application contains symbolic links" >&2
+  exit 1
+}
+
+physical_runtime_lock_acquire
+
+existing="$(pgrep -x MacVitals 2>/dev/null || true)"
+if [[ -n "${existing}" ]]; then
+  echo "Existing MacVitals processes detected; runtime smoke fails closed and will not terminate them:" >&2
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    ps -p "${pid}" -o pid=,command= >&2 || true
+  done <<< "${existing}"
+  exit 1
+fi
 
 BASE_OUTPUT_ROOT="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${OUTPUT_ROOT}")"
 RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
