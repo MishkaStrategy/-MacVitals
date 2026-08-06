@@ -197,6 +197,14 @@ physical_runtime_lock_self_test() {
     return 1
   fi
 
+  : > "${temp_root}/file.lock"
+  MACVITALS_PHYSICAL_LOCK_DIR="${temp_root}/file.lock"
+  if physical_runtime_lock_acquire; then
+    printf '%s\n' 'Regular-file lock path unexpectedly passed validation' >&2
+    return 1
+  fi
+  rm -f -- "${temp_root}/file.lock"
+
   MACVITALS_PHYSICAL_LOCK_DIR="${lock_dir}"
   MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=2
   MACVITALS_PHYSICAL_LOCK_POLL_SECONDS=0.1
@@ -206,6 +214,15 @@ physical_runtime_lock_self_test() {
   [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "$$" ]]
   physical_runtime_lock_release
   [[ ! -e "${lock_dir}" ]]
+
+  mkdir "${lock_dir}"
+  printf '99999999\n' > "${lock_dir}/owner-pid"
+  MACVITALS_PHYSICAL_LOCK_HELD=1
+  physical_runtime_lock_release 2>/dev/null
+  [[ -d "${lock_dir}" ]]
+  [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "99999999" ]]
+  [[ "${MACVITALS_PHYSICAL_LOCK_HELD}" == "0" ]]
+  rm -rf -- "${lock_dir}"
 
   MACVITALS_PHYSICAL_LOCK_DIR="${lock_dir}" READY_FILE="${ready_file}" HELPER_PATH="${helper_path}" \
     bash -c '
