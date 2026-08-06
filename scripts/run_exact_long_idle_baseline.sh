@@ -12,6 +12,9 @@ source "${LOCK_HELPER}"
 
 DOMAIN=""
 PREFS_BACKUP=""
+PREFS_OVERRIDE=""
+PREFS_VERIFY=""
+CONFIGURATION_FILE=""
 PREFS_CAPTURED=0
 PREFS_EXISTED=0
 TEST_PID=""
@@ -62,6 +65,19 @@ wait_for_no_macvitals() {
   fail "MacVitals remained alive ${context}"
 }
 
+remove_private_preference_files() {
+  local cleanup_status=0
+  local variable path
+  for variable in PREFS_BACKUP PREFS_OVERRIDE PREFS_VERIFY CONFIGURATION_FILE; do
+    path="${!variable:-}"
+    if [[ -n "${path}" ]]; then
+      rm -f -- "${path}" || cleanup_status=$?
+      printf -v "${variable}" '%s' ""
+    fi
+  done
+  return "${cleanup_status}"
+}
+
 restore_preferences() {
   local restore_status=0
   local lock_status=0
@@ -78,12 +94,9 @@ restore_preferences() {
     PREFS_CAPTURED=0
   fi
 
-  # The backup is private runner state, never measurement evidence. Remove it
-  # even when capture or restore failed, before releasing the physical lock.
-  if [[ -n "${PREFS_BACKUP}" ]]; then
-    rm -f -- "${PREFS_BACKUP}" || restore_status=$?
-    PREFS_BACKUP=""
-  fi
+  # Backup, override and verification plists can contain private user state.
+  # Remove all of them before releasing the physical lock and never stage them.
+  remove_private_preference_files || restore_status=$?
 
   # Keep the host lock until the application is gone and preferences are fully
   # restored, so the next physical job cannot observe an intermediate state.
@@ -99,6 +112,124 @@ handle_signal() {
   restore_preferences || true
   trap - EXIT INT TERM
   exit "${exit_status}"
+}
+
+write_dual_configuration_json() {
+  local destination="$1"
+  python3 - "${destination}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = {
+    "schemaVersion": 4,
+    "configuration": {
+        "metric": "cpu",
+        "secondaryMetric": "temperature",
+        "showValueText": True,
+        "showSensorName": True,
+        "colorMode": "automatic",
+        "accent": "cyan",
+        "lineThickness": 2.5,
+        "horizontalExtension": 72.0,
+        "trackOpacity": 0.18,
+        "glowIntensity": 0.62,
+        "warningThreshold": 75.0,
+        "criticalThreshold": 90.0,
+        "secondaryWarningThreshold": 75.0,
+        "secondaryCriticalThreshold": 90.0,
+        "animateChanges": True,
+        "showOnDisplaysWithoutNotch": False,
+    },
+}
+Path(sys.argv[1]).write_bytes(
+    json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+PY
+  chmod 0600 "${destination}"
+}
+
+write_measurement_preferences() {
+  local domain="$1"
+  local backup="$2"
+  local configuration="$3"
+
+  PREFS_OVERRIDE="$(mktemp "${TMPDIR:-/tmp}/macvitals-preferences-override.XXXXXX")"
+  PREFS_VERIFY="$(mktemp "${TMPDIR:-/tmp}/macvitals-preferences-verify.XXXXXX")"
+  chmod 0600 "${PREFS_OVERRIDE}" "${PREFS_VERIFY}"
+
+  python3 - "${backup}" "${configuration}" "${PREFS_OVERRIDE}" <<'PY'
+import json
+import plistlib
+import sys
+from pathlib import Path
+
+backup = Path(sys.argv[1])
+configuration = Path(sys.argv[2])
+destination = Path(sys.argv[3])
+
+payload = {}
+if backup.is_file() and backup.stat().st_size > 0:
+    with backup.open("rb") as handle:
+        loaded = plistlib.load(handle)
+    if not isinstance(loaded, dict):
+        raise SystemExit("preferences backup root is not a dictionary")
+    payload = loaded
+
+configuration_data = configuration.read_bytes()
+decoded = json.loads(configuration_data)
+if decoded.get("schemaVersion") != 4:
+    raise SystemExit("dual HUD configuration schema mismatch")
+configuration_payload = decoded.get("configuration")
+if not isinstance(configuration_payload, dict):
+    raise SystemExit("dual HUD configuration payload is missing")
+if configuration_payload.get("metric") != "cpu":
+    raise SystemExit("dual HUD primary metric mismatch")
+if configuration_payload.get("secondaryMetric") != "temperature":
+    raise SystemExit("dual HUD secondary metric mismatch")
+
+payload["samplingInterval"] = 2.0
+payload["experimentalNotchHUDEnabled"] = True
+payload["notchHUDConfiguration.v1"] = configuration_data
+with destination.open("wb") as handle:
+    plistlib.dump(payload, handle, fmt=plistlib.FMT_XML, sort_keys=True)
+PY
+
+  defaults import "${domain}" "${PREFS_OVERRIDE}" >/dev/null
+  killall cfprefsd >/dev/null 2>&1 || true
+
+  rm -f -- "${PREFS_VERIFY}"
+  defaults export "${domain}" "${PREFS_VERIFY}" >/dev/null
+  chmod 0600 "${PREFS_VERIFY}"
+
+  python3 - "${PREFS_VERIFY}" "${configuration}" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+verification = Path(sys.argv[1])
+configuration = Path(sys.argv[2])
+with verification.open("rb") as handle:
+    payload = plistlib.load(handle)
+if not isinstance(payload, dict):
+    raise SystemExit("preferences verification root is not a dictionary")
+
+interval = payload.get("samplingInterval")
+if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+    raise SystemExit("sampling interval was not persisted as a number")
+if abs(float(interval) - 2.0) > 0.000001:
+    raise SystemExit("sampling interval round-trip mismatch")
+if payload.get("experimentalNotchHUDEnabled") is not True:
+    raise SystemExit("HUD enabled preference round-trip mismatch")
+stored_configuration = payload.get("notchHUDConfiguration.v1")
+if not isinstance(stored_configuration, bytes):
+    raise SystemExit("HUD configuration was not persisted as Data")
+if stored_configuration != configuration.read_bytes():
+    raise SystemExit("HUD configuration Data round-trip mismatch")
+PY
+
+  rm -f -- "${PREFS_OVERRIDE}" "${PREFS_VERIFY}"
+  PREFS_OVERRIDE=""
+  PREFS_VERIFY=""
 }
 
 long_baseline_cleanup_self_test() {
@@ -211,8 +342,41 @@ SH
   echo 'Long-baseline cleanup self-test passed'
 }
 
+long_baseline_preferences_round_trip_self_test() {
+  local temp_root domain backup configuration
+  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/macvitals-long-baseline-preferences-test.XXXXXX")"
+  domain="com.mishkacher.MacVitals.LongBaselineSelfTest.$$.$RANDOM"
+  backup="${temp_root}/empty-backup.plist"
+  configuration="${temp_root}/dual-configuration.json"
+
+  cleanup_preferences_test() {
+    defaults delete "${domain}" >/dev/null 2>&1 || true
+    killall cfprefsd >/dev/null 2>&1 || true
+    remove_private_preference_files >/dev/null 2>&1 || true
+    rm -rf -- "${temp_root}"
+  }
+  trap cleanup_preferences_test EXIT INT TERM
+
+  : > "${backup}"
+  chmod 0600 "${backup}"
+  write_dual_configuration_json "${configuration}"
+  write_measurement_preferences "${domain}" "${backup}" "${configuration}"
+
+  defaults delete "${domain}" >/dev/null
+  killall cfprefsd >/dev/null 2>&1 || true
+  if defaults read "${domain}" samplingInterval >/dev/null 2>&1; then
+    echo 'Temporary preferences domain remained after deletion' >&2
+    return 1
+  fi
+
+  trap - EXIT INT TERM
+  cleanup_preferences_test
+  echo 'Long-baseline preferences round-trip self-test passed'
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   long_baseline_cleanup_self_test
+  long_baseline_preferences_round_trip_self_test
   exit 0
 fi
 
@@ -247,43 +411,14 @@ if pgrep -x MacVitals >/dev/null 2>&1; then
 fi
 
 PREFS_BACKUP="$(mktemp "${TMPDIR:-/tmp}/macvitals-preferences.XXXXXX")"
-chmod 0600 "${PREFS_BACKUP}"
+CONFIGURATION_FILE="$(mktemp "${TMPDIR:-/tmp}/macvitals-dual-configuration.XXXXXX")"
+chmod 0600 "${PREFS_BACKUP}" "${CONFIGURATION_FILE}"
 if defaults export "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null 2>&1; then
   PREFS_EXISTED=1
 fi
 PREFS_CAPTURED=1
-
-DUAL_CONFIGURATION_HEX="$(python3 - <<'PY'
-import json
-payload = {
-    "schemaVersion": 4,
-    "configuration": {
-        "metric": "cpu",
-        "secondaryMetric": "temperature",
-        "showValueText": True,
-        "showSensorName": True,
-        "colorMode": "automatic",
-        "accent": "cyan",
-        "lineThickness": 2.5,
-        "horizontalExtension": 72.0,
-        "trackOpacity": 0.18,
-        "glowIntensity": 0.62,
-        "warningThreshold": 75.0,
-        "criticalThreshold": 90.0,
-        "secondaryWarningThreshold": 75.0,
-        "secondaryCriticalThreshold": 90.0,
-        "animateChanges": True,
-        "showOnDisplaysWithoutNotch": False,
-    },
-}
-print(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode().hex())
-PY
-)"
-
-defaults write "${DOMAIN}" samplingInterval -float 2
-defaults write "${DOMAIN}" experimentalNotchHUDEnabled -bool true
-defaults write "${DOMAIN}" notchHUDConfiguration.v1 -data "${DUAL_CONFIGURATION_HEX}"
-killall cfprefsd >/dev/null 2>&1 || true
+write_dual_configuration_json "${CONFIGURATION_FILE}"
+write_measurement_preferences "${DOMAIN}" "${PREFS_BACKUP}" "${CONFIGURATION_FILE}"
 
 cat > "${OUTPUT_ROOT}/scenario.json" <<EOF
 {
