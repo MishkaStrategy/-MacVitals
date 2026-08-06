@@ -55,7 +55,10 @@ cleanup_process() {
     kill -0 "${pid}" 2>/dev/null || break
     sleep 0.1
   done
-  kill -0 "${pid}" 2>/dev/null && fail "test process ${pid} could not be reaped"
+  if kill -0 "${pid}" 2>/dev/null; then
+    echo "long-baseline: test process ${pid} could not be reaped" >&2
+    return 1
+  fi
   TEST_PID=""
 }
 
@@ -69,21 +72,30 @@ wait_for_no_macvitals() {
 }
 
 restore_preferences() {
-  cleanup_process
-  physical_runtime_lock_release || true
+  local restore_status=0
+  local lock_status=0
 
-  if [[ "${PREFS_CAPTURED}" != "1" ]]; then
-    return
+  cleanup_process || restore_status=$?
+
+  if [[ "${PREFS_CAPTURED}" == "1" ]]; then
+    if [[ "${PREFS_EXISTED}" == "1" && -s "${PREFS_BACKUP}" ]]; then
+      defaults import "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null || restore_status=$?
+    else
+      defaults delete "${DOMAIN}" >/dev/null 2>&1 || true
+    fi
+    killall cfprefsd >/dev/null 2>&1 || true
+    PREFS_CAPTURED=0
   fi
 
-  if [[ "${PREFS_EXISTED}" == "1" && -s "${PREFS_BACKUP}" ]]; then
-    defaults import "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null
-  else
-    defaults delete "${DOMAIN}" >/dev/null 2>&1 || true
+  # Keep the host lock until the application is gone and preferences are fully
+  # restored, so the next physical job cannot observe an intermediate state.
+  physical_runtime_lock_release || lock_status=$?
+  if [[ "${restore_status}" == "0" && "${lock_status}" != "0" ]]; then
+    restore_status="${lock_status}"
   fi
-  killall cfprefsd >/dev/null 2>&1 || true
+  return "${restore_status}"
 }
-trap restore_preferences EXIT INT TERM
+trap 'restore_preferences || true' EXIT INT TERM
 
 [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "source SHA is not a full lowercase SHA-1"
 [[ -x "${EXECUTABLE}" ]] || fail "MacVitals executable is missing"
@@ -245,5 +257,8 @@ print("MACVITALS_LONG_BASELINE_SUMMARY " + " ".join([
 ]))
 PY
 
-restore_preferences
+if ! restore_preferences; then
+  trap - EXIT INT TERM
+  fail "failed to restore preferences or release physical runtime lock"
+fi
 trap - EXIT INT TERM
