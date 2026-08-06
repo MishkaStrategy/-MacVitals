@@ -36,7 +36,9 @@ def _sha256(path: Path) -> str:
 
 
 def _validate_sha(name: str, value: str) -> None:
-    if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
+    if len(value) != 40 or any(
+        character not in "0123456789abcdefABCDEF" for character in value
+    ):
         raise EvidenceValidationError(f"{name} must contain exactly 40 hex characters")
 
 
@@ -46,6 +48,10 @@ def _safe_manifest_path(root: Path, raw_path: object) -> Path:
     relative = Path(raw_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise EvidenceValidationError(f"unsafe manifest path: {raw_path}")
+    if relative.suffix.lower() == ".plist":
+        raise EvidenceValidationError(
+            f"property-list files are private runner state, not evidence: {raw_path}"
+        )
     candidate = root / relative
     try:
         candidate.relative_to(root)
@@ -306,6 +312,16 @@ def self_test() -> None:
     expect_rejected(
         "missing provider records",
         semantic_fixture(remove_provider_records),
+    )
+
+    def leak_preferences(root: Path) -> None:
+        (root / "long-idle-baseline-results/preferences-before.plist").write_text(
+            "private runner preferences\n", encoding="utf-8"
+        )
+
+    expect_rejected(
+        "private preferences leak",
+        semantic_fixture(leak_preferences),
     )
 
     print("Long-baseline evidence validator self-test passed")
