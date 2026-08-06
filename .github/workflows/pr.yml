@@ -16,6 +16,9 @@ jobs:
   apple-silicon:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 35
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -232,11 +235,13 @@ jobs:
           python3 scripts/sign_notarize_release.py self-test
           python3 scripts/signed_release_entrypoint.py self-test
           bash -n \
+            scripts/physical_runtime_lock.sh \
             scripts/package_release.sh \
             scripts/verify_release.sh \
             scripts/collect_runtime_metrics.sh \
             scripts/run_ci_runtime_smoke.sh \
             scripts/run_ci_physical_validation_hardened.sh
+          bash scripts/physical_runtime_lock.sh --self-test
           bash scripts/run_ci_physical_validation_hardened.sh --self-test
 
       - name: Install and run Gitleaks CLI
