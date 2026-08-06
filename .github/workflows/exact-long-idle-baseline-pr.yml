@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - perf/provider-stack-benchmark
+      - perf/exact-long-idle-baseline
     paths:
       - MacVitals/**
       - MacVitalsTests/**
@@ -16,6 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -26,10 +28,6 @@ jobs:
   measure-exact-long-idle-baseline:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 180
-    outputs:
-      source_sha: ${{ steps.verify-source.outputs.source_sha }}
-      runner_name: ${{ steps.verify-source.outputs.runner_name }}
-      source_run_id: ${{ steps.verify-source.outputs.source_run_id }}
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
@@ -63,8 +61,6 @@ jobs:
           }
           echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
           echo "source_sha=${ACTUAL_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "runner_name=${RUNNER_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "source_run_id=${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
 
       - name: Install XcodeGen
         shell: bash
@@ -96,6 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
           bash scripts/run_exact_long_idle_baseline.sh \
             "${APP_PATH}" \
             "${SOURCE_SHA}" \
@@ -119,6 +116,7 @@ jobs:
           grep -q 'MACVITALS_LONG_BASELINE_SUMMARY' long-idle-baseline.log
 
       - name: Stage validated evidence outside workspace
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
@@ -168,27 +166,22 @@ jobs:
           mkdir -p "${CACHE_BASE}"
           rm -rf "${FINAL_ROOT}"
           mv "${TEMP_ROOT}" "${FINAL_ROOT}"
+          echo "RECOVERY_ROOT=${FINAL_ROOT}" >> "${GITHUB_ENV}"
           echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} path=${FINAL_ROOT}"
 
-  publish-exact-long-idle-evidence:
-    needs: measure-exact-long-idle-baseline
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 20
-    env:
-      EXPECTED_SOURCE_SHA: ${{ needs.measure-exact-long-idle-baseline.outputs.source_sha }}
-      EXPECTED_RUNNER_NAME: ${{ needs.measure-exact-long-idle-baseline.outputs.runner_name }}
-      SOURCE_RUN_ID: ${{ needs.measure-exact-long-idle-baseline.outputs.source_run_id }}
-    steps:
-      - name: Locate and verify staged evidence
+      - name: Verify staged recovery evidence
+        id: verify-evidence
         shell: bash
         run: |
           set -euo pipefail
-          test "${RUNNER_NAME}" = "${EXPECTED_RUNNER_NAME}"
-          RECOVERY_ROOT="${HOME}/Library/Caches/MacVitals-CI/long-baseline/${EXPECTED_SOURCE_SHA}"
           test -d "${RECOVERY_ROOT}"
           test -f "${RECOVERY_ROOT}/recovery-manifest.json"
 
-          python3 - "${RECOVERY_ROOT}" "${EXPECTED_SOURCE_SHA}" "${SOURCE_RUN_ID}" "${EXPECTED_RUNNER_NAME}" <<'PY'
+          python3 - \
+            "${RECOVERY_ROOT}" \
+            "${SOURCE_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${RUNNER_NAME}" <<'PY'
           import hashlib
           import json
           import sys
@@ -199,6 +192,7 @@ jobs:
           expected_run_id = sys.argv[3]
           expected_runner = sys.argv[4]
           manifest = json.loads((root / "recovery-manifest.json").read_text())
+
           if manifest.get("sourceSha") != expected_sha:
               raise SystemExit("recovery source SHA mismatch")
           if manifest.get("sourceWorkflowRunId") != expected_run_id:
@@ -206,7 +200,10 @@ jobs:
           if manifest.get("sourceRunnerName") != expected_runner:
               raise SystemExit("recovery runner mismatch")
 
-          for entry in manifest.get("files", []):
+          files = manifest.get("files", [])
+          if not files:
+              raise SystemExit("recovery manifest contains no evidence files")
+          for entry in files:
               path = root / entry["path"]
               if not path.is_file():
                   raise SystemExit(f"missing staged file: {entry['path']}")
@@ -221,38 +218,171 @@ jobs:
           aggregate = json.loads((results / "aggregate-summary.json").read_text())
           if scenario.get("sourceSha") != expected_sha:
               raise SystemExit("scenario source SHA mismatch")
-          if aggregate.get("sourceSha") != expected_sha or aggregate.get("runCount") != 3:
-              raise SystemExit("aggregate evidence mismatch")
+          if aggregate.get("sourceSha") != expected_sha:
+              raise SystemExit("aggregate source SHA mismatch")
+          if int(aggregate.get("runCount", 0)) != 3:
+              raise SystemExit("aggregate run count is not 3")
+
           for run_number in range(1, 4):
               run_root = results / f"run-{run_number}"
               resource = json.loads((run_root / "resource-summary.json").read_text())
               provider = json.loads((run_root / "provider-summary.json").read_text())
               if resource.get("sourceSha") != expected_sha:
                   raise SystemExit(f"run {run_number}: resource source SHA mismatch")
-              if int(resource["measurement"]["sampleCount"]) < 900:
+
+              measurement = resource.get("measurement", {})
+              if int(measurement.get("sampleCount", 0)) < 900:
                   raise SystemExit(f"run {run_number}: insufficient process samples")
-              if int(provider["cycleCount"]) < 890:
-                  raise SystemExit(f"run {run_number}: insufficient provider cycles")
+              process = resource.get("process", {})
+              if process.get("aliveAtEnd") is not True:
+                  raise SystemExit(f"run {run_number}: app was not alive at end")
+              if process.get("identityStable") is not True:
+                  raise SystemExit(f"run {run_number}: PID identity was not stable")
+
+              records = int(provider.get("records", provider.get("cycleCount", 0)))
+              if records <= 0:
+                  raise SystemExit(f"run {run_number}: no provider records")
+              coverage = float(provider.get("observed_duration_s", 0))
+              if coverage < 1800:
+                  raise SystemExit(
+                      f"run {run_number}: provider coverage {coverage:.3f}s < 1800s")
+
           print(
               "MACVITALS_RECOVERY_VERIFIED "
               f"source_sha={expected_sha} source_run_id={expected_run_id} "
-              f"files={len(manifest['files'])}")
+              f"runner={expected_runner} files={len(files)}")
           PY
 
-          echo "RECOVERY_ROOT=${RECOVERY_ROOT}" >> "${GITHUB_ENV}"
-
       - name: Upload exact long-baseline evidence
+        id: upload-primary
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exact-provider-stack-long-baseline-${{ needs.measure-exact-long-idle-baseline.outputs.source_sha }}
+          name: exact-provider-stack-long-baseline-${{ steps.verify-source.outputs.source_sha }}
           path: ${{ env.RECOVERY_ROOT }}
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
+      - name: Retry exact long-baseline evidence upload
+        id: upload-retry
+        if: steps.upload-primary.outcome == 'failure' || steps.upload-primary.outputs.artifact-id == '' || steps.upload-primary.outputs.artifact-digest == ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-provider-stack-long-baseline-${{ steps.verify-source.outputs.source_sha }}
+          path: ${{ env.RECOVERY_ROOT }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Confirm published evidence
+        id: confirm-upload
+        if: always() && steps.verify-evidence.outcome == 'success'
+        shell: bash
+        env:
+          PRIMARY_OUTCOME: ${{ steps.upload-primary.outcome }}
+          PRIMARY_ARTIFACT_ID: ${{ steps.upload-primary.outputs.artifact-id }}
+          PRIMARY_ARTIFACT_DIGEST: ${{ steps.upload-primary.outputs.artifact-digest }}
+          PRIMARY_ARTIFACT_URL: ${{ steps.upload-primary.outputs.artifact-url }}
+          RETRY_OUTCOME: ${{ steps.upload-retry.outcome }}
+          RETRY_ARTIFACT_ID: ${{ steps.upload-retry.outputs.artifact-id }}
+          RETRY_ARTIFACT_DIGEST: ${{ steps.upload-retry.outputs.artifact-digest }}
+          RETRY_ARTIFACT_URL: ${{ steps.upload-retry.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          if [[ "${PRIMARY_OUTCOME}" = success ]] \
+            && [[ -n "${PRIMARY_ARTIFACT_ID}" ]] \
+            && [[ -n "${PRIMARY_ARTIFACT_DIGEST}" ]]; then
+            ARTIFACT_ID="${PRIMARY_ARTIFACT_ID}"
+            ARTIFACT_DIGEST="${PRIMARY_ARTIFACT_DIGEST}"
+            ARTIFACT_URL="${PRIMARY_ARTIFACT_URL}"
+            ATTEMPT=primary
+          elif [[ "${RETRY_OUTCOME}" = success ]] \
+            && [[ -n "${RETRY_ARTIFACT_ID}" ]] \
+            && [[ -n "${RETRY_ARTIFACT_DIGEST}" ]]; then
+            ARTIFACT_ID="${RETRY_ARTIFACT_ID}"
+            ARTIFACT_DIGEST="${RETRY_ARTIFACT_DIGEST}"
+            ARTIFACT_URL="${RETRY_ARTIFACT_URL}"
+            ATTEMPT=retry
+          else
+            echo "Both in-job artifact upload attempts failed; recovery retained at ${RECOVERY_ROOT}" >&2
+            exit 1
+          fi
+          echo "artifact_id=${ARTIFACT_ID}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_digest=${ARTIFACT_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_url=${ARTIFACT_URL}" >> "${GITHUB_OUTPUT}"
+          echo "MACVITALS_BASELINE_ARTIFACT_PUBLISHED attempt=${ATTEMPT} artifact_id=${ARTIFACT_ID} digest=${ARTIFACT_DIGEST} url=${ARTIFACT_URL}"
+
+      - name: Verify published artifact through GitHub API
+        id: verify-published-artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.confirm-upload.outputs.artifact_id }}
+          EXPECTED_ARTIFACT_DIGEST: ${{ steps.confirm-upload.outputs.artifact_digest }}
+          EXPECTED_ARTIFACT_NAME: exact-provider-stack-long-baseline-${{ steps.verify-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "${ARTIFACT_ID}"
+          RESPONSE_FILE="$(mktemp)"
+          trap 'rm -f "${RESPONSE_FILE}"' EXIT
+
+          published=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" \
+              -o "${RESPONSE_FILE}"; then
+              published=true
+              break
+            fi
+            echo "Artifact API lookup attempt ${attempt} failed; retrying" >&2
+            sleep 5
+          done
+          test "${published}" = true
+
+          python3 - \
+            "${RESPONSE_FILE}" \
+            "${ARTIFACT_ID}" \
+            "${EXPECTED_ARTIFACT_NAME}" \
+            "${EXPECTED_ARTIFACT_DIGEST}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          expected_id = int(sys.argv[2])
+          expected_name = sys.argv[3]
+          expected_digest = sys.argv[4]
+
+          if int(payload.get("id", 0)) != expected_id:
+              raise SystemExit("published artifact ID mismatch")
+          if payload.get("name") != expected_name:
+              raise SystemExit("published artifact name mismatch")
+          if payload.get("expired") is not False:
+              raise SystemExit("published artifact is already expired")
+          api_digest = payload.get("digest")
+          if api_digest and api_digest != expected_digest:
+              raise SystemExit("published artifact digest mismatch")
+          print(
+              "MACVITALS_BASELINE_ARTIFACT_API_VERIFIED "
+              f"artifact_id={expected_id} name={expected_name} digest={expected_digest}")
+          PY
+
       - name: Remove published recovery bundle
-        if: success()
+        if: success() && steps.verify-published-artifact.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${RECOVERY_ROOT:-}"
+          EXPECTED_PREFIX="${HOME}/Library/Caches/MacVitals-CI/long-baseline/"
+          case "${RECOVERY_ROOT}" in
+            "${EXPECTED_PREFIX}"*) ;;
+            *)
+              echo "Refusing to remove unexpected recovery path: ${RECOVERY_ROOT}" >&2
+              exit 1
+              ;;
+          esac
           rm -rf "${RECOVERY_ROOT}"
