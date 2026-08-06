@@ -9,21 +9,12 @@ LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
 }
 # shellcheck source=physical_runtime_lock.sh
 source "${LOCK_HELPER}"
-APP_PATH="${1:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
-SOURCE_SHA="${2:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
-OUTPUT_ROOT="${3:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
-EXECUTABLE="${APP_PATH}/Contents/MacOS/MacVitals"
-DOMAIN="com.mishkacher.MacVitals"
-WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
-MEASURE_SECONDS="${MEASURE_SECONDS:-1800}"
-SAMPLE_SECONDS="${SAMPLE_SECONDS:-2}"
-RUN_COUNT="${RUN_COUNT:-3}"
-PREFS_BACKUP="${OUTPUT_ROOT}/preferences-before.plist"
+
+DOMAIN=""
+PREFS_BACKUP=""
 PREFS_CAPTURED=0
 PREFS_EXISTED=0
 TEST_PID=""
-
-mkdir -p "${OUTPUT_ROOT}"
 
 fail() {
   echo "long-baseline: $*" >&2
@@ -95,7 +86,138 @@ restore_preferences() {
   fi
   return "${restore_status}"
 }
-trap 'restore_preferences || true' EXIT INT TERM
+
+handle_signal() {
+  local exit_status="$1"
+  restore_preferences || true
+  trap - EXIT INT TERM
+  exit "${exit_status}"
+}
+
+long_baseline_cleanup_self_test() {
+  local temp_root fake_bin defaults_log backup original_path
+  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/macvitals-long-baseline-cleanup-test.XXXXXX")"
+  fake_bin="${temp_root}/bin"
+  defaults_log="${temp_root}/defaults.log"
+  backup="${temp_root}/preferences-before.plist"
+  original_path="${PATH}"
+
+  cleanup_self_test() {
+    PATH="${original_path}"
+    export PATH
+    physical_runtime_lock_release >/dev/null 2>&1 || true
+    rm -rf -- "${temp_root}"
+  }
+  trap cleanup_self_test EXIT INT TERM
+
+  mkdir -p "${fake_bin}"
+  printf 'fixture\n' > "${backup}"
+  : > "${defaults_log}"
+
+  cat > "${fake_bin}/defaults" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${DEFAULTS_LOG:?}"
+if [[ -n "${EXPECTED_LOCK_DIR:-}" && ! -d "${EXPECTED_LOCK_DIR}" ]]; then
+  printf '%s\n' 'lock-missing-during-defaults' >> "${DEFAULTS_LOG}"
+  exit 8
+fi
+if [[ "${FAIL_DEFAULTS_IMPORT:-0}" == "1" && "${1:-}" == "import" ]]; then
+  exit 9
+fi
+SH
+  cat > "${fake_bin}/killall" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod 0700 "${fake_bin}/defaults" "${fake_bin}/killall"
+
+  PATH="${fake_bin}:${PATH}"
+  export PATH
+  export DEFAULTS_LOG="${defaults_log}"
+  export MACVITALS_PHYSICAL_LOCK_DIR="${temp_root}/runtime.lock"
+  export MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=2
+  export MACVITALS_PHYSICAL_LOCK_POLL_SECONDS=0.1
+  export MACVITALS_PHYSICAL_LOCK_STALE_GRACE_SECONDS=0
+  export EXPECTED_LOCK_DIR="${MACVITALS_PHYSICAL_LOCK_DIR}"
+
+  DOMAIN="self.test.domain"
+  PREFS_BACKUP="${backup}"
+  TEST_PID=""
+
+  # An error before preference capture must release the lock without touching
+  # the user's defaults domain.
+  : > "${defaults_log}"
+  PREFS_CAPTURED=0
+  PREFS_EXISTED=0
+  MACVITALS_PHYSICAL_LOCK_HELD=0
+  physical_runtime_lock_acquire >/dev/null
+  restore_preferences
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -s "${defaults_log}" ]] || {
+    echo 'Early cleanup self-test failed' >&2
+    return 1
+  }
+
+  # Existing preferences must be imported while the lock is still held.
+  : > "${defaults_log}"
+  PREFS_CAPTURED=1
+  PREFS_EXISTED=1
+  physical_runtime_lock_acquire >/dev/null
+  restore_preferences
+  grep -Fq "import ${DOMAIN} ${PREFS_BACKUP}" "${defaults_log}"
+  ! grep -Fq 'lock-missing-during-defaults' "${defaults_log}"
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+
+  # A previously absent domain must be deleted while the lock is still held.
+  : > "${defaults_log}"
+  PREFS_CAPTURED=1
+  PREFS_EXISTED=0
+  physical_runtime_lock_acquire >/dev/null
+  restore_preferences
+  grep -Fq "delete ${DOMAIN}" "${defaults_log}"
+  ! grep -Fq 'lock-missing-during-defaults' "${defaults_log}"
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+
+  # Import failure must propagate as failure but still release the lock and
+  # leave cleanup idempotent for the EXIT trap.
+  : > "${defaults_log}"
+  PREFS_CAPTURED=1
+  PREFS_EXISTED=1
+  export FAIL_DEFAULTS_IMPORT=1
+  physical_runtime_lock_acquire >/dev/null
+  if restore_preferences; then
+    echo 'Failing preferences import unexpectedly passed' >&2
+    return 1
+  fi
+  unset FAIL_DEFAULTS_IMPORT
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+
+  trap - EXIT INT TERM
+  cleanup_self_test
+  echo 'Long-baseline cleanup self-test passed'
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  long_baseline_cleanup_self_test
+  exit 0
+fi
+
+APP_PATH="${1:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
+SOURCE_SHA="${2:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
+OUTPUT_ROOT="${3:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
+EXECUTABLE="${APP_PATH}/Contents/MacOS/MacVitals"
+DOMAIN="com.mishkacher.MacVitals"
+WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
+MEASURE_SECONDS="${MEASURE_SECONDS:-1800}"
+SAMPLE_SECONDS="${SAMPLE_SECONDS:-2}"
+RUN_COUNT="${RUN_COUNT:-3}"
+PREFS_BACKUP="${OUTPUT_ROOT}/preferences-before.plist"
+
+mkdir -p "${OUTPUT_ROOT}"
+
+trap 'restore_preferences || true' EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "source SHA is not a full lowercase SHA-1"
 [[ -x "${EXECUTABLE}" ]] || fail "MacVitals executable is missing"
