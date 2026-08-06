@@ -27,6 +27,50 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
     XCTAssertTrue(networkLeaders.isEmpty)
   }
 
+  func testEqualScoresUseStableNameAndIDOrdering() async throws {
+    let archiveURL = temporaryArchiveURL()
+    defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
+
+    let now = Date(timeIntervalSince1970: 1_800_010_000)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    await store.record(
+      snapshot: snapshot(
+        at: now,
+        applications: [
+          application(id: "z", name: "Same", cpu: 100),
+          application(id: "a", name: "Same", cpu: 100),
+          application(id: "middle", name: "Another", cpu: 100),
+        ]),
+      elapsed: 5)
+
+    let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertEqual(leaders.map(\.id), ["middle", "a", "z"])
+  }
+
+  func testEqualScoreSelectionRetainsStableTopFifteen() async throws {
+    let archiveURL = temporaryArchiveURL()
+    defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
+
+    let now = Date(timeIntervalSince1970: 1_800_020_000)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    let applications = (0..<16).reversed().map { index in
+      application(
+        id: String(format: "app-%02d", index),
+        name: "Equal",
+        cpu: 100,
+        memory: 128 * 1_048_576,
+        disk: 4_096)
+    }
+    await store.record(
+      snapshot: snapshot(at: now, applications: applications),
+      elapsed: 5)
+
+    let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertEqual(
+      leaders.map(\.id),
+      (0..<15).map { String(format: "app-%02d", $0) })
+  }
+
   func testArchivePersistsAndReloadsDeterministically() async throws {
     let archiveURL = temporaryArchiveURL()
     defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
