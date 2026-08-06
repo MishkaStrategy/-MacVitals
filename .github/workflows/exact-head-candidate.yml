@@ -18,6 +18,7 @@ jobs:
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
+      queue: max
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-ExactHead
