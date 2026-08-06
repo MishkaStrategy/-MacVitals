@@ -3,7 +3,7 @@ import SwiftUI
 
 nonisolated enum OverviewLayout {
   static let width: CGFloat = 410
-  static let height: CGFloat = 740
+  static let height: CGFloat = 915
 }
 
 struct OverviewView: View {
@@ -77,6 +77,8 @@ struct OverviewView: View {
           action: { showDetail(.fans) })
       }
 
+      NetworkTrafficView()
+      StorageUsageView()
       memorySummary
       gpuSummary
       PowerFlowView(snapshot: coordinator.snapshot) { showDetail(.power) }
