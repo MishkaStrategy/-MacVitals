@@ -1,0 +1,134 @@
+name: Safe Physical Validation PR
+
+on:
+  pull_request:
+    branches:
+      - integration/network-history-leaders-post-notch
+    paths:
+      - .github/workflows/safe-physical-validation-pr.yml
+      - scripts/physical_runtime_lock.sh
+      - scripts/run_safe_physical_validation.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  validate-candidate:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 95
+    env:
+      PRODUCT_BASE_SHA: 38f7a03bdef77e1bea0dfa1e7f077113ffb19967
+      MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS: 1800
+      MACVITALS_PHYSICAL_LOCK_POLL_SECONDS: 1
+      MACVITALS_PHYSICAL_LOCK_STALE_GRACE_SECONDS: 30
+      MACVITALS_RUN_LONG_STABILITY: 0
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact source and validation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}" -- \
+            MacVitals MacVitalsTests MacVitalsUITests project.yml
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}" > validation-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = {
+              ".github/workflows/safe-physical-validation-pr.yml",
+              "scripts/physical_runtime_lock.sh",
+              "scripts/run_safe_physical_validation.sh",
+          }
+          actual = {
+              line.strip()
+              for line in Path("validation-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"validation branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
+            echo 'Forbidden pet code found in candidate' >&2
+            exit 1
+          }
+          echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Validate safety helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
+          bash -n \
+            scripts/physical_runtime_lock.sh \
+            scripts/run_safe_physical_validation.sh \
+            scripts/run_ci_physical_validation_hardened.sh
+          bash scripts/run_safe_physical_validation.sh --self-test
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Package unsigned ARM64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}" \
+            > physical-package.log 2>&1
+          tail -n 500 physical-package.log
+          APP_PATH="build/MacVitals.xcarchive/Products/Applications/MacVitals.app"
+          test -d "${APP_PATH}"
+          test "$(lipo -archs "${APP_PATH}/Contents/MacOS/MacVitals")" = arm64
+
+      - name: Run bounded fail-closed physical collection
+        timeout-minutes: 65
+        shell: bash
+        run: |
+          set +e
+          bash scripts/run_safe_physical_validation.sh \
+            "0.0.${GITHUB_RUN_NUMBER}" \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            "${SOURCE_SHA}" \
+            > safe-physical-validation.log 2>&1
+          status=$?
+          cat safe-physical-validation.log
+          exit ${status}
+
+      - name: Upload physical validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: safe-physical-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            validation-changes.txt
+            physical-package.log
+            safe-physical-validation.log
+            physical-validation-results/
+          if-no-files-found: warn
+          retention-days: 14
