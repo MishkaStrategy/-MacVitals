@@ -2,6 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
+[[ -f "${LOCK_HELPER}" && ! -L "${LOCK_HELPER}" ]] || {
+  echo "Physical runtime lock helper is missing or unsafe: ${LOCK_HELPER}" >&2
+  exit 1
+}
+# shellcheck source=physical_runtime_lock.sh
+source "${LOCK_HELPER}"
 APP_PATH="${1:-${APP_PATH:-${ROOT_DIR}/build/MacVitals.xcarchive/Products/Applications/MacVitals.app}}"
 EXECUTABLE_PATH="${APP_PATH}/Contents/MacOS/MacVitals"
 WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
@@ -24,10 +31,11 @@ cleanup() {
     fi
     wait "${app_pid}" 2>/dev/null || true
   fi
+  physical_runtime_lock_release
 }
 trap cleanup EXIT INT TERM
 
-for command in date find head mkdir tee tr wc python3; do
+for command in awk date find head mkdir mv rm sleep stat tee tr wc python3; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "Required runtime-smoke command is unavailable: ${command}" >&2
     exit 127
@@ -91,6 +99,8 @@ mkdir -p -- "${BASE_OUTPUT_ROOT}"
 mkdir -- "${OUTPUT_ROOT}"
 APP_LOG="${OUTPUT_ROOT}/MacVitals.log"
 VALIDATION_LOG="${OUTPUT_ROOT}/validation.log"
+
+physical_runtime_lock_acquire || exit $?
 
 "${EXECUTABLE_PATH}" \
   -AppleLanguages '(en)' \
