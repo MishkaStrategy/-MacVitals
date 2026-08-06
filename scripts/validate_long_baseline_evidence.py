@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
@@ -58,9 +57,11 @@ def validate_bundle(
     expected_run_id: str,
     expected_runner: str,
 ) -> int:
+    if root.is_symlink():
+        raise EvidenceValidationError(f"bundle root must not be a symlink: {root}")
     root = root.resolve(strict=True)
-    if not root.is_dir() or root.is_symlink():
-        raise EvidenceValidationError(f"bundle root is not a safe directory: {root}")
+    if not root.is_dir():
+        raise EvidenceValidationError(f"bundle root is not a directory: {root}")
     if len(expected_source_sha) != 40 or any(
         character not in "0123456789abcdefABCDEF" for character in expected_source_sha
     ):
@@ -98,6 +99,19 @@ def validate_bundle(
             raise EvidenceValidationError(f"size mismatch: {raw_path}")
         if len(expected_digest) != 64 or _sha256(path) != expected_digest:
             raise EvidenceValidationError(f"digest mismatch: {raw_path}")
+
+    actual_paths = {
+        str(path.relative_to(root))
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "recovery-manifest.json"
+    }
+    if actual_paths != seen_paths:
+        missing = sorted(actual_paths - seen_paths)
+        unexpected = sorted(seen_paths - actual_paths)
+        raise EvidenceValidationError(
+            "manifest file list mismatch: "
+            f"unlisted={missing or 'none'} missing={unexpected or 'none'}"
+        )
 
     results = root / "long-idle-baseline-results"
     scenario = _read_json(results / "scenario.json")
