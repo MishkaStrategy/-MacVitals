@@ -132,6 +132,11 @@ physical_runtime_lock_acquire() {
       return 0
     fi
 
+    if [[ -e "${lock_dir}/preferences-recovery-required" || -L "${lock_dir}/preferences-recovery-required" ]]; then
+      printf 'Physical runtime lock requires manual preference recovery: %s\n' "${lock_dir}" >&2
+      return 1
+    fi
+
     owner_pid="$(physical_runtime_lock_owner_pid "${lock_dir}")"
     if [[ "${owner_pid}" == "$$" ]]; then
       MACVITALS_PHYSICAL_LOCK_HELD=1
@@ -237,7 +242,7 @@ physical_runtime_lock_self_test() {
   mkdir -m 700 "${lock_dir}"
   printf '99999999\n' > "${lock_dir}/owner-pid"
   printf 'fixture\n' > "${lock_dir}/preferences-recovery-required"
-  MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=1
+  MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS=30
   MACVITALS_PHYSICAL_LOCK_HELD=0
   if physical_runtime_lock_acquire; then
     printf '%s\n' 'Recovery sentinel lock unexpectedly reclaimed' >&2
