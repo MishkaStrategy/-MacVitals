@@ -1,0 +1,92 @@
+name: Physical Runtime Safety
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/physical-runtime-safety.yml
+      - .github/workflows/pr.yml
+      - .github/workflows/exact-head-candidate.yml
+      - scripts/physical_runtime_lock.sh
+      - scripts/run_ci_runtime_smoke.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physical-runtime-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  physical-runtime-safety:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+
+      - name: Validate lock and runtime-smoke safety contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/physical-runtime-safety.yml')"
+          bash -n \
+            scripts/physical_runtime_lock.sh \
+            scripts/run_ci_runtime_smoke.sh
+          bash scripts/physical_runtime_lock.sh --self-test
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          lock = Path("scripts/physical_runtime_lock.sh").read_text(encoding="utf-8")
+          smoke = Path("scripts/run_ci_runtime_smoke.sh").read_text(encoding="utf-8")
+
+          for forbidden in (
+              "pkill",
+              "killall MacVitals",
+              "kill -TERM $(pgrep",
+              "kill -KILL $(pgrep",
+          ):
+              if forbidden in lock or forbidden in smoke:
+                  raise SystemExit(f"forbidden broad process operation: {forbidden}")
+
+          for required in (
+              "physical_runtime_lock_acquire",
+              "physical_runtime_lock_release",
+              "Existing MacVitals processes detected",
+              "owned_process_is_running",
+              '"${command_line}" == "${EXECUTABLE_PATH}"',
+              "Foreign MacVitals process was not terminated",
+              "trap 'exit 130' INT",
+              "trap 'exit 143' TERM",
+              "collect_runtime_metrics.sh",
+              "report_runtime_resources.py",
+          ):
+              if required not in smoke:
+                  raise SystemExit(f"runtime-smoke safety contract is missing: {required}")
+
+          for required in (
+              "preferences-recovery-required",
+              "owner-pid",
+              "Refusing to release physical runtime lock owned by pid",
+              "Recovery sentinel lock unexpectedly reclaimed",
+          ):
+              if required not in lock:
+                  raise SystemExit(f"physical lock safety contract is missing: {required}")
+          PY
