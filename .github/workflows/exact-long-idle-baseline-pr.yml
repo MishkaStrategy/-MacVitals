@@ -160,9 +160,13 @@ jobs:
         run: |
           set -euo pipefail
           CACHE_BASE="${HOME}/Library/Caches/MacVitals-CI/exact-long-idle-baseline"
-          FINAL_ROOT="${CACHE_BASE}/${SOURCE_SHA}/${GITHUB_RUN_ID}"
-          TEMP_ROOT="${FINAL_ROOT}.tmp.${GITHUB_RUN_ATTEMPT}"
+          FINAL_ROOT="${CACHE_BASE}/${SOURCE_SHA}/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          TEMP_ROOT="${FINAL_ROOT}.tmp.$$"
           rm -rf "${TEMP_ROOT}"
+          if [[ -e "${FINAL_ROOT}" || -L "${FINAL_ROOT}" ]]; then
+            echo "Refusing to overwrite preserved recovery bundle: ${FINAL_ROOT}" >&2
+            exit 1
+          fi
           mkdir -p "${TEMP_ROOT}"
           cp -R "${RESULTS_ROOT}" "${TEMP_ROOT}/long-idle-baseline-results"
           cp long-idle-baseline.log "${TEMP_ROOT}/long-idle-baseline.log"
@@ -205,10 +209,9 @@ jobs:
 
           chmod -R go-rwx "${TEMP_ROOT}"
           mkdir -p "$(dirname "${FINAL_ROOT}")"
-          rm -rf "${FINAL_ROOT}"
           mv "${TEMP_ROOT}" "${FINAL_ROOT}"
           echo "RECOVERY_ROOT=${FINAL_ROOT}" >> "${GITHUB_ENV}"
-          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} harness_sha=${HARNESS_SHA} path=${FINAL_ROOT}"
+          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} harness_sha=${HARNESS_SHA} run_attempt=${GITHUB_RUN_ATTEMPT} path=${FINAL_ROOT}"
 
       - name: Verify staged evidence and provenance
         id: verify-evidence
