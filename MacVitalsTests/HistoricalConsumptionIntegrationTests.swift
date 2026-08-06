@@ -42,7 +42,7 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
             name: "Writer",
             cpu: 10,
             memory: 128 * 1_048_576,
-            disk: 4_096),
+            disk: 4_096)
         ]),
       elapsed: 5)
     await store.flush()
@@ -64,8 +64,10 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
     try Data("not-json".utf8).write(to: archiveURL)
 
     let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
-    XCTAssertNil(await store.firstRecordedAt())
-    XCTAssertTrue(await store.leaders(metric: .cpu, range: .sevenDays).isEmpty)
+    let firstRecordedAt = await store.firstRecordedAt()
+    let leaders = await store.leaders(metric: .cpu, range: .sevenDays)
+    XCTAssertNil(firstRecordedAt)
+    XCTAssertTrue(leaders.isEmpty)
   }
 
   func testArchivePrunesDataOutsideRetentionWindow() async throws {
@@ -88,8 +90,9 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
       elapsed: 5)
 
     let leaders = await store.leaders(metric: .cpu, range: .sevenDays, now: currentDate)
+    let firstRecordedAt = await store.firstRecordedAt()
     XCTAssertEqual(leaders.map(\.id), ["new"])
-    XCTAssertEqual(await store.firstRecordedAt(), bucketStart(for: currentDate))
+    XCTAssertEqual(firstRecordedAt, bucketStart(for: currentDate))
   }
 
   func testSupplementalFormattersClampInvalidValues() {
