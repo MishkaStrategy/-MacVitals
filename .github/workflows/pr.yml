@@ -216,7 +216,7 @@ jobs:
           ruby -ryaml -rtmpdir -e '
             workflow = YAML.load_file(".github/workflows/exact-long-idle-baseline-pr.yml")
             blocks = workflow.fetch("jobs").values.flat_map do |job|
-              job.fetch("steps", []).filter_map { |step| step["run"] }
+              job.fetch("steps", []).map { |step| step["run"] }.compact
             end
             Dir.mktmpdir("macvitals-workflow-shell-") do |directory|
               blocks.each_with_index do |script, index|
