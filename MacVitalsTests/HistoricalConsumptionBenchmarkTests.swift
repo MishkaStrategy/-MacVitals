@@ -39,33 +39,14 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
     let applicationsPerBucket = 24
     let currentBucketStart = floor(1_900_000_000 / bucketDuration) * bucketDuration
     let firstBucketStart = currentBucketStart - Double(bucketCount - 1) * bucketDuration
-    var archive = HistoricalConsumptionArchive()
-    archive.buckets.reserveCapacity(bucketCount)
 
-    for bucketIndex in 0..<bucketCount {
-      let startedAt = Date(
-        timeIntervalSince1970: firstBucketStart + Double(bucketIndex) * bucketDuration)
-      var applications: [String: HistoricalConsumptionAggregate] = [:]
-      applications.reserveCapacity(applicationsPerBucket)
-      for applicationIndex in 0..<applicationsPerBucket {
-        let usage = application(index: applicationIndex, phase: bucketIndex)
-        var aggregate = HistoricalConsumptionAggregate(application: usage)
-        aggregate.add(application: usage, elapsed: bucketDuration)
-        applications[usage.id] = aggregate
-      }
-      archive.buckets.append(
-        HistoricalConsumptionBucket(startedAt: startedAt, applications: applications))
-    }
-
+    let seed = try writeMatureArchive(
+      to: archiveURL,
+      bucketDuration: bucketDuration,
+      bucketCount: bucketCount,
+      applicationsPerBucket: applicationsPerBucket,
+      firstBucketStart: firstBucketStart)
     let peakRSSAfterFixture = peakResidentBytes()
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .millisecondsSince1970
-    encoder.outputFormatting = [.sortedKeys]
-    let seedEncode = measuredSync {
-      try encoder.encode(archive)
-    }
-    try seedEncode.value.write(to: archiveURL, options: .atomic)
-    let seededArchiveBytes = try fileSize(at: archiveURL)
 
     let loadMeasurement = measuredSync {
       HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
@@ -151,7 +132,7 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
         "bucketCount": bucketCount,
         "applicationsPerBucket": applicationsPerBucket,
         "aggregateCount": bucketCount * applicationsPerBucket,
-        "seededArchiveBytes": seededArchiveBytes,
+        "seededArchiveBytes": seed.archiveBytes,
         "finalArchiveBytes": finalArchiveBytes,
       ],
       "memory": [
@@ -162,7 +143,7 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
         "peakResidentBytesAfterQueries": peakRSSAfterQueries,
       ],
       "loadMilliseconds": loadMeasurement.milliseconds,
-      "seedEncodeMilliseconds": seedEncode.milliseconds,
+      "seedEncodeMilliseconds": seed.encodeMilliseconds,
       "record": [
         "sampleCount": recordDurations.count,
         "p50Milliseconds": percentile(recordDurations, fraction: 0.50),
@@ -186,6 +167,43 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       options: [.prettyPrinted, .sortedKeys])
     try reportData.write(to: outputURL, options: .atomic)
     XCTAssertGreaterThan(reportData.count, 0)
+  }
+
+  private func writeMatureArchive(
+    to archiveURL: URL,
+    bucketDuration: TimeInterval,
+    bucketCount: Int,
+    applicationsPerBucket: Int,
+    firstBucketStart: TimeInterval
+  ) throws -> (encodeMilliseconds: Double, archiveBytes: UInt64) {
+    var archive = HistoricalConsumptionArchive()
+    archive.buckets.reserveCapacity(bucketCount)
+
+    for bucketIndex in 0..<bucketCount {
+      let startedAt = Date(
+        timeIntervalSince1970: firstBucketStart + Double(bucketIndex) * bucketDuration)
+      var applications: [String: HistoricalConsumptionAggregate] = [:]
+      applications.reserveCapacity(applicationsPerBucket)
+      for applicationIndex in 0..<applicationsPerBucket {
+        let usage = application(index: applicationIndex, phase: bucketIndex)
+        var aggregate = HistoricalConsumptionAggregate(application: usage)
+        aggregate.add(application: usage, elapsed: bucketDuration)
+        applications[usage.id] = aggregate
+      }
+      archive.buckets.append(
+        HistoricalConsumptionBucket(startedAt: startedAt, applications: applications))
+    }
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .millisecondsSince1970
+    encoder.outputFormatting = [.sortedKeys]
+    let encodeMeasurement = measuredSync {
+      try encoder.encode(archive)
+    }
+    try encodeMeasurement.value.write(to: archiveURL, options: .atomic)
+    return (
+      encodeMilliseconds: encodeMeasurement.milliseconds,
+      archiveBytes: try fileSize(at: archiveURL))
   }
 
   private func application(index: Int, phase: Int) -> ApplicationProcessUsage {
