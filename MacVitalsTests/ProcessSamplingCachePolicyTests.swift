@@ -32,4 +32,40 @@ final class ProcessSamplingCachePolicyTests: XCTestCase {
     XCTAssertEqual(ProcessSamplingCachePolicy.freshnessWindow(minimumInterval: 0), 0.25)
     XCTAssertEqual(ProcessSamplingCachePolicy.freshnessWindow(minimumInterval: 10), 8)
   }
+
+  func testCompletedSamplePublishesForCurrentSessionAndRequest() {
+    XCTAssertTrue(
+      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
+        completedSession: 7,
+        currentSession: 7,
+        completedRequest: 11,
+        currentRequest: 11))
+  }
+
+  func testCompletedSampleDoesNotPublishAfterSessionRestart() {
+    XCTAssertFalse(
+      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
+        completedSession: 7,
+        currentSession: 8,
+        completedRequest: 11,
+        currentRequest: 11))
+  }
+
+  func testCompletedSampleDoesNotClearReplacementRequest() {
+    XCTAssertFalse(
+      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
+        completedSession: 8,
+        currentSession: 8,
+        completedRequest: 11,
+        currentRequest: 12))
+  }
+
+  func testCompletedSampleDoesNotPublishAfterInFlightClear() {
+    XCTAssertFalse(
+      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
+        completedSession: 8,
+        currentSession: 8,
+        completedRequest: 11,
+        currentRequest: nil))
+  }
 }
