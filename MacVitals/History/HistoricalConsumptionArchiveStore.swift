@@ -69,14 +69,7 @@ actor HistoricalConsumptionArchiveStore {
 
     return merged.values
       .filter { $0.score(for: metric) > 0 }
-      .sorted { lhs, rhs in
-        let left = lhs.score(for: metric)
-        let right = rhs.score(for: metric)
-        if left == right {
-          return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-        return left > right
-      }
+      .sorted { Self.ranksBefore($0, $1, metric: metric) }
       .map(\.leader)
   }
 
@@ -115,7 +108,10 @@ actor HistoricalConsumptionArchiveStore {
       { $0.diskBytesPerSecond },
     ]
     for selector in selectors {
-      for application in useful.sorted(by: { selector($0) > selector($1) }).prefix(15) {
+      for application in useful
+        .sorted(by: { Self.ranksBefore($0, $1, score: selector) })
+        .prefix(15)
+      {
         selectedIDs.insert(application.id)
       }
     }
@@ -135,7 +131,7 @@ actor HistoricalConsumptionArchiveStore {
       ]
       for metric in metrics {
         for aggregate in applications.values
-          .sorted(by: { $0.score(for: metric) > $1.score(for: metric) })
+          .sorted(by: { Self.ranksBefore($0, $1, metric: metric) })
           .prefix(15)
         {
           selectedIDs.insert(aggregate.id)
@@ -167,6 +163,52 @@ actor HistoricalConsumptionArchiveStore {
       Logger.persistence.error(
         "Historical consumption persistence failed: \(error.localizedDescription, privacy: .public)")
     }
+  }
+
+  private static func ranksBefore(
+    _ lhs: ApplicationProcessUsage,
+    _ rhs: ApplicationProcessUsage,
+    score: (ApplicationProcessUsage) -> Double
+  ) -> Bool {
+    ranksBefore(
+      leftScore: score(lhs),
+      rightScore: score(rhs),
+      leftName: lhs.name,
+      rightName: rhs.name,
+      leftID: lhs.id,
+      rightID: rhs.id)
+  }
+
+  private static func ranksBefore(
+    _ lhs: HistoricalConsumptionAggregate,
+    _ rhs: HistoricalConsumptionAggregate,
+    metric: HistoricalConsumptionMetric
+  ) -> Bool {
+    ranksBefore(
+      leftScore: lhs.score(for: metric),
+      rightScore: rhs.score(for: metric),
+      leftName: lhs.name,
+      rightName: rhs.name,
+      leftID: lhs.id,
+      rightID: rhs.id)
+  }
+
+  private static func ranksBefore(
+    leftScore: Double,
+    rightScore: Double,
+    leftName: String,
+    rightName: String,
+    leftID: String,
+    rightID: String
+  ) -> Bool {
+    if leftScore != rightScore {
+      return leftScore > rightScore
+    }
+    let nameOrder = leftName.localizedCaseInsensitiveCompare(rightName)
+    if nameOrder != .orderedSame {
+      return nameOrder == .orderedAscending
+    }
+    return leftID < rightID
   }
 
   private static func makeArchiveURL(fileName: String) -> URL {
