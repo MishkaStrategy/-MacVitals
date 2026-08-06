@@ -45,9 +45,9 @@ jobs:
           from pathlib import Path
 
           expected = {
-              ".github/workflows/pr.yml",
               ".github/workflows/safe-physical-validation-pr.yml",
               "scripts/physical_runtime_lock.sh",
+              "scripts/run_ci_runtime_smoke.sh",
               "scripts/run_safe_physical_validation.sh",
           }
           actual = {
@@ -73,6 +73,7 @@ jobs:
           ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
           bash -n \
             scripts/physical_runtime_lock.sh \
+            scripts/run_ci_runtime_smoke.sh \
             scripts/run_safe_physical_validation.sh \
             scripts/run_ci_physical_validation_hardened.sh
           bash scripts/run_safe_physical_validation.sh --self-test
