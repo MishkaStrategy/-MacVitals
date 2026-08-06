@@ -1,0 +1,245 @@
+name: Safe Physical Validation PR
+
+on:
+  pull_request:
+    branches:
+      - integration/network-history-leaders-post-notch
+    paths:
+      - .github/workflows/safe-physical-validation-pr.yml
+      - scripts/physical_runtime_lock.sh
+      - scripts/run_safe_physical_validation.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  validate-candidate:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 100
+    env:
+      PRODUCT_BASE_SHA: e4a71fda0b3ed50aabd3b92ede06d32c39ef5d40
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MACVITALS_PHYSICAL_LOCK_TIMEOUT_SECONDS: 1800
+      MACVITALS_PHYSICAL_LOCK_POLL_SECONDS: 1
+      MACVITALS_PHYSICAL_LOCK_STALE_GRACE_SECONDS: 30
+      MACVITALS_RUN_LONG_STABILITY: 0
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PRODUCT_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" -- \
+            MacVitals MacVitalsTests MacVitalsUITests project.yml
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" > validation-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = {
+              ".github/workflows/safe-physical-validation-pr.yml",
+              "scripts/physical_runtime_lock.sh",
+              "scripts/run_safe_physical_validation.sh",
+          }
+          actual = {
+              line.strip()
+              for line in Path("validation-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"validation branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals
+          {
+            printf 'product_base_sha=%s\n' "${PRODUCT_BASE_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+          } > physical-validation-source.txt
+
+      - name: Validate safety helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
+          bash -n \
+            scripts/physical_runtime_lock.sh \
+            scripts/run_safe_physical_validation.sh \
+            scripts/run_ci_physical_validation_hardened.sh
+          bash scripts/run_safe_physical_validation.sh --self-test
+          ! grep -R -nE 'pkill[[:space:]].*MacVitals|killall[[:space:]].*MacVitals' \
+            scripts/physical_runtime_lock.sh \
+            scripts/run_safe_physical_validation.sh
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Package unsigned ARM64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        shell: bash
+        run: |
+          set +e
+          bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}" \
+            > physical-package.raw.log 2>&1
+          status=$?
+          APP_PATH="build/MacVitals.xcarchive/Products/Applications/MacVitals.app"
+          if [[ ${status} -eq 0 ]]; then
+            test -d "${APP_PATH}" || status=1
+            test "$(lipo -archs "${APP_PATH}/Contents/MacOS/MacVitals" 2>/dev/null)" = arm64 || status=1
+          fi
+          STATUS="${status}" python3 - physical-package.raw.log physical-package.log <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import sys
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          replacements = [
+              (os.environ.get("HOME", ""), "<HOME>"),
+              (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
+              (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
+          ]
+          text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
+          for value, replacement in replacements:
+              if value:
+                  text = text.replace(value, replacement)
+          Path(sys.argv[2]).write_text(text, encoding="utf-8")
+          PY
+          rm -f -- physical-package.raw.log
+          tail -n 500 physical-package.log
+          exit ${status}
+
+      - name: Run bounded fail-closed physical collection
+        timeout-minutes: 70
+        shell: bash
+        run: |
+          set +e
+          bash scripts/run_safe_physical_validation.sh \
+            "0.0.${GITHUB_RUN_NUMBER}" \
+            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+            "${VALIDATION_SHA}" \
+            > safe-physical-validation.raw.log 2>&1
+          status=$?
+          python3 - safe-physical-validation.raw.log safe-physical-validation.log <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import sys
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          replacements = [
+              (os.environ.get("HOME", ""), "<HOME>"),
+              (os.environ.get("GITHUB_WORKSPACE", ""), "<WORKSPACE>"),
+              (os.environ.get("RUNNER_TEMP", ""), "<RUNNER_TEMP>"),
+              (os.environ.get("USER", ""), "<USER>"),
+          ]
+          text = re.sub(r"/(?:Users|home)/[^/\s]+", "<HOME>", text)
+          for value, replacement in replacements:
+              if value:
+                  text = text.replace(value, replacement)
+          Path(sys.argv[2]).write_text(text, encoding="utf-8")
+          PY
+          rm -f -- safe-physical-validation.raw.log
+          cat safe-physical-validation.log
+          exit ${status}
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d physical-validation-results ]]; then
+            ! find physical-validation-results -type f \
+              \( -name '*.ips' -o -name '*.crash' \) -print -quit | grep -q .
+          fi
+          python3 - \
+            "${PRODUCT_BASE_SHA}" \
+            "${VALIDATION_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${GITHUB_RUN_ATTEMPT}" \
+            "${RUNNER_NAME}" <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import sys
+
+          candidates = [
+              Path("physical-validation-source.txt"),
+              Path("validation-changes.txt"),
+              Path("physical-package.log"),
+              Path("safe-physical-validation.log"),
+          ]
+          evidence_root = Path("physical-validation-results")
+          if evidence_root.is_dir() and not evidence_root.is_symlink():
+              candidates.extend(sorted(evidence_root.rglob("*")))
+
+          files = []
+          for path in candidates:
+              if not path.is_file() or path.is_symlink():
+                  continue
+              payload = path.read_bytes()
+              files.append({
+                  "path": str(path),
+                  "bytes": len(payload),
+                  "sha256": hashlib.sha256(payload).hexdigest(),
+              })
+
+          manifest = {
+              "schemaVersion": 1,
+              "productBaseSHA": sys.argv[1],
+              "validationSHA": sys.argv[2],
+              "workflowRunID": sys.argv[3],
+              "workflowRunAttempt": sys.argv[4],
+              "runnerName": sys.argv[5],
+              "files": files,
+          }
+          Path("physical-validation-evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not files:
+              raise SystemExit("physical validation produced no uploadable evidence")
+          PY
+
+      - name: Upload physical validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: safe-physical-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            physical-validation-source.txt
+            validation-changes.txt
+            physical-package.log
+            safe-physical-validation.log
+            physical-validation-evidence-manifest.json
+            physical-validation-results/
+          if-no-files-found: warn
+          retention-days: 30
