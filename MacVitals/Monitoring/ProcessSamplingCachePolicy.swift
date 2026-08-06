@@ -13,4 +13,13 @@ nonisolated enum ProcessSamplingCachePolicy {
     guard timestamp != .distantPast else { return false }
     return now.timeIntervalSince(timestamp) < freshnessWindow(minimumInterval: minimumInterval)
   }
+
+  static func shouldPublishCompletedSample(
+    completedSession: UInt64,
+    currentSession: UInt64,
+    completedRequest: UInt64,
+    currentRequest: UInt64?
+  ) -> Bool {
+    completedSession == currentSession && currentRequest == completedRequest
+  }
 }
