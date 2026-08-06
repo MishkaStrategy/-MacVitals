@@ -1,0 +1,151 @@
+name: History Archive Benchmark PR
+
+on:
+  pull_request:
+    branches:
+      - integration/network-history-leaders-post-notch
+    paths:
+      - .github/workflows/history-archive-benchmark-pr.yml
+      - MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macvitals-physical-runtime
+  cancel-in-progress: false
+
+jobs:
+  mature-seven-day-baseline:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    env:
+      PRODUCT_BASE_SHA: 26a03d2b1fe48bfae6e8b9fe00060ea56c7f42f4
+      BENCHMARK_OUTPUT: ${{ github.workspace }}/history-benchmark/history-archive-baseline.json
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-HistoryBenchmark
+    steps:
+      - name: Checkout exact benchmark head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact product ancestry and benchmark-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${ACTUAL_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}" -- \
+            MacVitals MacVitalsUITests project.yml
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${ACTUAL_SHA}" > benchmark-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = {
+              ".github/workflows/history-archive-benchmark-pr.yml",
+              "MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift",
+          }
+          actual = {
+              line.strip()
+              for line in Path("benchmark-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"benchmark branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals || {
+            echo 'Forbidden pet code found in product source' >&2
+            exit 1
+          }
+
+      - name: Validate workflow and benchmark source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/history-archive-benchmark-pr.yml')"
+          grep -Fq 'MACVITALS_RUN_HISTORY_BENCHMARK' \
+            MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'HistoricalConsumptionRange.sevenDays' \
+            MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build benchmark tests
+        shell: bash
+        run: |
+          set +e
+          rm -rf "${DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build-for-testing \
+            > history-benchmark-build.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' \
+            history-benchmark-build.log | tail -n 400 \
+            > history-benchmark-build-diagnostics.txt || true
+          cat history-benchmark-build-diagnostics.txt
+          exit ${status}
+
+      - name: Run mature seven-day archive baseline
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$(dirname "${BENCHMARK_OUTPUT}")"
+          MACVITALS_RUN_HISTORY_BENCHMARK=1 \
+          MACVITALS_HISTORY_BENCHMARK_OUTPUT="${BENCHMARK_OUTPUT}" \
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:MacVitalsTests/HistoricalConsumptionBenchmarkTests/testMatureSevenDayArchiveBaseline \
+            > history-benchmark-run.log 2>&1
+          status=$?
+          grep -E 'failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' \
+            history-benchmark-run.log | tail -n 400 \
+            > history-benchmark-run-diagnostics.txt || true
+          cat history-benchmark-run-diagnostics.txt
+          if [[ ${status} -eq 0 ]]; then
+            test -s "${BENCHMARK_OUTPUT}"
+            python3 -m json.tool "${BENCHMARK_OUTPUT}" >/dev/null
+            cat "${BENCHMARK_OUTPUT}"
+          fi
+          exit ${status}
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: history-archive-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            benchmark-changes.txt
+            history-benchmark/
+            history-benchmark-build.log
+            history-benchmark-build-diagnostics.txt
+            history-benchmark-run.log
+            history-benchmark-run-diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 14
