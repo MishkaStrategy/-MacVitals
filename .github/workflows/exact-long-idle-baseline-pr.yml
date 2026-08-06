@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: macvitals-physical-runtime
+  group: exact-long-idle-baseline-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
