@@ -1,0 +1,53 @@
+name: Physical Test MacVitals 0.0.619 HUD Settings
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: physical-test-0.0.619-hud-settings
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  physical-test:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'mishkacher' &&
+      github.actor == 'mishkacher' &&
+      github.event.pull_request.head.ref == 'agent/physical-test-0.0.619-hud-settings'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Run exact physical HUD validation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "${RUNNER_TEMP}/hud-test.b64" <<'PAYLOAD'
+          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
+          PAYLOAD
+          /usr/bin/base64 -D < "${RUNNER_TEMP}/hud-test.b64" | /usr/bin/gzip -dc > "${RUNNER_TEMP}/run-physical-hud.sh"
+          /bin/bash "${RUNNER_TEMP}/run-physical-hud.sh"
+
+      - name: Upload physical test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: physical-MacVitals-0.0.619-hud-settings
+          path: |
+            physical-evidence/
+            exact-artifact/content/BUILD_MANIFEST.json
+            exact-artifact/content/BUILD_STATUS.txt
+            exact-artifact/content/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 30
