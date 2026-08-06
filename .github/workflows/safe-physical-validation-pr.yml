@@ -1,13 +1,6 @@
-name: Safe Physical Validation PR
+name: Safe Physical Validation Replay
 
 on:
-  pull_request:
-    branches:
-      - integration/network-history-leaders-post-notch
-    paths:
-      - .github/workflows/safe-physical-validation-pr.yml
-      - scripts/physical_runtime_lock.sh
-      - scripts/run_safe_physical_validation.sh
   workflow_dispatch:
 
 permissions:
@@ -37,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          EXPECTED_SHA='${{ github.sha }}'
           ACTUAL_SHA="$(git rev-parse HEAD)"
           test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
           test "$(uname -m)" = arm64
@@ -52,6 +45,7 @@ jobs:
           from pathlib import Path
 
           expected = {
+              ".github/workflows/pr.yml",
               ".github/workflows/safe-physical-validation-pr.yml",
               "scripts/physical_runtime_lock.sh",
               "scripts/run_safe_physical_validation.sh",
