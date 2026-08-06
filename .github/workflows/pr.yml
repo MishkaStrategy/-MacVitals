@@ -19,6 +19,7 @@ jobs:
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
+      queue: max
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -322,7 +323,7 @@ jobs:
           expected = sys.argv[2]
           actual = hashlib.sha256(path.read_bytes()).hexdigest()
           if actual != expected:
-              raise SystemExit(f"Gitleaks checksum mismatch: expected {expected}, got {actual}")
+            raise SystemExit(f"Gitleaks checksum mismatch: expected {expected}, got {actual}")
           PY
           mkdir -p "${tool_dir}"
           tar -xzf "${archive}" -C "${tool_dir}" gitleaks
