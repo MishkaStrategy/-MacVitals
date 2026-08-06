@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -16,6 +17,9 @@ jobs:
   apple-silicon:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 35
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -202,21 +206,62 @@ jobs:
 
   repository-safety:
     runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      run_exact_long_baseline: ${{ steps.long-baseline-scope.outputs.required }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
+      - name: Determine exact long-baseline scope
+        id: long-baseline-scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          required=false
+          if [[ "${EVENT_NAME}" == "pull_request" ]] \
+            && { [[ "${BASE_REF}" == "perf/process-ui-render-cache" ]] \
+              || [[ "${BASE_REF}" == "perf/exact-long-idle-baseline" ]]; }; then
+            while IFS= read -r path; do
+              case "${path}" in
+                MacVitals/*|MacVitalsTests/*|scripts/run_exact_long_idle_baseline.sh|scripts/physical_runtime_lock.sh|scripts/validate_long_baseline_evidence.py|scripts/collect_runtime_metrics.py|scripts/collect_runtime_metrics.sh|scripts/report_runtime_resources.py|scripts/summarize_provider_timings.py|.github/workflows/exact-long-idle-baseline-pr.yml|.github/workflows/pr.yml)
+                  required=true
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
+          fi
+          echo "required=${required}" >> "${GITHUB_OUTPUT}"
+          echo "MACVITALS_EXACT_LONG_BASELINE_REQUIRED=${required}"
+
       - name: Validate YAML, plist XML, localizations, icon and scripts
         run: |
           ruby -e "require 'yaml'; YAML.load_file('.github/dependabot.yml'); Dir['.github/workflows/*.yml'].sort.each { |path| YAML.load_file(path) }"
+          ruby -ryaml -rtmpdir -e '
+            workflow = YAML.load_file(".github/workflows/exact-long-idle-baseline-pr.yml")
+            blocks = workflow.fetch("jobs").values.flat_map do |job|
+              job.fetch("steps", []).map { |step| step["run"] }.compact
+            end
+            Dir.mktmpdir("macvitals-workflow-shell-") do |directory|
+              blocks.each_with_index do |script, index|
+                path = File.join(directory, "block-#{index}.sh")
+                File.write(path, script.gsub(/\$\{\{.*?\}\}/m, "ACTIONS_EXPRESSION"))
+                abort("embedded shell block #{index} failed bash -n") unless system("bash", "-n", path)
+              end
+            end
+            puts "Embedded exact long-baseline shell blocks passed bash -n"
+          '
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
           for path in pathlib.Path('.').rglob('*.plist'):
               ET.parse(path)
           PY
-          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_hardened.py scripts/run_physical_validation_guided.py scripts/run_physical_validation_guided_hardened.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/validate_long_baseline_evidence.py scripts/run_physical_validation.py scripts/run_physical_validation_hardened.py scripts/run_physical_validation_guided.py scripts/run_physical_validation_guided_hardened.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
           python3 scripts/materialize_app_icon.py --self-test
           python3 scripts/materialize_app_icon.py --check-only
           python3 scripts/validate_localizations.py
@@ -224,6 +269,7 @@ jobs:
           python3 scripts/validate_release_metadata.py --self-test
           python3 scripts/collect_runtime_metrics.py --self-test
           python3 scripts/validate_runtime_metrics.py --self-test
+          python3 scripts/validate_long_baseline_evidence.py --self-test
           python3 scripts/run_physical_validation.py self-test
           python3 scripts/run_physical_validation_hardened.py self-test
           python3 scripts/run_physical_validation_guided.py self-test
@@ -232,11 +278,14 @@ jobs:
           python3 scripts/sign_notarize_release.py self-test
           python3 scripts/signed_release_entrypoint.py self-test
           bash -n \
+            scripts/physical_runtime_lock.sh \
             scripts/package_release.sh \
             scripts/verify_release.sh \
             scripts/collect_runtime_metrics.sh \
             scripts/run_ci_runtime_smoke.sh \
+            scripts/run_exact_long_idle_baseline.sh \
             scripts/run_ci_physical_validation_hardened.sh
+          bash scripts/physical_runtime_lock.sh --self-test
           bash scripts/run_ci_physical_validation_hardened.sh --self-test
 
       - name: Install and run Gitleaks CLI
@@ -284,3 +333,17 @@ jobs:
           name: gitleaks-results.sarif
           path: gitleaks-results.sarif
           if-no-files-found: ignore
+
+  exact-long-idle-baseline:
+    needs:
+      - apple-silicon
+      - ui-smoke
+      - repository-safety
+    if: needs.repository-safety.outputs.run_exact_long_baseline == 'true'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/exact-long-idle-baseline-pr.yml
+    with:
+      harness_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
