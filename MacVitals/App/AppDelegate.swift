@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let fanControl = FanControlClient()
   private let notificationCoordinator = NotificationCoordinator()
   private let consumptionHistory = HistoricalConsumptionCenter.shared
+  private let autonomousHistoryEnabled = AutonomousSamplingPolicy.isEnabled
   private var statusController: StatusItemController?
   private var cancellables = Set<AnyCancellable>()
 
@@ -38,13 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       .store(in: &cancellables)
 
-    settings.$samplingInterval
-      .removeDuplicates()
-      .dropFirst()
-      .sink { [weak self] interval in
-        self?.consumptionHistory.restart(interval: interval)
-      }
-      .store(in: &cancellables)
+    if autonomousHistoryEnabled {
+      settings.$samplingInterval
+        .removeDuplicates()
+        .dropFirst()
+        .sink { [weak self] interval in
+          self?.consumptionHistory.restart(interval: interval)
+        }
+        .store(in: &cancellables)
+    }
 
     coordinator.onSnapshot = { [weak self] snapshot in
       self?.notificationCoordinator.process(snapshot: snapshot)
@@ -52,7 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     fanControl.refreshStatus()
     coordinator.start()
-    consumptionHistory.start(interval: settings.samplingInterval)
+    if autonomousHistoryEnabled {
+      consumptionHistory.start(interval: settings.samplingInterval)
+    }
     LifecycleMonitor.shared.start(coordinator: coordinator)
     Logger.lifecycle.info("MacVitals started")
   }
