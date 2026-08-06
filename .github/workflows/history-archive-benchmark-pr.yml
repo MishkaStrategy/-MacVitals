@@ -1,12 +1,6 @@
-name: History Archive Benchmark PR
+name: History Archive Benchmark Replay
 
 on:
-  pull_request:
-    branches:
-      - integration/network-history-leaders-post-notch
-    paths:
-      - .github/workflows/history-archive-benchmark-pr.yml
-      - MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
   workflow_dispatch:
 
 permissions:
@@ -22,14 +16,14 @@ jobs:
     timeout-minutes: 60
     env:
       PRODUCT_BASE_SHA: e4a71fda0b3ed50aabd3b92ede06d32c39ef5d40
-      BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCHMARK_SHA: ${{ github.sha }}
       BENCHMARK_OUTPUT: ${{ github.workspace }}/history-benchmark/history-archive-baseline.json
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-HistoryBenchmark
     steps:
       - name: Checkout exact benchmark head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
           clean: true
