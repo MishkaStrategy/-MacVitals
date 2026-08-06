@@ -15,8 +15,10 @@ RUNTIME_PATTERNS = (
     re.compile(r"Contents/MacOS/MacVitals"),
     re.compile(r"(?:^|\s)(?:/usr/bin/)?open\s+-[A-Za-z]*n[A-Za-z]*a\b", re.MULTILINE),
     re.compile(r"subprocess\.Popen\(\[str\(executable\)"),
-    re.compile(r"pgrep(?:\s+-[A-Za-z]+)*\s+MacVitals"),
-    re.compile(r"pgrep(?:\s+-[A-Za-z]+)*\s+[\"']?-x[\"']?\s+[\"']?MacVitals"),
+    re.compile(
+        r"pgrep(?:\s+-[A-Za-z]+)*\s+[\"']?MacVitals[\"']?(?=\s|$)",
+        re.MULTILINE,
+    ),
     re.compile(r"matching_pid\(executable"),
 )
 COLLECTOR_MARKERS = (
@@ -105,6 +107,13 @@ def self_test() -> None:
 
     wrapper = "bash scripts/run_ci_runtime_smoke.sh MacVitals.app"
     assert validate_text(Path("workflow.yml"), wrapper) == []
+
+    exact_process_probe = "pgrep -x MacVitals"
+    assert is_runtime_launcher(exact_process_probe)
+
+    ui_runner_probe = "pgrep -x MacVitalsUITests-Runner"
+    assert not is_runtime_launcher(ui_runner_probe)
+    assert validate_text(Path("ui-compile.yml"), ui_runner_probe) == []
 
     unit_only = "xcodebuild test -only-testing:MacVitalsTests"
     assert validate_text(Path("unit.yml"), unit_only) == []
