@@ -9,7 +9,13 @@ actor HistoricalConsumptionArchiveStore {
   private var lastPersistedAt = Date.distantPast
 
   init(fileName: String = "consumption-history-v1.json") {
-    archiveURL = Self.makeArchiveURL(fileName: fileName)
+    let archiveURL = Self.makeArchiveURL(fileName: fileName)
+    self.archiveURL = archiveURL
+    archive = Self.loadArchive(from: archiveURL)
+  }
+
+  init(archiveURL: URL) {
+    self.archiveURL = archiveURL
     archive = Self.loadArchive(from: archiveURL)
   }
 
