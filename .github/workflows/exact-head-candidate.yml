@@ -15,6 +15,9 @@ jobs:
   exact-head-arm64:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 45
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-ExactHead
@@ -57,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          rm -rf "${DERIVED_DATA}"
+          rm -rf -- "${DERIVED_DATA}"
           xcodebuild \
             -project MacVitals.xcodeproj \
             -scheme MacVitals \
@@ -86,7 +89,9 @@ jobs:
           status=$?
           tail -n 500 exact-head-package.log > exact-head-package-diagnostics.txt
           cat exact-head-package-diagnostics.txt
-          test "$(lipo -archs build/MacVitals.xcarchive/Products/Applications/MacVitals.app/Contents/MacOS/MacVitals)" = arm64
+          if [[ ${status} -eq 0 ]]; then
+            test "$(lipo -archs build/MacVitals.xcarchive/Products/Applications/MacVitals.app/Contents/MacOS/MacVitals 2>/dev/null)" = arm64 || status=1
+          fi
           exit ${status}
 
       - name: Run exact-head packaged runtime smoke
@@ -100,7 +105,12 @@ jobs:
               > exact-head-runtime.log 2>&1
           status=$?
           cat exact-head-runtime.log
-          grep -Fq "source_sha=${SOURCE_SHA}" exact-head-runtime.log
+          evidence_status=0
+          grep -Fq "source_sha=${SOURCE_SHA}" exact-head-runtime.log || evidence_status=1
+          grep -Fq 'MACVITALS_RESOURCE_SUMMARY' exact-head-runtime.log || evidence_status=1
+          if [[ ${status} -eq 0 && ${evidence_status} -ne 0 ]]; then
+            status=${evidence_status}
+          fi
           exit ${status}
 
       - name: Upload exact-head diagnostics and evidence
