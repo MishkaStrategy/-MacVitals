@@ -15,8 +15,25 @@ jobs:
   compile-ui-tests-without-launch:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
 
       - name: Validate scheme isolation
         shell: bash
@@ -37,19 +54,19 @@ jobs:
           abort 'MacVitalsUITestsBuild must compile MacVitalsUITests' unless ui_build.fetch('build').fetch('targets').key?('MacVitalsUITests')
           RUBY
 
-      - name: Remove stale UI test runners
+      - name: Fail closed on an existing UI test runner
         shell: bash
         run: |
           set -euo pipefail
-          pkill -x MacVitalsUITests-Runner 2>/dev/null || true
-          roots=(
-            "${HOME}/Library/Developer/Xcode/DerivedData"
-            "${RUNNER_TEMP}"
-          )
-          for root in "${roots[@]}"; do
-            [[ -d "${root}" ]] || continue
-            find "${root}" -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + 2>/dev/null || true
-          done
+          existing="$(pgrep -x MacVitalsUITests-Runner 2>/dev/null || true)"
+          if [[ -n "${existing}" ]]; then
+            echo 'Refusing to compile while a MacVitalsUITests-Runner process already exists.' >&2
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              ps -p "${pid}" -o pid=,command= >&2 || true
+            done <<< "${existing}"
+            exit 1
+          fi
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -65,7 +82,7 @@ jobs:
         run: |
           set +e
           derived_data="${RUNNER_TEMP}/MacVitals-ui-compile-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          rm -rf "${derived_data}"
+          rm -rf -- "${derived_data}"
 
           xcodebuild \
             -project MacVitals.xcodeproj \
@@ -81,9 +98,26 @@ jobs:
           build_status=$?
 
           runner_status=0
-          if pgrep -x MacVitalsUITests-Runner >/dev/null 2>&1; then
-            echo 'MacVitalsUITests-Runner was launched unexpectedly' >&2
-            pkill -x MacVitalsUITests-Runner 2>/dev/null || true
+          unexpected="$(pgrep -x MacVitalsUITests-Runner 2>/dev/null || true)"
+          if [[ -n "${unexpected}" ]]; then
+            echo 'MacVitalsUITests-Runner was launched unexpectedly.' >&2
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+              if [[ "${command_line}" == "${derived_data}/"* ]]; then
+                echo "Stopping exact job-owned UI runner pid ${pid}." >&2
+                kill -TERM "${pid}" 2>/dev/null || true
+                for _ in {1..20}; do
+                  kill -0 "${pid}" 2>/dev/null || break
+                  sleep 0.25
+                done
+                if kill -0 "${pid}" 2>/dev/null; then
+                  kill -KILL "${pid}" 2>/dev/null || true
+                fi
+              else
+                echo "Foreign UI runner was not terminated: pid=${pid} command=${command_line}" >&2
+              fi
+            done <<< "${unexpected}"
             runner_status=1
           fi
 
@@ -91,8 +125,7 @@ jobs:
             ui-test-compile.log | tail -n 400 > ui-test-compile-diagnostics.txt || true
           cat ui-test-compile-diagnostics.txt
 
-          find "${derived_data}" -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + 2>/dev/null || true
-          rm -rf "${derived_data}"
+          rm -rf -- "${derived_data}"
 
           if [[ ${build_status} -ne 0 || ${runner_status} -ne 0 ]]; then
             exit 1
@@ -107,12 +140,3 @@ jobs:
             ui-test-compile.log
             ui-test-compile-diagnostics.txt
           if-no-files-found: ignore
-
-      - name: Final UI runner cleanup
-        if: always()
-        shell: bash
-        run: |
-          pkill -x MacVitalsUITests-Runner 2>/dev/null || true
-          find "${HOME}/Library/Developer/Xcode/DerivedData" \
-            -type d -name 'MacVitalsUITests-Runner.app' -prune -exec rm -rf {} + \
-            2>/dev/null || true
