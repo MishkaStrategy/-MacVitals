@@ -136,6 +136,8 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
         "finalArchiveBytes": finalArchiveBytes,
       ],
       "memory": [
+        "semantics": "processLifetimePeakRSS",
+        "unit": "bytes",
         "peakResidentBytesAtStart": peakRSSAtStart,
         "peakResidentBytesAfterFixture": peakRSSAfterFixture,
         "peakResidentBytesAfterLoad": peakRSSAfterLoad,
@@ -274,6 +276,7 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
   private func peakResidentBytes() -> UInt64 {
     var usage = rusage()
     guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
-    return UInt64(max(0, usage.ru_maxrss))
+    let peakRSSKilobytes = max(0, usage.ru_maxrss)
+    return UInt64(peakRSSKilobytes) * 1_024
   }
 }
