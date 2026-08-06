@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -205,10 +206,37 @@ jobs:
 
   repository-safety:
     runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      run_exact_long_baseline: ${{ steps.long-baseline-scope.outputs.required }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+
+      - name: Determine exact long-baseline scope
+        id: long-baseline-scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          required=false
+          if [[ "${EVENT_NAME}" == "pull_request" ]] \
+            && { [[ "${BASE_REF}" == "perf/process-ui-render-cache" ]] \
+              || [[ "${BASE_REF}" == "perf/exact-long-idle-baseline" ]]; }; then
+            while IFS= read -r path; do
+              case "${path}" in
+                MacVitals/*|MacVitalsTests/*|scripts/run_exact_long_idle_baseline.sh|scripts/physical_runtime_lock.sh|scripts/validate_long_baseline_evidence.py|scripts/collect_runtime_metrics.py|scripts/collect_runtime_metrics.sh|scripts/report_runtime_resources.py|scripts/summarize_provider_timings.py|.github/workflows/exact-long-idle-baseline-pr.yml|.github/workflows/pr.yml)
+                  required=true
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
+          fi
+          echo "required=${required}" >> "${GITHUB_OUTPUT}"
+          echo "MACVITALS_EXACT_LONG_BASELINE_REQUIRED=${required}"
 
       - name: Validate YAML, plist XML, localizations, icon and scripts
         run: |
@@ -305,3 +333,17 @@ jobs:
           name: gitleaks-results.sarif
           path: gitleaks-results.sarif
           if-no-files-found: ignore
+
+  exact-long-idle-baseline:
+    needs:
+      - apple-silicon
+      - ui-smoke
+      - repository-safety
+    if: needs.repository-safety.outputs.run_exact_long_baseline == 'true'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/exact-long-idle-baseline-pr.yml
+    with:
+      harness_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
