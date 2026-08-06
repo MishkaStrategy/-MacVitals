@@ -19,23 +19,32 @@ final class HistoricalConsumptionCenter: ObservableObject {
 
   private init() {}
 
-  func start(interval: TimeInterval) {
+  func start(interval: TimeInterval, initialDelay: TimeInterval = 1) {
     currentInterval = normalizedInterval(interval)
     guard samplingTask == nil else { return }
 
     generation &+= 1
     let activeGeneration = generation
     let subscriberID = UUID()
+    let delay = normalizedDelay(initialDelay)
     isCollecting = true
 
     samplingTask = Task { [weak self, center, store] in
+      if delay > 0 {
+        do {
+          try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        } catch {
+          return
+        }
+      }
+      guard let self, self.generation == activeGeneration, !Task.isCancelled else { return }
+
       await center.subscribe(subscriberID)
       defer {
         Task { await center.unsubscribe(subscriberID) }
       }
 
       if let first = await store.firstRecordedAt(),
-        let self,
         self.generation == activeGeneration,
         !Task.isCancelled
       {
@@ -43,7 +52,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
       }
 
       while !Task.isCancelled {
-        guard let self, self.generation == activeGeneration else { return }
+        guard self.generation == activeGeneration else { return }
         let descriptors = self.runningApplicationDescriptors()
         let snapshot = await center.sample(
           runningApplications: descriptors,
@@ -61,7 +70,11 @@ final class HistoricalConsumptionCenter: ObservableObject {
         }
 
         let nanoseconds = UInt64(self.currentInterval * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanoseconds)
+        do {
+          try await Task.sleep(nanoseconds: nanoseconds)
+        } catch {
+          return
+        }
       }
     }
   }
@@ -70,7 +83,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
     let normalized = normalizedInterval(interval)
     guard normalized != currentInterval else { return }
     stop(flush: false)
-    start(interval: normalized)
+    start(interval: normalized, initialDelay: 0)
   }
 
   func stop(flush: Bool = true) {
@@ -97,6 +110,10 @@ final class HistoricalConsumptionCenter: ObservableObject {
 
   private func normalizedInterval(_ interval: TimeInterval) -> TimeInterval {
     min(30, max(1, interval.isFinite ? interval : 5))
+  }
+
+  private func normalizedDelay(_ delay: TimeInterval) -> TimeInterval {
+    min(10, max(0, delay.isFinite ? delay : 1))
   }
 
   private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
