@@ -78,6 +78,13 @@ restore_preferences() {
     PREFS_CAPTURED=0
   fi
 
+  # The backup is private runner state, never measurement evidence. Remove it
+  # even when capture or restore failed, before releasing the physical lock.
+  if [[ -n "${PREFS_BACKUP}" ]]; then
+    rm -f -- "${PREFS_BACKUP}" || restore_status=$?
+    PREFS_BACKUP=""
+  fi
+
   # Keep the host lock until the application is gone and preferences are fully
   # restored, so the next physical job cannot observe an intermediate state.
   physical_runtime_lock_release || lock_status=$?
@@ -111,7 +118,6 @@ long_baseline_cleanup_self_test() {
   trap cleanup_self_test EXIT INT TERM
 
   mkdir -p "${fake_bin}"
-  printf 'fixture\n' > "${backup}"
   : > "${defaults_log}"
 
   cat > "${fake_bin}/defaults" <<'SH'
@@ -142,45 +148,53 @@ SH
   export EXPECTED_LOCK_DIR="${MACVITALS_PHYSICAL_LOCK_DIR}"
 
   DOMAIN="self.test.domain"
-  PREFS_BACKUP="${backup}"
   TEST_PID=""
 
-  # An error before preference capture must release the lock without touching
-  # the user's defaults domain.
+  # An error before preference capture must release the lock, remove the
+  # private backup and avoid touching the user's defaults domain.
   : > "${defaults_log}"
+  printf 'private fixture\n' > "${backup}"
+  PREFS_BACKUP="${backup}"
   PREFS_CAPTURED=0
   PREFS_EXISTED=0
   MACVITALS_PHYSICAL_LOCK_HELD=0
   physical_runtime_lock_acquire >/dev/null
   restore_preferences
-  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -s "${defaults_log}" ]] || {
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -e "${backup}" && ! -s "${defaults_log}" ]] || {
     echo 'Early cleanup self-test failed' >&2
     return 1
   }
 
-  # Existing preferences must be imported while the lock is still held.
+  # Existing preferences must be imported while the lock is still held, then
+  # the private backup must be deleted before the lock is released.
   : > "${defaults_log}"
+  printf 'private fixture\n' > "${backup}"
+  PREFS_BACKUP="${backup}"
   PREFS_CAPTURED=1
   PREFS_EXISTED=1
   physical_runtime_lock_acquire >/dev/null
   restore_preferences
-  grep -Fq "import ${DOMAIN} ${PREFS_BACKUP}" "${defaults_log}"
+  grep -Fq "import ${DOMAIN} ${backup}" "${defaults_log}"
   ! grep -Fq 'lock-missing-during-defaults' "${defaults_log}"
-  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -e "${backup}" && "${PREFS_CAPTURED}" == "0" ]]
 
   # A previously absent domain must be deleted while the lock is still held.
   : > "${defaults_log}"
+  : > "${backup}"
+  PREFS_BACKUP="${backup}"
   PREFS_CAPTURED=1
   PREFS_EXISTED=0
   physical_runtime_lock_acquire >/dev/null
   restore_preferences
   grep -Fq "delete ${DOMAIN}" "${defaults_log}"
   ! grep -Fq 'lock-missing-during-defaults' "${defaults_log}"
-  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -e "${backup}" && "${PREFS_CAPTURED}" == "0" ]]
 
-  # Import failure must propagate as failure but still release the lock and
-  # leave cleanup idempotent for the EXIT trap.
+  # Import failure must propagate as failure but still remove the private
+  # backup, release the lock and leave cleanup idempotent for the EXIT trap.
   : > "${defaults_log}"
+  printf 'private fixture\n' > "${backup}"
+  PREFS_BACKUP="${backup}"
   PREFS_CAPTURED=1
   PREFS_EXISTED=1
   export FAIL_DEFAULTS_IMPORT=1
@@ -190,7 +204,7 @@ SH
     return 1
   fi
   unset FAIL_DEFAULTS_IMPORT
-  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && "${PREFS_CAPTURED}" == "0" ]]
+  [[ ! -e "${MACVITALS_PHYSICAL_LOCK_DIR}" && ! -e "${backup}" && "${PREFS_CAPTURED}" == "0" ]]
 
   trap - EXIT INT TERM
   cleanup_self_test
@@ -211,7 +225,6 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 MEASURE_SECONDS="${MEASURE_SECONDS:-1800}"
 SAMPLE_SECONDS="${SAMPLE_SECONDS:-2}"
 RUN_COUNT="${RUN_COUNT:-3}"
-PREFS_BACKUP="${OUTPUT_ROOT}/preferences-before.plist"
 
 mkdir -p "${OUTPUT_ROOT}"
 
@@ -233,6 +246,8 @@ if pgrep -x MacVitals >/dev/null 2>&1; then
   fail "a MacVitals process was already running before the test"
 fi
 
+PREFS_BACKUP="$(mktemp "${TMPDIR:-/tmp}/macvitals-preferences.XXXXXX")"
+chmod 0600 "${PREFS_BACKUP}"
 if defaults export "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null 2>&1; then
   PREFS_EXISTED=1
 fi
