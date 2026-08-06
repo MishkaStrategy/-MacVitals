@@ -2,6 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
+[[ -f "${LOCK_HELPER}" && ! -L "${LOCK_HELPER}" ]] || {
+  echo "Physical runtime lock helper is missing or unsafe: ${LOCK_HELPER}" >&2
+  exit 1
+}
+# shellcheck source=physical_runtime_lock.sh
+source "${LOCK_HELPER}"
 APP_PATH="${1:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
 SOURCE_SHA="${2:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
 OUTPUT_ROOT="${3:?usage: run_exact_long_idle_baseline.sh APP_PATH SOURCE_SHA OUTPUT_ROOT}"
@@ -12,6 +19,7 @@ MEASURE_SECONDS="${MEASURE_SECONDS:-1800}"
 SAMPLE_SECONDS="${SAMPLE_SECONDS:-2}"
 RUN_COUNT="${RUN_COUNT:-3}"
 PREFS_BACKUP="${OUTPUT_ROOT}/preferences-before.plist"
+PREFS_CAPTURED=0
 PREFS_EXISTED=0
 TEST_PID=""
 
@@ -62,6 +70,12 @@ wait_for_no_macvitals() {
 
 restore_preferences() {
   cleanup_process
+  physical_runtime_lock_release || true
+
+  if [[ "${PREFS_CAPTURED}" != "1" ]]; then
+    return
+  fi
+
   if [[ "${PREFS_EXISTED}" == "1" && -s "${PREFS_BACKUP}" ]]; then
     defaults import "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null
   else
@@ -79,6 +93,8 @@ file "${EXECUTABLE}" | grep -q 'arm64' || fail "MacVitals executable is not arm6
 POWER_STATE="$(pmset -g batt | head -n 1)"
 [[ "${POWER_STATE}" == *"AC Power"* ]] || fail "runner is not connected to AC power: ${POWER_STATE}"
 
+physical_runtime_lock_acquire || fail "could not acquire physical runtime lock"
+
 if pgrep -x MacVitals >/dev/null 2>&1; then
   fail "a MacVitals process was already running before the test"
 fi
@@ -86,6 +102,7 @@ fi
 if defaults export "${DOMAIN}" "${PREFS_BACKUP}" >/dev/null 2>&1; then
   PREFS_EXISTED=1
 fi
+PREFS_CAPTURED=1
 
 DUAL_CONFIGURATION_HEX="$(python3 - <<'PY'
 import json
