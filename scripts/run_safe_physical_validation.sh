@@ -196,11 +196,6 @@ cleanup() {
   foreign_count="$(foreign_macvitals_count)"
   [[ "${foreign_count}" == "0" ]] || cleanup_status=1
 
-  if [[ -n "${CRASH_AFTER}" ]]; then
-    crash_report_paths "${CRASH_AFTER}"
-    record_new_crash_reports || cleanup_status=1
-  fi
-
   restore_preferences || restore_status=$?
   if [[ ${restore_status} -ne 0 ]]; then
     physical_runtime_lock_mark_recovery_required \
@@ -208,6 +203,14 @@ cleanup() {
     printf 'Preference recovery failed; backup preserved at %s and host lock retained.\n' \
       "${PREFS_BACKUP}" >&2
     cleanup_status=1
+  fi
+
+  # CrashReporter can write the final .ips file after the process has exited.
+  # Keep the lock held, allow a bounded grace period, then compare manifests.
+  sleep 2
+  if [[ -n "${CRASH_AFTER}" ]]; then
+    crash_report_paths "${CRASH_AFTER}"
+    record_new_crash_reports || cleanup_status=1
   fi
 
   if [[ -n "${PREFS_VERIFY}" ]]; then
@@ -257,6 +260,7 @@ for required in (
     "defaults import",
     "verify_restored_preferences",
     "crash-report-manifest.txt",
+    "CrashReporter can write the final .ips file after the process has exited",
     "Foreign MacVitals process appeared and was not terminated",
     "MACVITALS_RUN_LONG_STABILITY",
 ):
@@ -279,7 +283,7 @@ EXPECTED_SHA="$3"
 [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || fail "native Apple Silicon macOS is required"
 [[ -d "${APP_INPUT}" && ! -L "${APP_INPUT}" ]] || fail "input app is missing or unsafe"
 [[ "$(git -C "${ROOT_DIR}" rev-parse HEAD)" == "${EXPECTED_SHA}" ]] || fail "checkout does not match expected SHA"
-for command_name in awk basename defaults ditto find git pgrep ps python3 shasum stat; do
+for command_name in awk basename defaults ditto find git pgrep ps python3 shasum sleep stat; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "required command is unavailable: ${command_name}"
 done
 
