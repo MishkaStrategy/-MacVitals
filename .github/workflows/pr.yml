@@ -263,7 +263,7 @@ jobs:
       - name: Install and run Gitleaks CLI
         env:
           GITLEAKS_VERSION: 8.30.1
-          GITLEAKS_DARWIN_ARM64_SHA256: b40ab0ae55c905963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
+          GITLEAKS_DARWIN_ARM64_SHA256: b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
         run: |
           set -euo pipefail
           archive="${RUNNER_TEMP}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
