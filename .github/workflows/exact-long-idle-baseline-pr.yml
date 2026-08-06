@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - perf/process-ui-render-cache
+      - perf/exact-long-idle-baseline
     paths:
       - MacVitals/**
       - MacVitalsTests/**
@@ -14,8 +15,14 @@ on:
       - scripts/summarize_provider_timings.py
       - .github/workflows/exact-long-idle-baseline-pr.yml
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact source commit to measure; defaults to the workflow commit
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -29,20 +36,22 @@ jobs:
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-LongBaseline
       RESULTS_ROOT: ${{ github.workspace }}/long-idle-baseline-results
+      REQUESTED_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Checkout exact optimization head
+      - name: Checkout exact optimization source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Verify exact source and ancestry
+        id: verify-source
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_SHA='${{ github.event.pull_request.head.sha || github.sha }}'
+          [[ "${REQUESTED_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
           ACTUAL_SHA="$(git rev-parse HEAD)"
-          test "${ACTUAL_SHA}" = "${EXPECTED_SHA}"
+          test "${ACTUAL_SHA}" = "${REQUESTED_SOURCE_SHA}"
           git merge-base --is-ancestor \
             4d143aaa082b0fb15ce86d19ba72c40557939692 \
             "${ACTUAL_SHA}"
@@ -52,6 +61,7 @@ jobs:
             exit 1
           }
           echo "SOURCE_SHA=${ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "source_sha=${ACTUAL_SHA}" >> "${GITHUB_OUTPUT}"
 
       - name: Install XcodeGen
         shell: bash
@@ -83,13 +93,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          grep -q 'scripts/collect_runtime_metrics.sh' scripts/run_exact_long_idle_baseline.sh
           bash scripts/run_exact_long_idle_baseline.sh \
             "${APP_PATH}" \
             "${SOURCE_SHA}" \
             "${RESULTS_ROOT}" 2>&1 | tee long-idle-baseline.log
 
       - name: Validate evidence contract
-        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -106,13 +116,268 @@ jobs:
           grep -q 'MACVITALS_PROVIDER_TIMING_SUMMARY' long-idle-baseline.log
           grep -q 'MACVITALS_LONG_BASELINE_SUMMARY' long-idle-baseline.log
 
+      - name: Stage validated recovery bundle
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          CACHE_BASE="${HOME}/Library/Caches/MacVitals-CI/exact-long-idle-baseline"
+          FINAL_ROOT="${CACHE_BASE}/${SOURCE_SHA}/${GITHUB_RUN_ID}"
+          TEMP_ROOT="${FINAL_ROOT}.tmp.${GITHUB_RUN_ATTEMPT}"
+          rm -rf "${TEMP_ROOT}"
+          mkdir -p "${TEMP_ROOT}"
+          cp -R "${RESULTS_ROOT}" "${TEMP_ROOT}/long-idle-baseline-results"
+          cp long-idle-baseline.log "${TEMP_ROOT}/long-idle-baseline.log"
+
+          python3 - "${TEMP_ROOT}" "${SOURCE_SHA}" "${GITHUB_RUN_ID}" "${RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          files = []
+          for path in sorted(root.rglob("*")):
+              if path.is_file():
+                  files.append({
+                      "path": str(path.relative_to(root)),
+                      "bytes": path.stat().st_size,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  })
+          if not files:
+              raise SystemExit("validated evidence staging produced no files")
+          manifest = {
+              "schemaVersion": 1,
+              "sourceSha": sys.argv[2],
+              "sourceWorkflowRunId": sys.argv[3],
+              "sourceRunnerName": sys.argv[4],
+              "stagedAtUTC": datetime.now(timezone.utc).isoformat(),
+              "files": files,
+          }
+          (root / "recovery-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+
+          chmod -R go-rwx "${TEMP_ROOT}"
+          mkdir -p "$(dirname "${FINAL_ROOT}")"
+          rm -rf "${FINAL_ROOT}"
+          mv "${TEMP_ROOT}" "${FINAL_ROOT}"
+          echo "RECOVERY_ROOT=${FINAL_ROOT}" >> "${GITHUB_ENV}"
+          echo "MACVITALS_RECOVERY_BUNDLE source_sha=${SOURCE_SHA} path=${FINAL_ROOT}"
+
+      - name: Verify staged evidence and provenance
+        id: verify-evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${RECOVERY_ROOT}"
+          test -f "${RECOVERY_ROOT}/recovery-manifest.json"
+
+          python3 - \
+            "${RECOVERY_ROOT}" \
+            "${SOURCE_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${RUNNER_NAME}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]).resolve()
+          expected_sha = sys.argv[2]
+          expected_run_id = sys.argv[3]
+          expected_runner = sys.argv[4]
+          manifest = json.loads((root / "recovery-manifest.json").read_text())
+
+          if manifest.get("sourceSha") != expected_sha:
+              raise SystemExit("recovery source SHA mismatch")
+          if manifest.get("sourceWorkflowRunId") != expected_run_id:
+              raise SystemExit("recovery workflow run mismatch")
+          if manifest.get("sourceRunnerName") != expected_runner:
+              raise SystemExit("recovery runner mismatch")
+
+          files = manifest.get("files", [])
+          if not files:
+              raise SystemExit("recovery manifest contains no evidence files")
+          for entry in files:
+              path = root / entry["path"]
+              if not path.is_file():
+                  raise SystemExit(f"missing staged file: {entry['path']}")
+              if path.stat().st_size != int(entry["bytes"]):
+                  raise SystemExit(f"size mismatch: {entry['path']}")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                  raise SystemExit(f"digest mismatch: {entry['path']}")
+
+          results = root / "long-idle-baseline-results"
+          scenario = json.loads((results / "scenario.json").read_text())
+          aggregate = json.loads((results / "aggregate-summary.json").read_text())
+          if scenario.get("sourceSha") != expected_sha:
+              raise SystemExit("scenario source SHA mismatch")
+          if aggregate.get("sourceSha") != expected_sha:
+              raise SystemExit("aggregate source SHA mismatch")
+          if int(aggregate.get("runCount", 0)) != 3:
+              raise SystemExit("aggregate run count is not 3")
+
+          for run_number in range(1, 4):
+              run_root = results / f"run-{run_number}"
+              resource = json.loads((run_root / "resource-summary.json").read_text())
+              provider = json.loads((run_root / "provider-summary.json").read_text())
+              if resource.get("sourceSha") != expected_sha:
+                  raise SystemExit(f"run {run_number}: resource source SHA mismatch")
+
+              measurement = resource.get("measurement", {})
+              if int(measurement.get("sampleCount", 0)) < 900:
+                  raise SystemExit(f"run {run_number}: insufficient process samples")
+              process = resource.get("process", {})
+              if process.get("aliveAtEnd") is not True:
+                  raise SystemExit(f"run {run_number}: app was not alive at end")
+              if process.get("identityStable") is not True:
+                  raise SystemExit(f"run {run_number}: PID identity was not stable")
+
+              records = int(provider.get("records", provider.get("cycleCount", 0)))
+              if records <= 0:
+                  raise SystemExit(f"run {run_number}: no provider records")
+              coverage = float(provider.get("observed_duration_s", 0))
+              if coverage < 1800:
+                  raise SystemExit(
+                      f"run {run_number}: provider coverage {coverage:.3f}s < 1800s")
+
+          print(
+              "MACVITALS_RECOVERY_VERIFIED "
+              f"source_sha={expected_sha} source_run_id={expected_run_id} "
+              f"runner={expected_runner} files={len(files)}")
+          PY
+
       - name: Upload exact long-baseline evidence
-        if: always()
+        id: upload-primary
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exact-long-idle-baseline-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            long-idle-baseline.log
-            long-idle-baseline-results/
+          name: exact-long-idle-baseline-${{ steps.verify-source.outputs.source_sha }}
+          path: ${{ env.RECOVERY_ROOT }}
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
+
+      - name: Retry exact long-baseline evidence upload
+        id: upload-retry
+        if: steps.upload-primary.outcome == 'failure' || steps.upload-primary.outputs.artifact-id == '' || steps.upload-primary.outputs.artifact-digest == ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-long-idle-baseline-${{ steps.verify-source.outputs.source_sha }}
+          path: ${{ env.RECOVERY_ROOT }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Confirm uploaded artifact outputs
+        id: confirm-upload
+        if: always() && steps.verify-evidence.outcome == 'success'
+        shell: bash
+        env:
+          PRIMARY_OUTCOME: ${{ steps.upload-primary.outcome }}
+          PRIMARY_ID: ${{ steps.upload-primary.outputs.artifact-id }}
+          PRIMARY_DIGEST: ${{ steps.upload-primary.outputs.artifact-digest }}
+          PRIMARY_URL: ${{ steps.upload-primary.outputs.artifact-url }}
+          RETRY_OUTCOME: ${{ steps.upload-retry.outcome }}
+          RETRY_ID: ${{ steps.upload-retry.outputs.artifact-id }}
+          RETRY_DIGEST: ${{ steps.upload-retry.outputs.artifact-digest }}
+          RETRY_URL: ${{ steps.upload-retry.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          if [[ "${PRIMARY_OUTCOME}" = success ]] \
+            && [[ -n "${PRIMARY_ID}" ]] \
+            && [[ -n "${PRIMARY_DIGEST}" ]]; then
+            ARTIFACT_ID="${PRIMARY_ID}"
+            ARTIFACT_DIGEST="${PRIMARY_DIGEST}"
+            ARTIFACT_URL="${PRIMARY_URL}"
+            ATTEMPT=primary
+          elif [[ "${RETRY_OUTCOME}" = success ]] \
+            && [[ -n "${RETRY_ID}" ]] \
+            && [[ -n "${RETRY_DIGEST}" ]]; then
+            ARTIFACT_ID="${RETRY_ID}"
+            ARTIFACT_DIGEST="${RETRY_DIGEST}"
+            ARTIFACT_URL="${RETRY_URL}"
+            ATTEMPT=retry
+          else
+            echo "Both upload attempts failed; recovery retained at ${RECOVERY_ROOT}" >&2
+            exit 1
+          fi
+          echo "artifact_id=${ARTIFACT_ID}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_digest=${ARTIFACT_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_url=${ARTIFACT_URL}" >> "${GITHUB_OUTPUT}"
+          echo "MACVITALS_BASELINE_ARTIFACT_PUBLISHED attempt=${ATTEMPT} artifact_id=${ARTIFACT_ID} digest=${ARTIFACT_DIGEST} url=${ARTIFACT_URL}"
+
+      - name: Verify artifact through GitHub Actions API
+        id: verify-published-artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.confirm-upload.outputs.artifact_id }}
+          EXPECTED_DIGEST: ${{ steps.confirm-upload.outputs.artifact_digest }}
+          EXPECTED_NAME: exact-long-idle-baseline-${{ steps.verify-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "${ARTIFACT_ID}"
+          RESPONSE_FILE="$(mktemp)"
+          trap 'rm -f "${RESPONSE_FILE}"' EXIT
+
+          published=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" \
+              -o "${RESPONSE_FILE}"; then
+              published=true
+              break
+            fi
+            echo "Artifact API lookup attempt ${attempt} failed; retrying" >&2
+            sleep 5
+          done
+          test "${published}" = true
+
+          python3 - \
+            "${RESPONSE_FILE}" \
+            "${ARTIFACT_ID}" \
+            "${EXPECTED_NAME}" \
+            "${EXPECTED_DIGEST}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          expected_id = int(sys.argv[2])
+          expected_name = sys.argv[3]
+          expected_digest = sys.argv[4]
+          if int(payload.get("id", 0)) != expected_id:
+              raise SystemExit("published artifact ID mismatch")
+          if payload.get("name") != expected_name:
+              raise SystemExit("published artifact name mismatch")
+          if payload.get("expired") is not False:
+              raise SystemExit("published artifact is already expired")
+          api_digest = payload.get("digest")
+          if api_digest and api_digest != expected_digest:
+              raise SystemExit("published artifact digest mismatch")
+          print(
+              "MACVITALS_BASELINE_ARTIFACT_API_VERIFIED "
+              f"artifact_id={expected_id} name={expected_name} digest={expected_digest}")
+          PY
+
+      - name: Remove API-verified recovery bundle
+        if: success() && steps.verify-published-artifact.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_PREFIX="${HOME}/Library/Caches/MacVitals-CI/exact-long-idle-baseline/"
+          case "${RECOVERY_ROOT}" in
+            "${EXPECTED_PREFIX}"*) ;;
+            *)
+              echo "Refusing to remove unexpected recovery path: ${RECOVERY_ROOT}" >&2
+              exit 1
+              ;;
+          esac
+          rm -rf "${RECOVERY_ROOT}"
