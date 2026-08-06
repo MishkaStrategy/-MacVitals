@@ -35,6 +35,11 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_sha(name: str, value: str) -> None:
+    if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
+        raise EvidenceValidationError(f"{name} must contain exactly 40 hex characters")
+
+
 def _safe_manifest_path(root: Path, raw_path: object) -> Path:
     if not isinstance(raw_path, str) or not raw_path:
         raise EvidenceValidationError("manifest path must be a non-empty string")
@@ -54,6 +59,7 @@ def _safe_manifest_path(root: Path, raw_path: object) -> Path:
 def validate_bundle(
     root: Path,
     expected_source_sha: str,
+    expected_harness_sha: str,
     expected_run_id: str,
     expected_runner: str,
 ) -> int:
@@ -62,16 +68,16 @@ def validate_bundle(
     root = root.resolve(strict=True)
     if not root.is_dir():
         raise EvidenceValidationError(f"bundle root is not a directory: {root}")
-    if len(expected_source_sha) != 40 or any(
-        character not in "0123456789abcdefABCDEF" for character in expected_source_sha
-    ):
-        raise EvidenceValidationError("expected source SHA must contain exactly 40 hex characters")
+    _validate_sha("expected source SHA", expected_source_sha)
+    _validate_sha("expected harness SHA", expected_harness_sha)
 
     manifest = _read_json(root / "recovery-manifest.json")
     if manifest.get("schemaVersion") != 1:
         raise EvidenceValidationError("unsupported recovery manifest schema")
     if manifest.get("sourceSha") != expected_source_sha:
         raise EvidenceValidationError("recovery source SHA mismatch")
+    if manifest.get("harnessSha") != expected_harness_sha:
+        raise EvidenceValidationError("recovery harness SHA mismatch")
     if str(manifest.get("sourceWorkflowRunId")) != expected_run_id:
         raise EvidenceValidationError("recovery workflow run mismatch")
     if manifest.get("sourceRunnerName") != expected_runner:
@@ -103,14 +109,14 @@ def validate_bundle(
     actual_paths = {
         str(path.relative_to(root))
         for path in root.rglob("*")
-        if path.is_file() and path.name != "recovery-manifest.json"
+        if path.is_file() and path != root / "recovery-manifest.json"
     }
     if actual_paths != seen_paths:
-        missing = sorted(actual_paths - seen_paths)
-        unexpected = sorted(seen_paths - actual_paths)
+        unlisted = sorted(actual_paths - seen_paths)
+        missing = sorted(seen_paths - actual_paths)
         raise EvidenceValidationError(
             "manifest file list mismatch: "
-            f"unlisted={missing or 'none'} missing={unexpected or 'none'}"
+            f"unlisted={unlisted or 'none'} missing={missing or 'none'}"
         )
 
     results = root / "long-idle-baseline-results"
@@ -162,6 +168,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _stage_fixture(
     root: Path,
     source_sha: str,
+    harness_sha: str,
     run_id: str,
     runner: str,
     mutate: Callable[[Path], None] | None = None,
@@ -183,7 +190,9 @@ def _stage_fixture(
             run_root / "provider-summary.json",
             {"records": 900, "observed_duration_s": 1800.0},
         )
-        (run_root / "provider-timings.jsonl").write_text('{"total_ms":1.0}\n', encoding="utf-8")
+        (run_root / "provider-timings.jsonl").write_text(
+            '{"total_ms":1.0}\n', encoding="utf-8"
+        )
     (root / "long-idle-baseline.log").write_text("fixture\n", encoding="utf-8")
 
     if mutate is not None:
@@ -191,7 +200,7 @@ def _stage_fixture(
 
     files = []
     for path in sorted(root.rglob("*")):
-        if path.is_file() and path.name != "recovery-manifest.json":
+        if path.is_file() and path != root / "recovery-manifest.json":
             files.append(
                 {
                     "path": str(path.relative_to(root)),
@@ -204,6 +213,7 @@ def _stage_fixture(
         {
             "schemaVersion": 1,
             "sourceSha": source_sha,
+            "harnessSha": harness_sha,
             "sourceWorkflowRunId": run_id,
             "sourceRunnerName": runner,
             "files": files,
@@ -213,6 +223,7 @@ def _stage_fixture(
 
 def self_test() -> None:
     source_sha = "1" * 40
+    harness_sha = "a" * 40
     run_id = "123456"
     runner = "self-test-runner"
 
@@ -222,7 +233,7 @@ def self_test() -> None:
             root.mkdir()
             prepare(root)
             try:
-                validate_bundle(root, source_sha, run_id, runner)
+                validate_bundle(root, source_sha, harness_sha, run_id, runner)
             except EvidenceValidationError:
                 return
             raise AssertionError(f"{name} fixture unexpectedly passed validation")
@@ -230,18 +241,20 @@ def self_test() -> None:
     with tempfile.TemporaryDirectory(prefix="macvitals-long-baseline-test-") as temporary:
         root = Path(temporary) / "bundle"
         root.mkdir()
-        _stage_fixture(root, source_sha, run_id, runner)
-        validate_bundle(root, source_sha, run_id, runner)
+        _stage_fixture(root, source_sha, harness_sha, run_id, runner)
+        validate_bundle(root, source_sha, harness_sha, run_id, runner)
 
     def digest_tamper(root: Path) -> None:
-        _stage_fixture(root, source_sha, run_id, runner)
+        _stage_fixture(root, source_sha, harness_sha, run_id, runner)
         with (root / "long-idle-baseline.log").open("a", encoding="utf-8") as handle:
             handle.write("tampered\n")
 
     expect_rejected("digest tamper", digest_tamper)
 
     def semantic_fixture(mutator: Callable[[Path], None]) -> Callable[[Path], None]:
-        return lambda root: _stage_fixture(root, source_sha, run_id, runner, mutator)
+        return lambda root: _stage_fixture(
+            root, source_sha, harness_sha, run_id, runner, mutator
+        )
 
     expect_rejected(
         "899 samples",
@@ -280,7 +293,11 @@ def self_test() -> None:
     )
     expect_rejected(
         "wrong source SHA",
-        lambda root: _stage_fixture(root, "2" * 40, run_id, runner),
+        lambda root: _stage_fixture(root, "2" * 40, harness_sha, run_id, runner),
+    )
+    expect_rejected(
+        "wrong harness SHA",
+        lambda root: _stage_fixture(root, source_sha, "b" * 40, run_id, runner),
     )
 
     def remove_provider_records(root: Path) -> None:
@@ -298,6 +315,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", nargs="?", type=Path)
     parser.add_argument("--expected-source-sha")
+    parser.add_argument("--expected-harness-sha")
     parser.add_argument("--expected-run-id")
     parser.add_argument("--expected-runner")
     parser.add_argument("--self-test", action="store_true")
@@ -313,6 +331,7 @@ def main() -> int:
         raise SystemExit("bundle root is required")
     for name, value in (
         ("--expected-source-sha", args.expected_source_sha),
+        ("--expected-harness-sha", args.expected_harness_sha),
         ("--expected-run-id", args.expected_run_id),
         ("--expected-runner", args.expected_runner),
     ):
@@ -322,6 +341,7 @@ def main() -> int:
         file_count = validate_bundle(
             args.root,
             args.expected_source_sha,
+            args.expected_harness_sha,
             args.expected_run_id,
             args.expected_runner,
         )
@@ -330,6 +350,7 @@ def main() -> int:
     print(
         "MACVITALS_RECOVERY_VERIFIED "
         f"source_sha={args.expected_source_sha} "
+        f"harness_sha={args.expected_harness_sha} "
         f"source_run_id={args.expected_run_id} "
         f"runner={args.expected_runner} files={file_count}"
     )
