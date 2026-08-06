@@ -61,7 +61,7 @@ def validate_token(token: str) -> None:
 
 def validate_root(root: Path, create: bool) -> Path:
     home = Path.home().resolve()
-    candidate = root.expanduser()
+    candidate = Path(os.path.abspath(root.expanduser()))
     if not candidate.is_absolute():
         fail("recovery root must be absolute")
 
@@ -114,6 +114,8 @@ def domain_appears_to_exist(domain: str) -> bool:
 
 
 def atomic_write(path: Path, payload: bytes, mode: int) -> None:
+    if path.exists() or path.is_symlink():
+        fail("refusing to overwrite an existing recovery file")
     temporary = path.with_name(path.name + f".tmp.{os.getpid()}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(temporary, flags, mode)
@@ -177,9 +179,16 @@ def capture(domain: str, token: str, root: Path) -> None:
     print(f"Preference recovery capture complete: token={token} existed={str(existed).lower()}")
 
 
-def read_metadata(path: Path) -> dict[str, object]:
+def ensure_private_regular_file(path: Path, label: str) -> None:
     if path.is_symlink() or not path.is_file():
-        fail("recovery metadata is missing or unsafe")
+        fail(f"{label} is missing or unsafe")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        fail(f"{label} permissions are too broad")
+
+
+def read_metadata(path: Path) -> dict[str, object]:
+    ensure_private_regular_file(path, "recovery metadata")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -201,7 +210,11 @@ def restore(domain: str, token: str, root: Path, allow_missing: bool) -> None:
     validate_token(token)
     root = validate_root(root, create=True)
     metadata_path, backup_path = recovery_paths(root, token)
-    if not metadata_path.exists() and not metadata_path.is_symlink():
+    metadata_present = metadata_path.exists() or metadata_path.is_symlink()
+    backup_present = backup_path.exists() or backup_path.is_symlink()
+    if not metadata_present:
+        if backup_present:
+            fail("orphaned preference recovery backup exists without metadata")
         if allow_missing:
             print(f"Preference recovery restore skipped: token={token} metadata=missing")
             return
@@ -210,11 +223,7 @@ def restore(domain: str, token: str, root: Path, allow_missing: bool) -> None:
     metadata = read_metadata(metadata_path)
     if metadata.get("domain") != domain or metadata.get("token") != token:
         fail("preference recovery identity mismatch")
-    if backup_path.is_symlink() or not backup_path.is_file():
-        fail("preference recovery backup is missing or unsafe")
-    mode = stat.S_IMODE(backup_path.stat().st_mode)
-    if mode & 0o077:
-        fail("preference recovery backup permissions are too broad")
+    ensure_private_regular_file(backup_path, "preference recovery backup")
     payload = backup_path.read_bytes()
     if metadata.get("backupSha256") != sha256(payload):
         fail("preference recovery backup checksum mismatch")
@@ -247,7 +256,6 @@ def fake_defaults_script(root: Path) -> Path:
     script.write_text(
         """#!/usr/bin/env python3
 import os
-import plistlib
 import shutil
 import sys
 from pathlib import Path
@@ -275,7 +283,7 @@ else:
 
 
 def self_test() -> None:
-    with tempfile.TemporaryDirectory() as temporary:
+    with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
         root = Path(temporary)
         state = root / "state.plist"
         recovery = root / "recovery"
@@ -311,6 +319,18 @@ def self_test() -> None:
                 raise AssertionError("failing import unexpectedly passed")
             assert existing_recovery(recovery)
             os.environ.pop("FAKE_DEFAULTS_FAIL_IMPORT", None)
+
+            orphan_root = root / "orphan-recovery"
+            orphan_root.mkdir(mode=0o700)
+            _, orphan_backup = recovery_paths(orphan_root, "orphan")
+            orphan_backup.write_bytes(original)
+            orphan_backup.chmod(0o600)
+            try:
+                restore("test.domain", "orphan", orphan_root, allow_missing=True)
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError("orphaned recovery backup unexpectedly passed")
         finally:
             if old_defaults is None:
                 os.environ.pop("MACVITALS_DEFAULTS_BIN", None)
