@@ -1,0 +1,129 @@
+name: Exact Head Candidate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exact-head-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-arm64:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-ExactHead
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${SOURCE_SHA}"
+          ! git grep -nE 'Pet|petState|PetView' -- MacVitals
+          printf 'source_sha=%s\n' "${SOURCE_SHA}" > exact-head-source.txt
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Validate Swift formatting
+        run: swift format lint --recursive MacVitals MacVitalsTests MacVitalsUITests
+
+      - name: Build and test exact ARM64 head
+        shell: bash
+        run: |
+          set +e
+          rm -rf "${DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean test -only-testing:MacVitalsTests \
+            > exact-head-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' \
+            exact-head-tests.log | tail -n 500 > exact-head-test-diagnostics.txt || true
+          cat exact-head-test-diagnostics.txt
+          exit ${status}
+
+      - name: Package exact unsigned ARM64 candidate
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          CODE_SIGNING_ALLOWED: NO
+        shell: bash
+        run: |
+          set +e
+          bash scripts/package_release.sh "0.0.${GITHUB_RUN_NUMBER}" \
+            > exact-head-package.log 2>&1
+          status=$?
+          tail -n 500 exact-head-package.log > exact-head-package-diagnostics.txt
+          cat exact-head-package-diagnostics.txt
+          test "$(lipo -archs build/MacVitals.xcarchive/Products/Applications/MacVitals.app/Contents/MacOS/MacVitals)" = arm64
+          exit ${status}
+
+      - name: Run exact-head packaged runtime smoke
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set +e
+          GITHUB_SHA="${SOURCE_SHA}" \
+            bash scripts/run_ci_runtime_smoke.sh \
+              build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+              > exact-head-runtime.log 2>&1
+          status=$?
+          cat exact-head-runtime.log
+          grep -Fq "source_sha=${SOURCE_SHA}" exact-head-runtime.log
+          exit ${status}
+
+      - name: Upload exact-head diagnostics and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exact-head-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            exact-head-source.txt
+            exact-head-tests.log
+            exact-head-test-diagnostics.txt
+            exact-head-package.log
+            exact-head-package-diagnostics.txt
+            exact-head-runtime.log
+            runtime-smoke-results/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload exact-head unsigned package
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacVitals-exact-head-${{ env.SOURCE_SHA }}-arm64-unsigned
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
