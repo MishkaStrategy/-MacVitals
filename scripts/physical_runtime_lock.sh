@@ -145,7 +145,7 @@ physical_runtime_lock_acquire() {
 }
 
 physical_runtime_lock_release() {
-  local lock_dir owner_pid
+  local lock_dir owner_pid release_status=0
   [[ "${MACVITALS_PHYSICAL_LOCK_HELD:-0}" == "1" ]] || return 0
   lock_dir="$(physical_runtime_lock_directory)"
   if ! physical_runtime_lock_validate_directory "${lock_dir}"; then
@@ -160,14 +160,17 @@ physical_runtime_lock_release() {
   else
     printf 'Refusing to release physical runtime lock owned by pid %s\n' \
       "${owner_pid:-unknown}" >&2
+    release_status=1
   fi
   MACVITALS_PHYSICAL_LOCK_HELD=0
   export MACVITALS_PHYSICAL_LOCK_HELD
+  return "${release_status}"
 }
 
 physical_runtime_lock_self_test() {
-  local helper_path temp_root lock_dir ready_file holder_pid
+  local helper_path cleanup_test temp_root lock_dir ready_file holder_pid
   helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  cleanup_test="$(dirname "${helper_path}")/run_exact_long_idle_baseline.sh"
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/macvitals-physical-lock-test.XXXXXX")"
   lock_dir="${temp_root}/runtime.lock"
   ready_file="${temp_root}/ready"
@@ -218,7 +221,10 @@ physical_runtime_lock_self_test() {
   mkdir "${lock_dir}"
   printf '99999999\n' > "${lock_dir}/owner-pid"
   MACVITALS_PHYSICAL_LOCK_HELD=1
-  physical_runtime_lock_release 2>/dev/null
+  if physical_runtime_lock_release 2>/dev/null; then
+    printf '%s\n' 'Non-owner release unexpectedly succeeded' >&2
+    return 1
+  fi
   [[ -d "${lock_dir}" ]]
   [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "99999999" ]]
   [[ "${MACVITALS_PHYSICAL_LOCK_HELD}" == "0" ]]
@@ -271,6 +277,14 @@ physical_runtime_lock_self_test() {
 
   trap - EXIT INT TERM
   cleanup_self_test
+
+  if [[ -f "${cleanup_test}" && ! -L "${cleanup_test}" ]]; then
+    bash "${cleanup_test}" --self-test
+  else
+    printf 'Long-baseline cleanup self-test is missing or unsafe: %s\n' "${cleanup_test}" >&2
+    return 1
+  fi
+
   printf '%s\n' 'Physical runtime lock self-test passed'
 }
 
