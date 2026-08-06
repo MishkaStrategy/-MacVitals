@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
 APP_PATH="${1:-${APP_PATH:-${ROOT_DIR}/build/MacVitals.xcarchive/Products/Applications/MacVitals.app}}"
 EXECUTABLE_PATH="${APP_PATH}/Contents/MacOS/MacVitals"
 WARMUP_SECONDS="${CI_RUNTIME_WARMUP_SECONDS:-5}"
@@ -12,7 +13,16 @@ SCENARIO="${CI_RUNTIME_SCENARIO:-packaged-runtime-smoke}"
 SOURCE_SHA="${GITHUB_SHA:-unknown}"
 app_pid=""
 
+[[ -f "${LOCK_HELPER}" && ! -L "${LOCK_HELPER}" ]] || {
+  echo "Physical runtime lock helper is missing or unsafe: ${LOCK_HELPER}" >&2
+  exit 1
+}
+# shellcheck source=physical_runtime_lock.sh
+source "${LOCK_HELPER}"
+
 cleanup() {
+  local cleanup_status=0
+  set +e
   if [[ -n "${app_pid}" ]] && kill -0 "${app_pid}" >/dev/null 2>&1; then
     kill -TERM "${app_pid}" >/dev/null 2>&1 || true
     for _ in {1..20}; do
@@ -24,10 +34,21 @@ cleanup() {
     fi
     wait "${app_pid}" 2>/dev/null || true
   fi
+  app_pid=""
+  physical_runtime_lock_release || cleanup_status=$?
+  return "${cleanup_status}"
 }
-trap cleanup EXIT INT TERM
 
-for command in date find head mkdir tee tr wc python3; do
+handle_signal() {
+  local status="$1"
+  exit "${status}"
+}
+
+trap cleanup EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+for command in date find head mkdir tee tr wc python3 pgrep ps; do
   command -v "${command}" >/dev/null 2>&1 || {
     echo "Required runtime-smoke command is unavailable: ${command}" >&2
     exit 127
@@ -62,6 +83,16 @@ fi
   echo "Packaged executable is missing or not executable" >&2
   exit 1
 }
+
+physical_runtime_lock_acquire
+if pgrep -x MacVitals >/dev/null 2>&1; then
+  echo "Existing MacVitals processes detected; runtime smoke fails closed and will not terminate them:" >&2
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    ps -p "${pid}" -o pid=,command= >&2 || true
+  done < <(pgrep -x MacVitals 2>/dev/null || true)
+  exit 1
+fi
 
 BASE_OUTPUT_ROOT="$(python3 "${ROOT_DIR}/scripts/validate_output_path.py" --root "${ROOT_DIR}" --path "${OUTPUT_ROOT}")"
 RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
