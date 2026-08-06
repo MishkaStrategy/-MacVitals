@@ -30,6 +30,10 @@ REPORTER_MARKERS = (
     "report_runtime_resources.py",
     "MACVITALS_RESOURCE_SUMMARY",
 )
+PHYSICAL_EVIDENCE_MARKERS = (
+    "run_ci_physical_validation_hardened.sh",
+    "physical-validation-results",
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -40,17 +44,22 @@ def is_runtime_launcher(text: str) -> bool:
     return any(pattern.search(text) for pattern in RUNTIME_PATTERNS)
 
 
+def uses_canonical_physical_evidence(text: str) -> bool:
+    return all(marker in text for marker in PHYSICAL_EVIDENCE_MARKERS)
+
+
 def validate_text(path: Path, text: str) -> list[str]:
     if not is_runtime_launcher(text):
         return []
+    physical_evidence = uses_canonical_physical_evidence(text)
     errors: list[str] = []
-    if not any(marker in text for marker in COLLECTOR_MARKERS):
+    if not physical_evidence and not any(marker in text for marker in COLLECTOR_MARKERS):
         errors.append(
             f"{path}: launches MacVitals but does not invoke the canonical runtime metrics collector"
         )
-    if not any(marker in text for marker in REPORTER_MARKERS):
+    if not physical_evidence and not any(marker in text for marker in REPORTER_MARKERS):
         errors.append(
-            f"{path}: launches MacVitals but does not emit MACVITALS_RESOURCE_SUMMARY"
+            f"{path}: launches MacVitals but does not emit canonical runtime resource evidence"
         )
     return errors
 
@@ -100,13 +109,20 @@ def self_test() -> None:
 
     collected_only = direct_launch + "\nbash scripts/collect_runtime_metrics.sh 60 2\n"
     errors = validate_text(Path("missing-report.sh"), collected_only)
-    assert len(errors) == 1 and "MACVITALS_RESOURCE_SUMMARY" in errors[0], errors
+    assert len(errors) == 1 and "runtime resource evidence" in errors[0], errors
 
     compliant = collected_only + "\npython3 scripts/report_runtime_resources.py summary.json\n"
     assert validate_text(Path("good.sh"), compliant) == []
 
     wrapper = "bash scripts/run_ci_runtime_smoke.sh MacVitals.app"
     assert validate_text(Path("workflow.yml"), wrapper) == []
+
+    incomplete_physical = direct_launch + "\nbash scripts/run_ci_physical_validation_hardened.sh\n"
+    assert len(validate_text(Path("incomplete-physical.sh"), incomplete_physical)) == 2
+
+    physical = incomplete_physical + "\npath: physical-validation-results/\n"
+    assert uses_canonical_physical_evidence(physical)
+    assert validate_text(Path("physical.yml"), physical) == []
 
     exact_process_probe = "pgrep -x MacVitals"
     assert is_runtime_launcher(exact_process_probe)
