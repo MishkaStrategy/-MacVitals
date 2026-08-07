@@ -38,10 +38,17 @@ REPORTER_MARKERS = (
     "report_runtime_resources.py",
     "MACVITALS_RESOURCE_SUMMARY",
 )
-CANONICAL_PHYSICAL_WRAPPER = Path("scripts/run_safe_physical_validation.sh")
-PHYSICAL_EVIDENCE_MARKERS = (
+CANONICAL_SAFE_PHYSICAL_WRAPPER = Path("scripts/run_safe_physical_validation.sh")
+SAFE_PHYSICAL_EVIDENCE_MARKERS = (
     "run_ci_physical_validation_hardened.sh",
     "physical-validation-results",
+)
+CANONICAL_HARDENED_PHYSICAL_WRAPPER = Path("scripts/run_ci_physical_validation_hardened.sh")
+HARDENED_PHYSICAL_EVIDENCE_MARKERS = (
+    "run_ci_physical_validation.sh",
+    "run_physical_validation_hardened.py",
+    "candidate_pid_is_owned",
+    'GITHUB_SHA="${EXPECTED_SHA}"',
 )
 
 
@@ -68,9 +75,11 @@ def is_runtime_launcher(text: str) -> bool:
 
 
 def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
-    return path == CANONICAL_PHYSICAL_WRAPPER and all(
-        marker in text for marker in PHYSICAL_EVIDENCE_MARKERS
-    )
+    if path == CANONICAL_SAFE_PHYSICAL_WRAPPER:
+        return all(marker in text for marker in SAFE_PHYSICAL_EVIDENCE_MARKERS)
+    if path == CANONICAL_HARDENED_PHYSICAL_WRAPPER:
+        return all(marker in text for marker in HARDENED_PHYSICAL_EVIDENCE_MARKERS)
+    return False
 
 
 def validate_text(path: Path, text: str) -> list[str]:
@@ -154,16 +163,38 @@ def self_test() -> None:
     wrapper = "bash scripts/run_ci_runtime_smoke.sh MacVitals.app"
     assert validate_text(Path("workflow.yml"), wrapper) == []
 
-    incomplete_physical = direct_launch + "\nbash scripts/run_ci_physical_validation_hardened.sh\n"
-    assert len(validate_text(CANONICAL_PHYSICAL_WRAPPER, incomplete_physical)) == 2
+    incomplete_safe_physical = direct_launch + "\nbash scripts/run_ci_physical_validation_hardened.sh\n"
+    assert len(validate_text(CANONICAL_SAFE_PHYSICAL_WRAPPER, incomplete_safe_physical)) == 2
 
-    physical = incomplete_physical + "\npath: physical-validation-results/\n"
-    assert uses_canonical_physical_evidence(CANONICAL_PHYSICAL_WRAPPER, physical)
-    assert validate_text(CANONICAL_PHYSICAL_WRAPPER, physical) == []
+    safe_physical = incomplete_safe_physical + "\npath: physical-validation-results/\n"
+    assert uses_canonical_physical_evidence(CANONICAL_SAFE_PHYSICAL_WRAPPER, safe_physical)
+    assert validate_text(CANONICAL_SAFE_PHYSICAL_WRAPPER, safe_physical) == []
 
-    lookalike = Path("scripts/not-the-canonical-wrapper.sh")
-    assert not uses_canonical_physical_evidence(lookalike, physical)
-    assert len(validate_text(lookalike, physical)) == 2
+    safe_lookalike = Path("scripts/not-the-canonical-wrapper.sh")
+    assert not uses_canonical_physical_evidence(safe_lookalike, safe_physical)
+    assert len(validate_text(safe_lookalike, safe_physical)) == 2
+
+    hardened_physical = """
+    ORIGINAL="${SCRIPT_DIR}/run_ci_physical_validation.sh"
+    HARDENED="${SCRIPT_DIR}/run_physical_validation_hardened.py"
+    candidate_pid_is_owned() { pgrep -x MacVitals >/dev/null; }
+    GITHUB_SHA="${EXPECTED_SHA}" bash "${TEMP_RUNNER}" "$@"
+    """
+    assert is_runtime_launcher(hardened_physical)
+    assert uses_canonical_physical_evidence(
+        CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_physical
+    )
+    assert validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_physical) == []
+
+    hardened_lookalike = Path("scripts/not-the-hardened-physical-wrapper.sh")
+    assert not uses_canonical_physical_evidence(hardened_lookalike, hardened_physical)
+    assert len(validate_text(hardened_lookalike, hardened_physical)) == 2
+
+    incomplete_hardened = hardened_physical.replace("candidate_pid_is_owned", "pid_is_owned")
+    assert not uses_canonical_physical_evidence(
+        CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_hardened
+    )
+    assert len(validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_hardened)) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
     assert is_runtime_launcher(exact_process_probe)
