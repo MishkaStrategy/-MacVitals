@@ -58,6 +58,18 @@ HARDENED_PHYSICAL_HARNESS_MARKERS = (
     "base.terminate = terminate",
     "_completion_failures",
 )
+TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS = Path(
+    "scripts/run_physical_validation_launchservices.py"
+)
+TARGETED_LAUNCHSERVICES_HARNESS_MARKERS = (
+    "import run_physical_validation_hardened as hardened",
+    "_require_delegated_hardened_runner_contract",
+    "base.matching_pid = matching_pid",
+    "hardened._owned_process_executables[pid]",
+    '"open",',
+    '"-na",',
+    "base.terminate is hardened.terminate",
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -89,6 +101,8 @@ def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
         return all(marker in text for marker in HARDENED_PHYSICAL_WRAPPER_MARKERS)
     if path == CANONICAL_HARDENED_PHYSICAL_HARNESS:
         return all(marker in text for marker in HARDENED_PHYSICAL_HARNESS_MARKERS)
+    if path == TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS:
+        return all(marker in text for marker in TARGETED_LAUNCHSERVICES_HARNESS_MARKERS)
     return False
 
 
@@ -228,11 +242,46 @@ def self_test() -> None:
     assert not uses_canonical_physical_evidence(hardened_harness_lookalike, hardened_harness)
     assert len(validate_text(hardened_harness_lookalike, hardened_harness)) == 2
 
-    incomplete_harness = hardened_harness.replace("base.terminate = terminate", "base.terminate = base.terminate")
+    incomplete_harness = hardened_harness.replace(
+        "base.terminate = terminate", "base.terminate = base.terminate"
+    )
     assert not uses_canonical_physical_evidence(
         CANONICAL_HARDENED_PHYSICAL_HARNESS, incomplete_harness
     )
     assert len(validate_text(CANONICAL_HARDENED_PHYSICAL_HARNESS, incomplete_harness)) == 2
+
+    launchservices_harness = """
+    import run_physical_validation_hardened as hardened
+    def _require_delegated_hardened_runner_contract():
+        return None
+    def matching_pid(executable, warmup):
+        launched = base.command("open", "-na", str(application))
+        hardened._owned_process_executables[pid] = executable.resolve()
+        return pid, True
+    base.matching_pid = matching_pid
+    assert base.terminate is hardened.terminate
+    """
+    assert is_runtime_launcher(launchservices_harness)
+    assert uses_canonical_physical_evidence(
+        TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, launchservices_harness
+    )
+    assert validate_text(
+        TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, launchservices_harness
+    ) == []
+
+    launchservices_lookalike = Path("scripts/not-the-launchservices-physical-harness.py")
+    assert not uses_canonical_physical_evidence(launchservices_lookalike, launchservices_harness)
+    assert len(validate_text(launchservices_lookalike, launchservices_harness)) == 2
+
+    incomplete_launchservices = launchservices_harness.replace(
+        "hardened._owned_process_executables[pid]", "owned_processes[pid]"
+    )
+    assert not uses_canonical_physical_evidence(
+        TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, incomplete_launchservices
+    )
+    assert len(
+        validate_text(TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, incomplete_launchservices)
+    ) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
     assert is_runtime_launcher(exact_process_probe)
