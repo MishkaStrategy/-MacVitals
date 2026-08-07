@@ -37,6 +37,12 @@ if text.count(old_harness) != 1:
     raise SystemExit("canonical hardened harness assignment is not uniquely patchable")
 text = text.replace(old_harness, new_harness)
 
+old_generated_harness = "        'HARNESS=\"${REPOSITORY}/scripts/run_physical_validation_hardened.py\"',\n"
+new_generated_harness = "        'HARNESS=\"${REPOSITORY}/scripts/run_physical_validation_launchservices.py\"',\n"
+if text.count(old_generated_harness) != 1:
+    raise SystemExit("canonical generated harness assignment is not uniquely patchable")
+text = text.replace(old_generated_harness, new_generated_harness)
+
 old_required = "    'run_physical_validation_hardened.py',\n"
 new_required = "    'run_physical_validation_launchservices.py',\n"
 if text.count(old_required) != 1:
@@ -99,6 +105,7 @@ self_test() {
   TEMP_WRAPPER="${SCRIPT_DIR}/.run_ci_physical_validation_same_session.selftest.$$.sh"
   materialize_same_session_wrapper "${TEMP_WRAPPER}"
   bash -n "${TEMP_WRAPPER}"
+  grep -Fq 'HARNESS="${REPOSITORY}/scripts/run_physical_validation_launchservices.py"' "${TEMP_WRAPPER}"
   bash "${TEMP_WRAPPER}" --self-test
   rm -f -- "${TEMP_WRAPPER}"
   TEMP_WRAPPER=""
@@ -116,4 +123,5 @@ command -v open >/dev/null 2>&1 || fail "LaunchServices open command is unavaila
 TEMP_WRAPPER="${SCRIPT_DIR}/.run_ci_physical_validation_same_session.$$.sh"
 materialize_same_session_wrapper "${TEMP_WRAPPER}"
 bash -n "${TEMP_WRAPPER}"
+grep -Fq 'HARNESS="${REPOSITORY}/scripts/run_physical_validation_launchservices.py"' "${TEMP_WRAPPER}"
 bash "${TEMP_WRAPPER}" "$@"
