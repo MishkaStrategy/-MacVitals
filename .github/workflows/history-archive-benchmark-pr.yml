@@ -91,7 +91,11 @@ jobs:
             MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
           grep -Fq 'processLifetimePeakRSS' \
             MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
-          grep -Fq 'peakRSSKilobytes' \
+          grep -Fq 'peakRSSCalibration()' \
+            MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'currentResidentKiBAtCalibration' \
+            MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'ruMaxRSSScaleToBytes' \
             MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
 
       - name: Materialize application icon
@@ -196,7 +200,7 @@ jobs:
           memory = payload.get("memory", {})
           fixture = payload.get("fixture", {})
           record = payload.get("record", {})
-          if payload.get("schemaVersion") != 2:
+          if payload.get("schemaVersion") != 3:
               raise SystemExit("benchmark report schema mismatch")
           if identity.get("productBaseSHA") != sys.argv[2]:
               raise SystemExit("benchmark report product base SHA mismatch")
@@ -204,8 +208,36 @@ jobs:
               raise SystemExit("benchmark report benchmark SHA mismatch")
           if fixture.get("bucketCount") != 2016 or fixture.get("applicationsPerBucket") != 24:
               raise SystemExit("benchmark report does not contain the mature seven-day fixture")
+          if fixture.get("aggregateCount") != 2016 * 24:
+              raise SystemExit("benchmark aggregate count mismatch")
           if memory.get("semantics") != "processLifetimePeakRSS" or memory.get("unit") != "bytes":
               raise SystemExit("benchmark memory semantics mismatch")
+          scale = memory.get("ruMaxRSSScaleToBytes")
+          if scale not in (1, 1024):
+              raise SystemExit(f"benchmark ru_maxrss calibration scale is invalid: {scale}")
+          raw = memory.get("ruMaxRSSRawAtCalibration")
+          current_kib = memory.get("currentResidentKiBAtCalibration")
+          physical = memory.get("systemPhysicalMemoryBytes")
+          if not isinstance(raw, int) or raw <= 0:
+              raise SystemExit("benchmark raw ru_maxrss calibration is invalid")
+          if not isinstance(current_kib, int) or current_kib <= 0:
+              raise SystemExit("benchmark current RSS calibration is invalid")
+          if not isinstance(physical, int) or physical <= 0:
+              raise SystemExit("benchmark physical memory calibration is invalid")
+          peaks = [
+              memory.get("peakResidentBytesAtStart"),
+              memory.get("peakResidentBytesAfterFixture"),
+              memory.get("peakResidentBytesAfterLoad"),
+              memory.get("peakResidentBytesAfterRecords"),
+              memory.get("peakResidentBytesAfterQueries"),
+          ]
+          if any(not isinstance(value, int) or value <= 0 or value > physical for value in peaks):
+              raise SystemExit(f"benchmark calibrated peak RSS values are invalid: {peaks}")
+          if peaks != sorted(peaks):
+              raise SystemExit(f"process-lifetime peak RSS checkpoints are not monotonic: {peaks}")
+          current_bytes = current_kib * 1024
+          if peaks[0] < current_bytes // 2:
+              raise SystemExit("calibrated peak RSS is implausibly below live RSS")
           if record.get("sampleCount") != 120:
               raise SystemExit("benchmark record sample count mismatch")
           PY
