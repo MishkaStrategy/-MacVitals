@@ -1,4 +1,4 @@
-name: Safe Physical Validation PR
+name: Safe Same-Session Physical Validation PR
 
 on:
   pull_request:
@@ -8,13 +8,16 @@ on:
       - .github/workflows/safe-physical-validation-pr.yml
       - scripts/physical_preference_recovery_guard.py
       - scripts/run_safe_physical_validation.sh
+      - scripts/run_safe_physical_validation_same_session.sh
+      - scripts/run_ci_physical_validation_same_session.sh
+      - scripts/run_physical_validation_launchservices.py
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: safe-physical-validation-${{ github.event.pull_request.number || github.ref }}
+  group: safe-same-session-physical-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -73,6 +76,9 @@ jobs:
               ".github/workflows/safe-physical-validation-pr.yml",
               "scripts/physical_preference_recovery_guard.py",
               "scripts/run_safe_physical_validation.sh",
+              "scripts/run_safe_physical_validation_same_session.sh",
+              "scripts/run_ci_physical_validation_same_session.sh",
+              "scripts/run_physical_validation_launchservices.py",
           }
           actual = {
               line.strip()
@@ -81,7 +87,7 @@ jobs:
           }
           if actual != expected:
               raise SystemExit(
-                  f"validation branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
+                  f"same-session validation branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
               )
           PY
           if git grep -nE 'Pet|petState|PetView' -- MacVitals; then
@@ -91,6 +97,7 @@ jobs:
           {
             printf 'product_base_sha=%s\n' "${PRODUCT_BASE_SHA}"
             printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'launch_mode=same-user-launchservices\n'
           } > physical-validation-source.txt
 
       - name: Validate safety helpers
@@ -98,29 +105,58 @@ jobs:
         run: |
           set -euo pipefail
           ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
-          python3 -m py_compile scripts/physical_preference_recovery_guard.py
+          python3 -m py_compile \
+            scripts/physical_preference_recovery_guard.py \
+            scripts/run_physical_validation_launchservices.py
           python3 scripts/physical_preference_recovery_guard.py self-test
+          python3 scripts/run_physical_validation_launchservices.py self-test
           bash -n \
             scripts/physical_runtime_lock.sh \
             scripts/run_safe_physical_validation.sh \
-            scripts/run_ci_physical_validation_hardened.sh
+            scripts/run_safe_physical_validation_same_session.sh \
+            scripts/run_ci_physical_validation_hardened.sh \
+            scripts/run_ci_physical_validation_same_session.sh
           bash scripts/physical_runtime_lock.sh --self-test
-          bash scripts/run_safe_physical_validation.sh --self-test
+          bash scripts/run_safe_physical_validation_same_session.sh --self-test
           if grep -R -nE \
-            'pkill[[:space:]].*MacVitals|killall[[:space:]].*MacVitals|kill[[:space:]]+-TERM[[:space:]].*pgrep|kill[[:space:]]+-KILL[[:space:]].*pgrep' \
+            'pkill[[:space:]].*MacVitals|killall[[:space:]].*MacVitals|kill[[:space:]]+-TERM[[:space:]].*pgrep|kill[[:space:]]+-KILL[[:space:]].*pgrep|sudo[[:space:]]' \
             scripts/physical_runtime_lock.sh \
-            scripts/run_ci_physical_validation_hardened.sh; then
-            printf '%s\n' 'Forbidden broad process operation found outside the scoped wrapper self-test' >&2
+            scripts/run_ci_physical_validation_hardened.sh \
+            scripts/run_ci_physical_validation_same_session.sh \
+            scripts/run_safe_physical_validation_same_session.sh \
+            scripts/run_physical_validation_launchservices.py; then
+            printf '%s\n' 'Forbidden broad or privileged operation found in same-session validation path' >&2
             exit 1
           fi
-          grep -Fq 'recover_interrupted_preferences' \
-            scripts/run_safe_physical_validation.sh
-          grep -Fq 'bash "${RUNNER}" "${VERSION}" "${RUN_APP}" "${EXPECTED_SHA}"' \
-            scripts/run_safe_physical_validation.sh
-          grep -Fq 'physical_runtime_lock_clear_recovery_required' \
-            scripts/run_safe_physical_validation.sh
-          grep -Fq 'candidate_pid_is_owned' \
-            scripts/run_ci_physical_validation_hardened.sh
+          grep -Fq 'recover_interrupted_preferences' scripts/run_safe_physical_validation.sh
+          grep -Fq 'run_ci_physical_validation_same_session.sh' scripts/run_safe_physical_validation_same_session.sh
+          grep -Fq 'run_physical_validation_launchservices.py' scripts/run_ci_physical_validation_same_session.sh
+          grep -Fq '"open",' scripts/run_physical_validation_launchservices.py
+          grep -Fq 'hardened._owned_process_executables[pid]' scripts/run_physical_validation_launchservices.py
+          grep -Fq 'candidate_pid_is_owned' scripts/run_ci_physical_validation_hardened.sh
+
+      - name: Verify same-user GUI context
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v open >/dev/null 2>&1
+          RUNNER_USER="$(id -un)"
+          RUNNER_UID="$(id -u)"
+          CONSOLE_USER="$(stat -f '%Su' /dev/console)"
+          test "${CONSOLE_USER}" = "${RUNNER_USER}"
+          launchctl print "gui/${RUNNER_UID}" >/dev/null
+          MANAGER_NAME="$(launchctl managername 2>/dev/null || printf 'unknown')"
+          MANAGER_UID="$(launchctl manageruid 2>/dev/null || printf 'unknown')"
+          {
+            printf 'schemaVersion=1\n'
+            printf 'consoleUserMatchesRunner=true\n'
+            printf 'runnerUID=%s\n' "${RUNNER_UID}"
+            printf 'guiLaunchdDomainPresent=true\n'
+            printf 'currentManagerName=%s\n' "${MANAGER_NAME}"
+            printf 'currentManagerUID=%s\n' "${MANAGER_UID}"
+            printf 'launchMethod=LaunchServices-open-na\n'
+          } > physical-gui-context.txt
+          cat physical-gui-context.txt
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -173,14 +209,14 @@ jobs:
           fi
           exit ${status}
 
-      - name: Run bounded fail-closed physical collection
+      - name: Run bounded fail-closed same-session physical collection
         timeout-minutes: 70
         shell: bash
         run: |
           set +e
           RECOVERY_TOKEN="${RECOVERY_TOKEN}" \
           MACVITALS_RUN_LONG_STABILITY="${MACVITALS_RUN_LONG_STABILITY}" \
-            bash scripts/run_safe_physical_validation.sh \
+            bash scripts/run_safe_physical_validation_same_session.sh \
               "0.0.${GITHUB_RUN_NUMBER}" \
               build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
               "${VALIDATION_SHA}" \
@@ -277,6 +313,7 @@ jobs:
 
           candidates = [
               Path("physical-validation-source.txt"),
+              Path("physical-gui-context.txt"),
               Path("validation-changes.txt"),
               Path("physical-package.log"),
               Path("safe-physical-validation.log"),
@@ -304,6 +341,7 @@ jobs:
               "workflowRunID": sys.argv[3],
               "workflowRunAttempt": sys.argv[4],
               "runnerName": sys.argv[5],
+              "launchMode": "same-user-launchservices",
               "files": files,
           }
           Path("physical-validation-evidence-manifest.json").write_text(
@@ -318,9 +356,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: safe-physical-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: safe-same-session-physical-validation-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             physical-validation-source.txt
+            physical-gui-context.txt
             validation-changes.txt
             physical-package.log
             safe-physical-validation.log
