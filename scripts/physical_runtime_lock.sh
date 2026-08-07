@@ -197,13 +197,41 @@ physical_runtime_lock_acquire() {
 
 physical_runtime_lock_mark_recovery_required() {
   local message="$1"
-  local lock_dir
+  local lock_dir sentinel temporary
   [[ "${MACVITALS_PHYSICAL_LOCK_HELD:-0}" == "1" ]] || return 1
   lock_dir="$(physical_runtime_lock_directory)"
   physical_runtime_lock_validate_directory "${lock_dir}" || return $?
   [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "$$" ]] || return 1
-  printf '%s\n' "${message}" > "${lock_dir}/preferences-recovery-required"
-  chmod 0600 "${lock_dir}/preferences-recovery-required"
+  sentinel="${lock_dir}/preferences-recovery-required"
+  [[ ! -L "${sentinel}" ]] || {
+    printf 'Refusing to replace a symlink recovery sentinel: %s\n' "${sentinel}" >&2
+    return 1
+  }
+  temporary="${lock_dir}/preferences-recovery-required.tmp.$$"
+  [[ ! -e "${temporary}" && ! -L "${temporary}" ]] || return 1
+  printf '%s\n' "${message}" > "${temporary}"
+  chmod 0600 "${temporary}"
+  mv "${temporary}" "${sentinel}"
+}
+
+physical_runtime_lock_clear_recovery_required() {
+  local lock_dir sentinel
+  [[ "${MACVITALS_PHYSICAL_LOCK_HELD:-0}" == "1" ]] || return 1
+  lock_dir="$(physical_runtime_lock_directory)"
+  physical_runtime_lock_validate_directory "${lock_dir}" || return $?
+  [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "$$" ]] || return 1
+  sentinel="${lock_dir}/preferences-recovery-required"
+  if [[ -L "${sentinel}" ]]; then
+    printf 'Refusing to clear a symlink recovery sentinel: %s\n' "${sentinel}" >&2
+    return 1
+  fi
+  if [[ -e "${sentinel}" ]]; then
+    [[ -f "${sentinel}" ]] || {
+      printf 'Recovery sentinel is not a regular file: %s\n' "${sentinel}" >&2
+      return 1
+    }
+    rm -f -- "${sentinel}"
+  fi
 }
 
 physical_runtime_lock_release() {
@@ -279,6 +307,14 @@ physical_runtime_lock_self_test() {
   MACVITALS_PHYSICAL_LOCK_HELD=0
   physical_runtime_lock_acquire
   [[ "$(physical_runtime_lock_owner_pid "${lock_dir}")" == "$$" ]]
+  physical_runtime_lock_mark_recovery_required "self-test recovery sentinel"
+  [[ -f "${lock_dir}/preferences-recovery-required" && ! -L "${lock_dir}/preferences-recovery-required" ]]
+  if physical_runtime_lock_release; then
+    printf '%s\n' 'Lock with recovery sentinel unexpectedly released' >&2
+    return 1
+  fi
+  physical_runtime_lock_clear_recovery_required
+  [[ ! -e "${lock_dir}/preferences-recovery-required" && ! -L "${lock_dir}/preferences-recovery-required" ]]
   physical_runtime_lock_release
   [[ ! -e "${lock_dir}" ]]
 
