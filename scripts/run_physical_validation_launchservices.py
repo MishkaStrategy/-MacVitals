@@ -6,11 +6,22 @@ from __future__ import annotations
 import argparse
 import time
 from pathlib import Path
+from typing import Any
 
 import run_physical_validation_hardened as hardened
 
 base = hardened.base
 _original_hardened_self_test = hardened.self_test
+
+
+def host_snapshot() -> dict[str, Any]:
+    """Preserve the canonical module API used by the physical runner."""
+    return base.host_snapshot()
+
+
+def power_snapshot(started: float | None = None) -> dict[str, Any]:
+    """Preserve hardened power classification for direct harness imports."""
+    return hardened.power_snapshot(started)
 
 
 def _require_delegated_hardened_runner_contract() -> None:
@@ -113,6 +124,10 @@ def self_test(args: argparse.Namespace | None = None) -> int:
     base.matching_pid = matching_pid
 
     _require_delegated_hardened_runner_contract()
+    assert callable(host_snapshot)
+    assert callable(power_snapshot)
+    assert host_snapshot is not base.host_snapshot
+    assert power_snapshot is not hardened.power_snapshot
     fixture = Path("/tmp/MacVitals.app/Contents/MacOS/MacVitals")
     assert _application_for_executable(fixture) == Path("/tmp/MacVitals.app").resolve()
     try:
