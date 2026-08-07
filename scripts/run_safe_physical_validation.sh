@@ -5,6 +5,7 @@ IFS=$'\n\t'
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK_HELPER="${ROOT_DIR}/scripts/physical_runtime_lock.sh"
 RUNNER="${ROOT_DIR}/scripts/run_ci_physical_validation_hardened.sh"
+SAFE_RUNNER=""
 DOMAIN="com.mishkacher.MacVitals"
 PREFS_BACKUP=""
 PREFS_VERIFY=""
@@ -26,6 +27,103 @@ fail() {
 [[ -f "${RUNNER}" && ! -L "${RUNNER}" ]] || fail "hardened runner is missing or unsafe"
 # shellcheck source=physical_runtime_lock.sh
 source "${LOCK_HELPER}"
+
+materialize_safe_hardened_runner() {
+  [[ -z "${SAFE_RUNNER}" ]] || return 0
+  SAFE_RUNNER="${ROOT_DIR}/scripts/.run_ci_physical_validation_hardened.safe.$$.$RANDOM.sh"
+  [[ ! -e "${SAFE_RUNNER}" && ! -L "${SAFE_RUNNER}" ]] || fail "temporary hardened runner path already exists"
+  python3 - "${RUNNER}" "${SAFE_RUNNER}" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+text = source.read_text(encoding="utf-8")
+old = r'''process_cleanup = r'''terminate_exact_candidate_processes() {
+  local pid
+  local command_line
+  local remaining=()
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    if [[ "${command_line}" == "${EXECUTABLE}" || "${command_line}" == "${EXECUTABLE} "* ]]; then
+      kill -TERM "${pid}" 2>/dev/null || true
+      remaining+=("${pid}")
+    fi
+  done < <(pgrep -x MacVitals 2>/dev/null || true)
+
+  if [[ ${#remaining[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local attempt
+  for attempt in {1..20}; do
+    local alive=0
+    for pid in "${remaining[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+      fi
+    done
+    [[ ${alive} -eq 0 ]] && return 0
+    sleep 0.25
+  done
+  for pid in "${remaining[@]}"; do
+    kill -KILL "${pid}" 2>/dev/null || true
+  done
+}
+
+'''
+'''
+new = r'''process_cleanup = r'''candidate_pid_is_owned() {
+  local pid="$1"
+  local command_line
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ "${command_line}" == "${EXECUTABLE}" || "${command_line}" == "${EXECUTABLE} "* ]]
+}
+
+terminate_exact_candidate_processes() {
+  local pid
+  local remaining=()
+  while IFS= read -r pid; do
+    candidate_pid_is_owned "${pid}" && remaining+=("${pid}")
+  done < <(pgrep -x MacVitals 2>/dev/null || true)
+
+  for pid in "${remaining[@]}"; do
+    if candidate_pid_is_owned "${pid}"; then
+      kill -TERM "${pid}" 2>/dev/null || true
+    fi
+  done
+  if [[ ${#remaining[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local attempt
+  for attempt in {1..20}; do
+    local alive=0
+    for pid in "${remaining[@]}"; do
+      candidate_pid_is_owned "${pid}" && alive=1
+    done
+    [[ ${alive} -eq 0 ]] && return 0
+    sleep 0.25
+  done
+  for pid in "${remaining[@]}"; do
+    if candidate_pid_is_owned "${pid}"; then
+      kill -KILL "${pid}" 2>/dev/null || true
+    fi
+  done
+}
+
+'''
+'''
+if text.count(old) != 1:
+    raise SystemExit("canonical hardened runner process cleanup is not uniquely patchable")
+patched = text.replace(old, new)
+if "candidate_pid_is_owned" not in patched:
+    raise SystemExit("safe runner patch did not materialize ownership revalidation")
+target.write_text(patched, encoding="utf-8")
+PY
+  chmod 0700 "${SAFE_RUNNER}"
+}
 
 run_pid_is_owned() {
   local pid="$1" command_line
@@ -225,6 +323,10 @@ cleanup() {
   CRASH_BEFORE=""
   CRASH_AFTER=""
 
+  if [[ -n "${SAFE_RUNNER}" ]]; then
+    rm -f -- "${SAFE_RUNNER}" || cleanup_status=$?
+    SAFE_RUNNER=""
+  fi
   if [[ -n "${RUN_ROOT}" ]]; then
     rm -rf -- "${RUN_ROOT}" || cleanup_status=$?
     RUN_ROOT=""
@@ -247,6 +349,10 @@ handle_signal() {
 self_test() {
   bash -n "${LOCK_HELPER}" "${RUNNER}" "$0"
   bash "${LOCK_HELPER}" --self-test
+  materialize_safe_hardened_runner
+  bash -n "${SAFE_RUNNER}"
+  grep -Fq 'candidate_pid_is_owned' "${SAFE_RUNNER}"
+  bash "${SAFE_RUNNER}" --self-test
   python3 - "$0" <<'PY'
 from pathlib import Path
 import sys
@@ -259,6 +365,8 @@ for required in (
     "physical_runtime_lock_acquire",
     "physical_runtime_lock_mark_recovery_required",
     "Preference recovery failed",
+    "materialize_safe_hardened_runner",
+    "candidate_pid_is_owned",
     "run_pid_is_owned",
     '"${command_line}" == "${RUN_EXECUTABLE}"',
     "defaults export",
@@ -272,6 +380,8 @@ for required in (
         raise SystemExit(f"safe physical wrapper contract is missing: {required}")
 print("Safe physical validation wrapper self-test passed")
 PY
+  rm -f -- "${SAFE_RUNNER}"
+  SAFE_RUNNER=""
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -287,7 +397,7 @@ EXPECTED_SHA="$3"
 [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || fail "native Apple Silicon macOS is required"
 [[ -d "${APP_INPUT}" && ! -L "${APP_INPUT}" ]] || fail "input app is missing or unsafe"
 [[ "$(git -C "${ROOT_DIR}" rev-parse HEAD)" == "${EXPECTED_SHA}" ]] || fail "checkout does not match expected SHA"
-for command_name in awk basename defaults ditto find git pgrep ps python3 shasum sleep stat; do
+for command_name in awk basename defaults ditto find git grep pgrep ps python3 shasum sleep stat; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "required command is unavailable: ${command_name}"
 done
 
@@ -329,4 +439,5 @@ case "${MACVITALS_RUN_LONG_STABILITY}" in
   *) fail "MACVITALS_RUN_LONG_STABILITY must be 0 or 1" ;;
 esac
 
-bash "${RUNNER}" "${VERSION}" "${RUN_APP}" "${EXPECTED_SHA}"
+materialize_safe_hardened_runner
+bash "${SAFE_RUNNER}" "${VERSION}" "${RUN_APP}" "${EXPECTED_SHA}"
