@@ -16,8 +16,29 @@ jobs:
   apple-silicon:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 35
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -38,7 +59,7 @@ jobs:
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' native-build.log | tail -n 300 > native-build-diagnostics.txt || true
           cat native-build-diagnostics.txt
-          exit $status
+          exit ${status}
 
       - name: Upload native build diagnostics
         if: always()
@@ -57,7 +78,7 @@ jobs:
           status=$?
           grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' native-tests.log | tail -n 400 > native-test-diagnostics.txt || true
           cat native-test-diagnostics.txt
-          exit $status
+          exit ${status}
 
       - name: Upload native test diagnostics
         if: always()
@@ -79,7 +100,10 @@ jobs:
           status=$?
           tail -n 500 release-package.log > release-package-diagnostics.txt
           cat release-package-diagnostics.txt
-          exit $status
+          if [[ ${status} -eq 0 ]]; then
+            test "$(lipo -archs build/MacVitals.xcarchive/Products/Applications/MacVitals.app/Contents/MacOS/MacVitals 2>/dev/null)" = arm64 || status=1
+          fi
+          exit ${status}
 
       - name: Upload release package diagnostics
         if: always()
@@ -126,12 +150,19 @@ jobs:
         timeout-minutes: 5
         run: |
           set +e
-          bash scripts/run_ci_runtime_smoke.sh \
-            build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
-            > runtime-smoke-run.log 2>&1
+          GITHUB_SHA="${SOURCE_SHA}" \
+            bash scripts/run_ci_runtime_smoke.sh \
+              build/MacVitals.xcarchive/Products/Applications/MacVitals.app \
+              > runtime-smoke-run.log 2>&1
           status=$?
           cat runtime-smoke-run.log
-          exit $status
+          evidence_status=0
+          grep -Fq "source_sha=${SOURCE_SHA}" runtime-smoke-run.log || evidence_status=1
+          grep -Fq 'MACVITALS_RESOURCE_SUMMARY' runtime-smoke-run.log || evidence_status=1
+          if [[ ${status} -eq 0 && ${evidence_status} -ne 0 ]]; then
+            status=${evidence_status}
+          fi
+          exit ${status}
 
       - name: Upload runtime smoke evidence
         if: always()
@@ -146,15 +177,32 @@ jobs:
       - name: Upload arm64 release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: MacVitals-0.0.${{ github.run_number }}-arm64-unsigned
+          name: MacVitals-${{ env.SOURCE_SHA }}-arm64-unsigned
           path: dist/
           if-no-files-found: error
 
   ui-smoke:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -172,7 +220,7 @@ jobs:
           localization_status=$?
 
           ui_derived_data="${RUNNER_TEMP}/MacVitals-ui-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          rm -rf "${ui_derived_data}"
+          rm -rf -- "${ui_derived_data}"
           xcodebuild -project MacVitals.xcodeproj -scheme MacVitals \
             -destination 'platform=macOS' \
             -derivedDataPath "${ui_derived_data}" \
@@ -202,10 +250,25 @@ jobs:
 
   repository-safety:
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout exact candidate head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact source and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
 
       - name: Validate YAML, plist XML, localizations, icon and scripts
         run: |
@@ -216,7 +279,7 @@ jobs:
           for path in pathlib.Path('.').rglob('*.plist'):
               ET.parse(path)
           PY
-          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/run_physical_validation.py scripts/run_physical_validation_hardened.py scripts/run_physical_validation_guided.py scripts/run_physical_validation_guided_hardened.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
+          python3 -m py_compile scripts/materialize_app_icon.py scripts/validate_localizations.py scripts/validate_output_path.py scripts/validate_release_metadata.py scripts/collect_runtime_metrics.py scripts/validate_runtime_metrics.py scripts/validate_runtime_resource_policy.py scripts/run_physical_validation.py scripts/run_physical_validation_hardened.py scripts/run_physical_validation_guided.py scripts/run_physical_validation_guided_hardened.py scripts/prepare_physical_artifact.py scripts/sign_notarize_release.py scripts/signed_release_entrypoint.py
           python3 scripts/materialize_app_icon.py --self-test
           python3 scripts/materialize_app_icon.py --check-only
           python3 scripts/validate_localizations.py
@@ -224,6 +287,7 @@ jobs:
           python3 scripts/validate_release_metadata.py --self-test
           python3 scripts/collect_runtime_metrics.py --self-test
           python3 scripts/validate_runtime_metrics.py --self-test
+          python3 scripts/validate_runtime_resource_policy.py --self-test
           python3 scripts/run_physical_validation.py self-test
           python3 scripts/run_physical_validation_hardened.py self-test
           python3 scripts/run_physical_validation_guided.py self-test
@@ -259,7 +323,7 @@ jobs:
           expected = sys.argv[2]
           actual = hashlib.sha256(path.read_bytes()).hexdigest()
           if actual != expected:
-              raise SystemExit(f"Gitleaks checksum mismatch: expected {expected}, got {actual}")
+            raise SystemExit(f"Gitleaks checksum mismatch: expected {expected}, got {actual}")
           PY
           mkdir -p "${tool_dir}"
           tar -xzf "${archive}" -C "${tool_dir}" gitleaks

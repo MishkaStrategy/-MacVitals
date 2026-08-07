@@ -2,22 +2,23 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
-  static let shared = MetricDetailWindowPresenter()
+final class SupplementalMetricTabbedWindowPresenter: NSObject, NSWindowDelegate {
+  static let shared = SupplementalMetricTabbedWindowPresenter()
 
   private var windowController: NSWindowController?
 
   func show(
-    kind: MetricDetailKind,
-    coordinator: MetricsCoordinator,
+    kind: SupplementalMetricDetailKind,
     settings: SettingsStore,
-    fanControl: FanControlClient
+    networkMonitor: NetworkTrafficMonitor,
+    storageMonitor: StorageUsageMonitor
   ) {
     let rootView = ThemedMetricDetailRoot(metric: kind.themeMetricKind) {
-      MetricDetailTabbedContainer(kind: kind)
-        .environmentObject(coordinator)
+      SupplementalMetricDetailView(
+        kind: kind,
+        networkMonitor: networkMonitor,
+        storageMonitor: storageMonitor)
         .environmentObject(settings)
-        .environmentObject(fanControl)
     }
 
     let hostingController = NSHostingController(rootView: rootView)
@@ -36,7 +37,7 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
     window.title = kind.title
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
     window.setContentSize(size)
-    window.minSize = NSSize(width: 680, height: 560)
+    window.minSize = NSSize(width: 620, height: 500)
     window.isReleasedWhenClosed = false
     window.collectionBehavior = [.moveToActiveSpace]
     window.delegate = self
@@ -48,21 +49,14 @@ final class MetricDetailWindowPresenter: NSObject, NSWindowDelegate {
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  func close() {
-    windowController?.close()
-  }
-
   func windowWillClose(_ notification: Notification) {
     windowController = nil
   }
 
-  private func preferredSize(for kind: MetricDetailKind) -> NSSize {
+  private func preferredSize(for kind: SupplementalMetricDetailKind) -> NSSize {
     switch kind {
-    case .fans: return NSSize(width: 740, height: 740)
-    case .temperature: return NSSize(width: 740, height: 750)
-    case .power: return NSSize(width: 740, height: 700)
-    case .battery: return NSSize(width: 780, height: 860)
-    case .cpu, .memory, .gpu: return NSSize(width: 780, height: 740)
+    case .network: return NSSize(width: 720, height: 650)
+    case .storage: return NSSize(width: 720, height: 610)
     }
   }
 }

@@ -5,16 +5,27 @@ import SwiftUI
 actor ProcessMetricsSamplingCenter {
   static let shared = ProcessMetricsSamplingCenter()
 
+  private struct InFlightSample {
+    let sessionGeneration: UInt64
+    let requestID: UInt64
+    let task: Task<ProcessMetricsSnapshot, Never>
+  }
+
   private let provider = ProcessMetricsProvider()
   private var subscribers: Set<UUID> = []
   private var cachedSnapshot: ProcessMetricsSnapshot = .empty
-  private var inFlight: Task<ProcessMetricsSnapshot, Never>?
+  private var inFlight: InFlightSample?
+  private var sessionGeneration: UInt64 = 0
+  private var nextRequestID: UInt64 = 0
 
   func subscribe(_ id: UUID) async {
     let wasIdle = subscribers.isEmpty
     subscribers.insert(id)
     if wasIdle {
+      sessionGeneration &+= 1
       cachedSnapshot = .empty
+      inFlight?.task.cancel()
+      inFlight = nil
       await provider.reset()
     }
   }
@@ -22,8 +33,9 @@ actor ProcessMetricsSamplingCenter {
   func unsubscribe(_ id: UUID) {
     subscribers.remove(id)
     if subscribers.isEmpty {
+      sessionGeneration &+= 1
       cachedSnapshot = .empty
-      inFlight?.cancel()
+      inFlight?.task.cancel()
       inFlight = nil
     }
   }
@@ -32,26 +44,50 @@ actor ProcessMetricsSamplingCenter {
     runningApplications: [RunningApplicationDescriptor],
     minimumInterval: TimeInterval
   ) async -> ProcessMetricsSnapshot {
-    let freshnessWindow = max(0.25, minimumInterval * 0.8)
-    if cachedSnapshot.timestamp != .distantPast,
-      Date().timeIntervalSince(cachedSnapshot.timestamp) < freshnessWindow
+    if ProcessSamplingCachePolicy.isFresh(
+      timestamp: cachedSnapshot.timestamp,
+      now: Date(),
+      minimumInterval: minimumInterval)
     {
       return cachedSnapshot
     }
 
-    if let inFlight {
-      return await inFlight.value
+    if let activeSample = inFlight {
+      let snapshot = await activeSample.task.value
+      publishIfCurrent(snapshot, from: activeSample)
+      return snapshot
     }
 
     let provider = self.provider
-    let task = Task {
-      await provider.sample(runningApplications: runningApplications)
+    nextRequestID &+= 1
+    let activeSample = InFlightSample(
+      sessionGeneration: sessionGeneration,
+      requestID: nextRequestID,
+      task: Task {
+        await provider.sample(runningApplications: runningApplications)
+      })
+    inFlight = activeSample
+
+    let snapshot = await activeSample.task.value
+    publishIfCurrent(snapshot, from: activeSample)
+    return snapshot
+  }
+
+  private func publishIfCurrent(
+    _ snapshot: ProcessMetricsSnapshot,
+    from completedSample: InFlightSample
+  ) {
+    guard
+      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
+        completedSession: completedSample.sessionGeneration,
+        currentSession: sessionGeneration,
+        completedRequest: completedSample.requestID,
+        currentRequest: inFlight?.requestID)
+    else {
+      return
     }
-    inFlight = task
-    let snapshot = await task.value
     cachedSnapshot = snapshot
     inFlight = nil
-    return snapshot
   }
 }
 

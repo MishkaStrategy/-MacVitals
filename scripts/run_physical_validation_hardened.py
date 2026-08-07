@@ -17,10 +17,13 @@ _ALLOWED_UNSUPPORTED_SCENARIOS = {"batteryless-desktop"}
 _DESKTOP_MACHINE_NAMES = ("Mac mini", "Mac Studio", "Mac Pro", "iMac")
 _original_parse_power = base.parse_power
 _original_power_snapshot = base.power_snapshot
+_original_matching_pid = base.matching_pid
+_original_terminate = base.terminate
 _original_run_scenario = base.run_scenario
 _original_review = base.review
 _original_manual = base.manual
 _original_self_test = base.self_test
+_owned_process_executables: dict[int, Path] = {}
 
 
 def parse_power(raw: str) -> dict[str, Any]:
@@ -94,6 +97,43 @@ def power_snapshot(started: float | None = None) -> dict[str, Any]:
     if started is not None:
         value["elapsedMonotonicSeconds"] = base.time.monotonic() - started
     return value
+
+
+def _pid_matches_executable(pid: int, executable: Path) -> bool:
+    if pid <= 0:
+        return False
+    current = base.output("ps", "-p", str(pid), "-o", "command=")
+    paths = {str(executable), str(executable.absolute()), str(executable.resolve())}
+    return any(current == path or current.startswith(path + " ") for path in paths)
+
+
+def matching_pid(executable: Path, warmup: float) -> tuple[int, bool]:
+    pid, owned = _original_matching_pid(executable, warmup)
+    if owned:
+        _owned_process_executables[pid] = executable.resolve()
+    return pid, owned
+
+
+def terminate(pid: int) -> None:
+    executable = _owned_process_executables.pop(pid, None)
+    if executable is None:
+        return
+    if not _pid_matches_executable(pid, executable):
+        return
+    try:
+        base.os.kill(pid, base.signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(20):
+        if not _pid_matches_executable(pid, executable):
+            return
+        base.time.sleep(0.25)
+    if not _pid_matches_executable(pid, executable):
+        return
+    try:
+        base.os.kill(pid, base.signal.SIGKILL)
+    except ProcessLookupError:
+        return
 
 
 def _finite_number(value: object) -> float | None:
@@ -291,11 +331,15 @@ def _args(**values: object) -> argparse.Namespace:
 def self_test(_args_value: argparse.Namespace | None = None) -> int:
     base.parse_power = _original_parse_power
     base.power_snapshot = _original_power_snapshot
+    base.matching_pid = _original_matching_pid
+    base.terminate = _original_terminate
     try:
         _original_self_test(None)
     finally:
         base.parse_power = parse_power
         base.power_snapshot = power_snapshot
+        base.matching_pid = matching_pid
+        base.terminate = terminate
 
     assert parse_power("")["batteryPresent"] is None
     assert parse_power("pmset failed\n")["batteryPresent"] is None
@@ -329,6 +373,18 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
         battery_registry_output="",
         registry_status=1,
     )
+
+    original_output = base.output
+    try:
+        executable = Path("/tmp/MacVitals.app/Contents/MacOS/MacVitals")
+        base.output = lambda *args: str(executable) if args[:2] == ("ps", "-p") else ""
+        assert _pid_matches_executable(12345, executable)
+        base.output = lambda *args: "/usr/bin/other-process" if args[:2] == ("ps", "-p") else ""
+        assert not _pid_matches_executable(12345, executable)
+    finally:
+        base.output = original_output
+    assert base.matching_pid is matching_pid
+    assert base.terminate is terminate
 
     completed = {
         "requestedDurationSeconds": 60,
@@ -426,6 +482,8 @@ def self_test(_args_value: argparse.Namespace | None = None) -> int:
 
 base.parse_power = parse_power
 base.power_snapshot = power_snapshot
+base.matching_pid = matching_pid
+base.terminate = terminate
 base.run_scenario = run_scenario
 base.review = review
 base.manual = manual
