@@ -114,7 +114,7 @@ def self_test(args: argparse.Namespace | None = None) -> int:
 
     _require_delegated_hardened_runner_contract()
     fixture = Path("/tmp/MacVitals.app/Contents/MacOS/MacVitals")
-    assert _application_for_executable(fixture) == Path("/tmp/MacVitals.app")
+    assert _application_for_executable(fixture) == Path("/tmp/MacVitals.app").resolve()
     try:
         _application_for_executable(Path("/tmp/not-an-app/MacVitals"))
     except base.ValidationError:
