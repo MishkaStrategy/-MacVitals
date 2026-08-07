@@ -208,15 +208,20 @@ from pathlib import Path
 import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
+self_test_start = text.find("\nself_test() {\n")
+dispatch_start = text.find('\nif [[ "${1:-}" == "--self-test" ]]; then\n', self_test_start)
+if self_test_start < 0 or dispatch_start < 0 or dispatch_start <= self_test_start:
+    raise SystemExit("safe physical wrapper self-test scope markers are missing or invalid")
+runtime_text = text[:self_test_start] + text[dispatch_start:]
 for forbidden in (
-    "p" + "kill",
+    "pkill",
     "killall MacVitals",
     "kill -TERM $(pgrep",
     "kill -KILL $(pgrep",
     "materialize_safe_hardened_runner",
     ".run_ci_physical_validation_hardened.safe",
 ):
-    if forbidden in text:
+    if forbidden in runtime_text:
         raise SystemExit(f"forbidden wrapper behavior: {forbidden}")
 for required in (
     "physical_runtime_lock_acquire",
@@ -231,7 +236,7 @@ for required in (
     "physical_preference_recovery_guard.py",
     "crash-report-manifest.txt",
 ):
-    if required not in text:
+    if required not in runtime_text:
         raise SystemExit(f"safe physical wrapper contract is missing: {required}")
 print("Recovery-safe canonical physical wrapper self-test passed")
 PY
