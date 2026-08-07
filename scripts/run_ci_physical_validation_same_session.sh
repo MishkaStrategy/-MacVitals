@@ -49,6 +49,26 @@ if text.count(old_required) != 1:
     raise SystemExit("canonical hardened harness self-test marker is not uniquely patchable")
 text = text.replace(old_required, new_required)
 
+for old, new, label, expected_count in (
+    ('  local remaining=()\n', '  local remaining=("")\n', "Bash 3 empty-array guard", 1),
+    (
+        'for pid in "${remaining[@]}"; do\n',
+        'for pid in "${remaining[@]}"; do\n    [[ -n "${pid}" ]] || continue\n',
+        "Bash 3 sentinel skip",
+        3,
+    ),
+    (
+        'if [[ ${#remaining[@]} -eq 0 ]]; then\n',
+        'if [[ ${#remaining[@]} -eq 1 ]]; then\n',
+        "Bash 3 sentinel empty check",
+        1,
+    ),
+):
+    count = text.count(old)
+    if count != expected_count:
+        raise SystemExit(f"canonical {label} is not uniquely patchable: {count}")
+    text = text.replace(old, new)
+
 needle = "replacements = (\n"
 if text.count(needle) != 1:
     raise SystemExit("canonical hardened replacement table is not uniquely patchable")
@@ -89,6 +109,8 @@ if 'gui_exec() {\n  "$@"\n}' not in runner:
     raise SystemExit("Same-session generated runner does not execute in the current user session")
 if 'run_physical_validation_launchservices.py' not in runner:
     raise SystemExit("Same-session generated runner does not use the LaunchServices harness")
+if 'local remaining=("")' not in runner or 'local remaining=()' in runner:
+    raise SystemExit("Same-session generated runner is not Bash 3 nounset-safe for empty PID cleanup")
 print("Hardened physical runner wrapper self-test passed")'''
 if text.count(self_test_print) != 1:
     raise SystemExit("canonical hardened wrapper self-test print is not uniquely patchable")
@@ -106,6 +128,7 @@ self_test() {
   materialize_same_session_wrapper "${TEMP_WRAPPER}"
   bash -n "${TEMP_WRAPPER}"
   grep -Fq 'HARNESS="${REPOSITORY}/scripts/run_physical_validation_launchservices.py"' "${TEMP_WRAPPER}"
+  grep -Fq 'local remaining=("")' "${TEMP_WRAPPER}"
   bash "${TEMP_WRAPPER}" --self-test
   rm -f -- "${TEMP_WRAPPER}"
   TEMP_WRAPPER=""
@@ -124,4 +147,5 @@ TEMP_WRAPPER="${SCRIPT_DIR}/.run_ci_physical_validation_same_session.$$.sh"
 materialize_same_session_wrapper "${TEMP_WRAPPER}"
 bash -n "${TEMP_WRAPPER}"
 grep -Fq 'HARNESS="${REPOSITORY}/scripts/run_physical_validation_launchservices.py"' "${TEMP_WRAPPER}"
+grep -Fq 'local remaining=("")' "${TEMP_WRAPPER}"
 bash "${TEMP_WRAPPER}" "$@"
