@@ -209,7 +209,7 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 for forbidden in (
-    "pkill",
+    "p" + "kill",
     "killall MacVitals",
     "kill -TERM $(pgrep",
     "kill -KILL $(pgrep",
