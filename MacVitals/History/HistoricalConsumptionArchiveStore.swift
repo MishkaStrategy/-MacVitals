@@ -265,17 +265,24 @@ actor HistoricalConsumptionArchiveStore {
 
   private func ensureSegmentDirectory() throws {
     let fileManager = FileManager.default
+    if Self.pathIsSymbolicLink(segmentDirectoryURL) {
+      throw PersistenceError.unsafeSegmentDirectory
+    }
+
     var isDirectory: ObjCBool = false
     if fileManager.fileExists(atPath: segmentDirectoryURL.path, isDirectory: &isDirectory) {
-      let values = try segmentDirectoryURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-      guard isDirectory.boolValue, values.isDirectory == true, values.isSymbolicLink != true else {
+      guard isDirectory.boolValue, Self.safeDirectoryExists(segmentDirectoryURL) else {
         throw PersistenceError.unsafeSegmentDirectory
       }
       return
     }
+
     try fileManager.createDirectory(
       at: segmentDirectoryURL,
       withIntermediateDirectories: true)
+    guard Self.safeDirectoryExists(segmentDirectoryURL) else {
+      throw PersistenceError.unsafeSegmentDirectory
+    }
   }
 
   private func writeSegment(
@@ -288,20 +295,31 @@ actor HistoricalConsumptionArchiveStore {
       segmentStartEpochSeconds: segmentStart,
       buckets: buckets)
     let data = try encoder.encode(segment)
-    try data.write(to: Self.segmentFileURL(in: segmentDirectoryURL, segmentStart: segmentStart), options: .atomic)
+    let destination = Self.segmentFileURL(
+      in: segmentDirectoryURL,
+      segmentStart: segmentStart)
+    try ensureSafeWriteDestination(destination)
+    try data.write(to: destination, options: .atomic)
     recordPersistenceWrite(bytes: data.count)
   }
 
   private func writeFormatMarker() throws {
-    let marker = SegmentFormatMarker(schemaVersion: 1, segmentDurationSeconds: Int(segmentDuration))
+    let marker = SegmentFormatMarker(
+      schemaVersion: 1,
+      segmentDurationSeconds: Int(segmentDuration))
     let data = try JSONEncoder().encode(marker)
+    try ensureSafeWriteDestination(formatMarkerURL)
     try data.write(to: formatMarkerURL, options: .atomic)
     recordPersistenceWrite(bytes: data.count)
   }
 
   private func removeSegmentFileIfPresent(segmentStart: Int64) throws {
     let url = Self.segmentFileURL(in: segmentDirectoryURL, segmentStart: segmentStart)
+    if Self.pathIsSymbolicLink(url) {
+      throw PersistenceError.unsafeWriteDestination
+    }
     if FileManager.default.fileExists(atPath: url.path) {
+      try ensureSafeWriteDestination(url)
       try FileManager.default.removeItem(at: url)
     }
   }
@@ -311,6 +329,20 @@ actor HistoricalConsumptionArchiveStore {
       if !activeSegmentStarts.contains(segmentStart) {
         try FileManager.default.removeItem(at: url)
       }
+    }
+  }
+
+  private func ensureSafeWriteDestination(_ url: URL) throws {
+    if Self.pathIsSymbolicLink(url) {
+      throw PersistenceError.unsafeWriteDestination
+    }
+
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+      return
+    }
+    guard !isDirectory.boolValue, Self.safeRegularFileExists(url) else {
+      throw PersistenceError.unsafeWriteDestination
     }
   }
 
@@ -379,10 +411,9 @@ actor HistoricalConsumptionArchiveStore {
   }
 
   private static func hasValidFormatMarker(in directoryURL: URL) -> Bool {
+    guard safeDirectoryExists(directoryURL) else { return false }
     let markerURL = directoryURL.appendingPathComponent("FORMAT.json", isDirectory: false)
-    guard let values = try? markerURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-      values.isRegularFile == true,
-      values.isSymbolicLink != true,
+    guard safeRegularFileExists(markerURL),
       let data = try? Data(contentsOf: markerURL),
       let marker = try? JSONDecoder().decode(SegmentFormatMarker.self, from: data)
     else {
@@ -392,8 +423,7 @@ actor HistoricalConsumptionArchiveStore {
   }
 
   private static func segmentFiles(in directoryURL: URL) throws -> [(Int64, URL)] {
-    let values = try directoryURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-    guard values.isDirectory == true, values.isSymbolicLink != true else {
+    guard safeDirectoryExists(directoryURL) else {
       throw PersistenceError.unsafeSegmentDirectory
     }
     let urls = try FileManager.default.contentsOfDirectory(
@@ -402,9 +432,7 @@ actor HistoricalConsumptionArchiveStore {
       options: [.skipsHiddenFiles])
     return urls.compactMap { url in
       guard let segmentStart = segmentStart(fromFileName: url.lastPathComponent),
-        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-        values.isRegularFile == true,
-        values.isSymbolicLink != true
+        safeRegularFileExists(url)
       else {
         return nil
       }
@@ -414,6 +442,34 @@ actor HistoricalConsumptionArchiveStore {
 
   private static func segmentFileCount(in directoryURL: URL) -> Int {
     (try? segmentFiles(in: directoryURL).count) ?? 0
+  }
+
+  private static func pathIsSymbolicLink(_ url: URL) -> Bool {
+    (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+  }
+
+  private static func safeDirectoryExists(_ url: URL) -> Bool {
+    guard !pathIsSymbolicLink(url) else { return false }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+      isDirectory.boolValue,
+      let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+    else {
+      return false
+    }
+    return values.isDirectory == true && values.isSymbolicLink != true
+  }
+
+  private static func safeRegularFileExists(_ url: URL) -> Bool {
+    guard !pathIsSymbolicLink(url) else { return false }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+      !isDirectory.boolValue,
+      let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+    else {
+      return false
+    }
+    return values.isRegularFile == true && values.isSymbolicLink != true
   }
 
   private static func segmentStart(fromFileName name: String) -> Int64? {
@@ -519,5 +575,6 @@ actor HistoricalConsumptionArchiveStore {
 
   private enum PersistenceError: Error {
     case unsafeSegmentDirectory
+    case unsafeWriteDestination
   }
 }
