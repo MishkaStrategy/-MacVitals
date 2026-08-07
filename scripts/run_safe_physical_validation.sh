@@ -27,15 +27,19 @@ fail() {
 # shellcheck source=physical_runtime_lock.sh
 source "${LOCK_HELPER}"
 
+run_pid_is_owned() {
+  local pid="$1" command_line
+  [[ -n "${RUN_EXECUTABLE}" && "${pid}" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ "${command_line}" == "${RUN_EXECUTABLE}" || "${command_line}" == "${RUN_EXECUTABLE} "* ]]
+}
+
 matching_run_pids() {
-  local pid command_line
+  local pid
   [[ -n "${RUN_EXECUTABLE}" ]] || return 0
   while IFS= read -r pid; do
-    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-    if [[ "${command_line}" == "${RUN_EXECUTABLE}" || "${command_line}" == "${RUN_EXECUTABLE} "* ]]; then
-      printf '%s\n' "${pid}"
-    fi
+    run_pid_is_owned "${pid}" && printf '%s\n' "${pid}"
   done < <(pgrep -x MacVitals 2>/dev/null || true)
 }
 
@@ -47,18 +51,20 @@ terminate_unique_run_processes() {
   done < <(matching_run_pids)
 
   for pid in "${pids[@]}"; do
-    kill -TERM "${pid}" 2>/dev/null || true
+    if run_pid_is_owned "${pid}"; then
+      kill -TERM "${pid}" 2>/dev/null || true
+    fi
   done
   for _ in {1..40}; do
     alive=0
     for pid in "${pids[@]}"; do
-      kill -0 "${pid}" 2>/dev/null && alive=1
+      run_pid_is_owned "${pid}" && alive=1
     done
     [[ ${alive} -eq 0 ]] && break
     sleep 0.25
   done
   for pid in "${pids[@]}"; do
-    if kill -0 "${pid}" 2>/dev/null; then
+    if run_pid_is_owned "${pid}"; then
       kill -KILL "${pid}" 2>/dev/null || true
     fi
   done
@@ -253,6 +259,7 @@ for required in (
     "physical_runtime_lock_acquire",
     "physical_runtime_lock_mark_recovery_required",
     "Preference recovery failed",
+    "run_pid_is_owned",
     '"${command_line}" == "${RUN_EXECUTABLE}"',
     "defaults export",
     "defaults import",
