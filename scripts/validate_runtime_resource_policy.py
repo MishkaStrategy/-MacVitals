@@ -12,7 +12,11 @@ from typing import NoReturn
 
 RUNTIME_SUFFIXES = {".yml", ".yaml", ".sh", ".py"}
 RUNTIME_PATTERNS = (
-    re.compile(r"Contents/MacOS/MacVitals"),
+    re.compile(
+        r"(?m)^\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\n ]+\s+)*"
+        r"(?:[\"'][^\"'\n]*Contents/MacOS/MacVitals[\"']|"
+        r"[^\s#]*Contents/MacOS/MacVitals)(?=\s|$)"
+    ),
     re.compile(r"(?:^|\s)(?:/usr/bin/)?open\s+-[A-Za-z]*n[A-Za-z]*a\b", re.MULTILINE),
     re.compile(r"subprocess\.Popen\(\[str\(executable\)"),
     re.compile(
@@ -20,6 +24,10 @@ RUNTIME_PATTERNS = (
         re.MULTILINE,
     ),
     re.compile(r"matching_pid\(executable"),
+)
+SHELL_EXECUTABLE_ASSIGNMENT = re.compile(
+    r"(?m)^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)="
+    r"(?:[\"'][^\"'\n]*Contents/MacOS/MacVitals[\"']|[^\s#]*Contents/MacOS/MacVitals)\s*$"
 )
 COLLECTOR_MARKERS = (
     "collect_runtime_metrics.sh",
@@ -41,8 +49,22 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(message)
 
 
+def shell_variable_is_executed(text: str, variable: str) -> bool:
+    escaped = re.escape(variable)
+    command = re.compile(
+        rf"(?m)^\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\n ]+\s+)*"
+        rf"(?:\"\${{{escaped}}}\"|\"\${escaped}\"|\${{{escaped}}}|\${escaped})(?=\s|$)"
+    )
+    return command.search(text) is not None
+
+
 def is_runtime_launcher(text: str) -> bool:
-    return any(pattern.search(text) for pattern in RUNTIME_PATTERNS)
+    if any(pattern.search(text) for pattern in RUNTIME_PATTERNS):
+        return True
+    return any(
+        shell_variable_is_executed(text, match.group(1))
+        for match in SHELL_EXECUTABLE_ASSIGNMENT.finditer(text)
+    )
 
 
 def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
@@ -109,6 +131,18 @@ def self_test() -> None:
     """
     errors = validate_text(Path("missing.sh"), direct_launch)
     assert len(errors) == 2, errors
+
+    literal_launch = '"$app/Contents/MacOS/MacVitals" -showInDock NO > app.log 2>&1 &\n'
+    assert is_runtime_launcher(literal_launch)
+    assert len(validate_text(Path("literal-launch.sh"), literal_launch)) == 2
+
+    verification_only = """
+    EXECUTABLE="${ZIP_APP}/Contents/MacOS/MacVitals"
+    architectures="$(lipo -archs "${EXECUTABLE}")"
+    codesign --verify --deep --strict "${ZIP_APP}"
+    """
+    assert not is_runtime_launcher(verification_only)
+    assert validate_text(Path("verify_release.sh"), verification_only) == []
 
     collected_only = direct_launch + "\nbash scripts/collect_runtime_metrics.sh 60 2\n"
     errors = validate_text(Path("missing-report.sh"), collected_only)
