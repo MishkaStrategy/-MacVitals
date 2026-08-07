@@ -234,8 +234,13 @@ metadata_arguments=(
   --zip-name "${ZIP_NAME}"
   --dmg-name "${DMG_NAME}"
 )
-if [[ -n "${GITHUB_SHA:-}" ]]; then
-  metadata_arguments+=(--expected-git-commit "${GITHUB_SHA}")
+expected_workflow_sha="${SOURCE_SHA:-${GITHUB_SHA:-}}"
+if [[ -n "${expected_workflow_sha}" ]]; then
+  [[ "${expected_workflow_sha}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "Expected workflow source SHA is invalid: ${expected_workflow_sha}" >&2
+    exit 1
+  }
+  metadata_arguments+=(--expected-git-commit "${expected_workflow_sha}")
 fi
 python3 "${ROOT_DIR}/scripts/validate_release_metadata.py" "${metadata_arguments[@]}"
 
