@@ -35,19 +35,27 @@ source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 text = source.read_text(encoding="utf-8")
 
-process_cleanup = r'''terminate_exact_candidate_processes() {
-  local pid
+process_cleanup = r'''candidate_pid_is_owned() {
+  local pid="$1"
   local command_line
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ "${command_line}" == "${EXECUTABLE}" || "${command_line}" == "${EXECUTABLE} "* ]]
+}
+
+terminate_exact_candidate_processes() {
+  local pid
   local remaining=()
   while IFS= read -r pid; do
-    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-    if [[ "${command_line}" == "${EXECUTABLE}" || "${command_line}" == "${EXECUTABLE} "* ]]; then
-      kill -TERM "${pid}" 2>/dev/null || true
-      remaining+=("${pid}")
-    fi
+    candidate_pid_is_owned "${pid}" && remaining+=("${pid}")
   done < <(pgrep -x MacVitals 2>/dev/null || true)
 
+  for pid in "${remaining[@]}"; do
+    if candidate_pid_is_owned "${pid}"; then
+      kill -TERM "${pid}" 2>/dev/null || true
+    fi
+  done
   if [[ ${#remaining[@]} -eq 0 ]]; then
     return 0
   fi
@@ -55,15 +63,15 @@ process_cleanup = r'''terminate_exact_candidate_processes() {
   for attempt in {1..20}; do
     local alive=0
     for pid in "${remaining[@]}"; do
-      if kill -0 "${pid}" 2>/dev/null; then
-        alive=1
-      fi
+      candidate_pid_is_owned "${pid}" && alive=1
     done
     [[ ${alive} -eq 0 ]] && return 0
     sleep 0.25
   done
   for pid in "${remaining[@]}"; do
-    kill -KILL "${pid}" 2>/dev/null || true
+    if candidate_pid_is_owned "${pid}"; then
+      kill -KILL "${pid}" 2>/dev/null || true
+    fi
   done
 }
 
@@ -257,8 +265,10 @@ for required in (
     'run_physical_validation_hardened.py',
     'module.base.host_snapshot()',
     'record_instrument "Power Profiler" "energy-log" 300',
+    'candidate_pid_is_owned()',
     'terminate_exact_candidate_processes()',
     '"${command_line}" == "${EXECUTABLE}"',
+    'candidate_pid_is_owned "${pid}"',
     'MACVITALS_RUN_LONG_STABILITY',
     'Six-hour stability is opt-in',
     'The Power Profiler instrument is not supported on macOS.',
@@ -268,6 +278,8 @@ for required in (
         raise SystemExit(f"Hardened physical runner patch is missing: {required}")
 if runner.count('terminate_exact_candidate_processes\n') < 3:
     raise SystemExit("Exact-candidate process cleanup is not applied to all automated launch paths")
+if runner.count('candidate_pid_is_owned "${pid}"') < 4:
+    raise SystemExit("Exact-candidate PID ownership is not revalidated across cleanup phases")
 if 'GITHUB_SHA="${EXPECTED_SHA}"' not in wrapper:
     raise SystemExit("Hardened wrapper does not bind child verification to the exact checkout SHA")
 print("Hardened physical runner wrapper self-test passed")
