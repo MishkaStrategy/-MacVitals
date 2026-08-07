@@ -293,7 +293,8 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
     XCTAssertFalse(diagnostics.segmentedPersistenceReady)
     XCTAssertGreaterThan(diagnostics.dirtySegmentCount, 0)
     XCTAssertEqual(diagnostics.fileWriteCount, 0)
-    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: symlinkTarget.path).isEmpty)
+    let targetContents = try FileManager.default.contentsOfDirectory(atPath: symlinkTarget.path)
+    XCTAssertTrue(targetContents.isEmpty)
   }
 
   func testSymlinkSegmentDestinationIsRejectedAndRetriesWithoutTouchingTarget() async throws {
