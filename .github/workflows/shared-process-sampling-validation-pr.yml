@@ -1,0 +1,137 @@
+name: Shared Process Sampling Validation
+
+on:
+  pull_request:
+    branches:
+      - integration/network-history-leaders-post-notch
+    paths:
+      - .github/workflows/shared-process-sampling-validation-pr.yml
+      - MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift
+      - scripts/validate_shared_process_sampling_contract.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-process-sampling-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-shared-sampling:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      PRODUCT_BASE_SHA: a9d46f02e0f9b624845acd302cb2fd32946667cf
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-SharedSamplingValidation
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          [[ "${PRODUCT_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor \
+            4d143aaa082b0fb15ce86d19ba72c40557939692 \
+            "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" > shared-sampling-validation-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = {
+              ".github/workflows/shared-process-sampling-validation-pr.yml",
+              "MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift",
+              "scripts/validate_shared_process_sampling_contract.py",
+          }
+          actual = {
+              line.strip()
+              for line in Path("shared-sampling-validation-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"shared-sampling validation branch scope mismatch: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          {
+            printf 'product_base_sha=%s\n' "${PRODUCT_BASE_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+          } > shared-sampling-validation-source.txt
+
+      - name: Validate shared sampling topology contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/validate_shared_process_sampling_contract.py
+          python3 scripts/validate_shared_process_sampling_contract.py --self-test
+          python3 scripts/validate_shared_process_sampling_contract.py
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Validate targeted Swift formatting
+        run: swift format lint MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift
+
+      - name: Run exact shared sampling validation tests
+        shell: bash
+        run: |
+          set +e
+          rm -rf -- "${DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            clean test \
+            -only-testing:MacVitalsTests/ProcessMetricsSamplingCenterValidationTests \
+            > shared-sampling-validation-tests.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' \
+            shared-sampling-validation-tests.log | tail -n 300 \
+            > shared-sampling-validation-test-diagnostics.txt || true
+          cat shared-sampling-validation-test-diagnostics.txt
+          if [[ ${status} -eq 0 ]]; then
+            grep -Eq 'Executed 3 tests, with 0 failures' shared-sampling-validation-test-diagnostics.txt || status=1
+            grep -Fq '** TEST SUCCEEDED **' shared-sampling-validation-test-diagnostics.txt || status=1
+          fi
+          exit ${status}
+
+      - name: Upload shared sampling validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-process-sampling-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            shared-sampling-validation-source.txt
+            shared-sampling-validation-changes.txt
+            shared-sampling-validation-tests.log
+            shared-sampling-validation-test-diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 30
