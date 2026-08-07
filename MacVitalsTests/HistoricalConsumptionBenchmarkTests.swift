@@ -199,7 +199,7 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .millisecondsSince1970
     encoder.outputFormatting = [.sortedKeys]
-    let encodeMeasurement = measuredSync {
+    let encodeMeasurement = try measuredSync {
       try encoder.encode(archive)
     }
     try encodeMeasurement.value.write(to: archiveURL, options: .atomic)
