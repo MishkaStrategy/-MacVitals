@@ -28,6 +28,55 @@ done
 # shellcheck source=physical_runtime_lock.sh
 source "${LOCK_HELPER}"
 
+recover_interrupted_preferences() {
+  local lock_dir sentinel owner_pid message stale_domain stale_token confirmed_message
+  lock_dir="$(physical_runtime_lock_directory)"
+  if [[ ! -e "${lock_dir}" && ! -L "${lock_dir}" ]]; then
+    return 0
+  fi
+  physical_runtime_lock_validate_directory "${lock_dir}" || fail "existing physical runtime lock is unsafe"
+  sentinel="${lock_dir}/preferences-recovery-required"
+  if [[ ! -e "${sentinel}" && ! -L "${sentinel}" ]]; then
+    return 0
+  fi
+  [[ -f "${sentinel}" && ! -L "${sentinel}" ]] || fail "preference recovery sentinel is unsafe"
+
+  owner_pid="$(physical_runtime_lock_owner_pid "${lock_dir}")"
+  if [[ "${owner_pid}" =~ ^[0-9]+$ ]] && physical_runtime_lock_process_is_alive "${owner_pid}"; then
+    fail "preference recovery lock still has a live owner pid ${owner_pid}"
+  fi
+  if pgrep -x MacVitals >/dev/null 2>&1; then
+    fail "preference recovery is required but a MacVitals process is running"
+  fi
+
+  message=""
+  IFS= read -r message < "${sentinel}" || fail "could not read preference recovery sentinel"
+  if [[ "${message}" =~ ^domain=([A-Za-z0-9.-]+)[[:space:]]token=([A-Za-z0-9._-]+)[[:space:]]recovery=pending$ ]]; then
+    stale_domain="${BASH_REMATCH[1]}"
+    stale_token="${BASH_REMATCH[2]}"
+  else
+    fail "preference recovery sentinel identity is invalid"
+  fi
+  [[ "${stale_domain}" == "${DOMAIN}" ]] || fail "preference recovery sentinel domain is unexpected"
+
+  python3 "${RECOVERY_GUARD}" restore \
+    --domain "${stale_domain}" \
+    --token "${stale_token}"
+
+  if pgrep -x MacVitals >/dev/null 2>&1; then
+    fail "MacVitals appeared during preference recovery; stale lock is retained"
+  fi
+  confirmed_message=""
+  IFS= read -r confirmed_message < "${sentinel}" || fail "could not re-read preference recovery sentinel"
+  [[ "${confirmed_message}" == "${message}" ]] || fail "preference recovery sentinel changed during restore"
+
+  rm -f -- "${sentinel}" || fail "could not clear restored preference recovery sentinel"
+  if ! physical_runtime_lock_try_reclaim "${lock_dir}" "${owner_pid}" 0; then
+    fail "restored stale physical runtime lock could not be reclaimed"
+  fi
+  printf 'Recovered interrupted physical validation preferences: token=%s\n' "${stale_token}"
+}
+
 run_pid_is_owned() {
   local pid="$1" command_line
   [[ -n "${RUN_EXECUTABLE}" && "${pid}" =~ ^[0-9]+$ ]] || return 1
@@ -45,30 +94,35 @@ matching_run_pids() {
 }
 
 terminate_unique_run_processes() {
-  local pid alive
-  local pids=()
+  local pid alive pids=""
   while IFS= read -r pid; do
-    [[ -n "${pid}" ]] && pids+=("${pid}")
+    [[ -n "${pid}" ]] && pids="${pids}${pid}"$'\n'
   done < <(matching_run_pids)
+  [[ -n "${pids}" ]] || return 0
 
-  for pid in "${pids[@]}"; do
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
     if run_pid_is_owned "${pid}"; then
       kill -TERM "${pid}" 2>/dev/null || true
     fi
-  done
+  done <<< "${pids}"
+
   for _ in {1..40}; do
     alive=0
-    for pid in "${pids[@]}"; do
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] || continue
       run_pid_is_owned "${pid}" && alive=1
-    done
+    done <<< "${pids}"
     [[ ${alive} -eq 0 ]] && break
     sleep 0.25
   done
-  for pid in "${pids[@]}"; do
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
     if run_pid_is_owned "${pid}"; then
       kill -KILL "${pid}" 2>/dev/null || true
     fi
-  done
+  done <<< "${pids}"
 }
 
 remaining_macvitals_count() {
@@ -224,6 +278,9 @@ for forbidden in (
     if forbidden in runtime_text:
         raise SystemExit(f"forbidden wrapper behavior: {forbidden}")
 for required in (
+    "recover_interrupted_preferences",
+    "physical_runtime_lock_try_reclaim",
+    "preference recovery lock still has a live owner",
     "physical_runtime_lock_acquire",
     "physical_runtime_lock_mark_recovery_required",
     "physical_runtime_lock_clear_recovery_required",
@@ -268,6 +325,7 @@ trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
 trap 'handle_signal 129' HUP
 
+recover_interrupted_preferences
 physical_runtime_lock_acquire
 LOCK_HELD=1
 
