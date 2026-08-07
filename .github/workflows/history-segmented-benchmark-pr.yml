@@ -1,0 +1,184 @@
+name: Segmented History Benchmark PR
+
+on:
+  pull_request:
+    branches:
+      - integration/network-history-leaders-post-notch
+    paths:
+      - .github/workflows/history-segmented-benchmark-pr.yml
+      - MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: segmented-history-benchmark-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mature-seven-day-segmented:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      PRODUCT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCHMARK_OUTPUT: ${{ github.workspace }}/history-benchmark/history-segmented-baseline.json
+      BENCHMARK_CONFIG: ${{ github.workspace }}/.macvitals-history-benchmark.json
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-HistorySegmentedBenchmark
+    steps:
+      - name: Checkout exact benchmark head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and benchmark-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PRODUCT_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${BENCHMARK_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${BENCHMARK_SHA}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" -- MacVitals MacVitalsUITests project.yml
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" > benchmark-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected={'.github/workflows/history-segmented-benchmark-pr.yml','MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift'}
+          actual={line.strip() for line in Path('benchmark-changes.txt').read_text().splitlines() if line.strip()}
+          if actual != expected:
+              raise SystemExit(f'unexpected benchmark diff: {sorted(actual)}')
+          PY
+          printf 'product_base_sha=%s\nbenchmark_sha=%s\n' "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" > benchmark-source.txt
+
+      - name: Validate workflow and source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/history-segmented-benchmark-pr.yml')"
+          grep -Fq 'persistenceDiagnostics()' MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'projectedBytesWrittenPerHourAtOneWritePerMinute' MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'ruMaxRSSScaleToBytes' MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq 'noOpFlush' MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build benchmark tests
+        shell: bash
+        run: |
+          set +e
+          rm -rf -- "${DERIVED_DATA}"
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build-for-testing > history-benchmark-build.log 2>&1
+          status=$?
+          grep -E '(^|[[:space:]])(error:|warning:)|BUILD (FAILED|SUCCEEDED)' history-benchmark-build.log | tail -n 400 > history-benchmark-build-diagnostics.txt || true
+          cat history-benchmark-build-diagnostics.txt
+          exit ${status}
+
+      - name: Run mature segmented benchmark
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$(dirname "${BENCHMARK_OUTPUT}")"
+          rm -f -- "${BENCHMARK_OUTPUT}" "${BENCHMARK_CONFIG}"
+          python3 - "${BENCHMARK_CONFIG}" "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" "${BENCHMARK_OUTPUT}" <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          config=Path(sys.argv[1]); workspace=Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          if config.resolve().parent != workspace: raise SystemExit('benchmark config escaped workspace')
+          config.write_text(json.dumps({'productBaseSHA':sys.argv[2],'benchmarkSHA':sys.argv[3],'outputPath':sys.argv[4]},sort_keys=True)+'\n')
+          config.chmod(0o600)
+          PY
+          config_status=$?
+          [[ ${config_status} -eq 0 ]] || exit ${config_status}
+          xcodebuild -project MacVitals.xcodeproj -scheme MacVitals -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:MacVitalsTests/HistoricalConsumptionBenchmarkTests/testMatureSevenDayArchiveBaseline \
+            > history-benchmark-run.log 2>&1
+          status=$?
+          rm -f -- "${BENCHMARK_CONFIG}"
+          grep -E 'failed|Failure|skipped|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' history-benchmark-run.log | tail -n 400 > history-benchmark-run-diagnostics.txt || true
+          cat history-benchmark-run-diagnostics.txt
+          if [[ ${status} -eq 0 ]]; then
+            validation_status=0
+            grep -Fq 'Test skipped - Mature history benchmark is opt-in' history-benchmark-run.log && validation_status=1
+            test -s "${BENCHMARK_OUTPUT}" || validation_status=1
+            if [[ ${validation_status} -eq 0 ]]; then
+              python3 - "${BENCHMARK_OUTPUT}" "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" <<'PY' || validation_status=$?
+          import json, sys
+          from pathlib import Path
+          p=json.loads(Path(sys.argv[1]).read_text()); i=p.get('identity',{}); f=p.get('fixture',{}); m=p.get('memory',{}); mig=p.get('migration',{}); r=p.get('record',{}); s=p.get('steadyStatePersistence',{}); n=p.get('noOpFlush',{})
+          if p.get('schemaVersion') != 4: raise SystemExit('schema mismatch')
+          if i.get('productBaseSHA') != sys.argv[2] or i.get('benchmarkSHA') != sys.argv[3]: raise SystemExit('identity mismatch')
+          if f.get('bucketCount') != 2016 or f.get('applicationsPerBucket') != 24 or f.get('aggregateCount') != 48384: raise SystemExit('fixture mismatch')
+          if not (100 <= f.get('segmentFileCount',0) <= 170): raise SystemExit('segment count mismatch')
+          if mig.get('fileWriteCount') != f.get('segmentFileCount') + 1: raise SystemExit('migration did not write exactly segments plus marker')
+          if r.get('sampleCount') != 120 or r.get('p95Milliseconds',1e9) >= 10: raise SystemExit('record latency gate failed')
+          if s.get('fileWriteCount') != 3 or s.get('sampleCount') != 3: raise SystemExit('steady-state write count mismatch')
+          if s.get('p95Milliseconds',1e9) >= 100: raise SystemExit('steady-state persistence latency gate failed')
+          if s.get('projectedBytesWrittenPerHourAtOneWritePerMinute',1e30) >= 128*1024*1024: raise SystemExit('steady-state write amplification gate failed')
+          if n.get('fileWriteCount') != 0 or n.get('bytesWritten') != 0: raise SystemExit('no-op flush wrote data')
+          if m.get('semantics') != 'processLifetimePeakRSS' or m.get('unit') != 'bytes' or m.get('ruMaxRSSScaleToBytes') not in (1,1024): raise SystemExit('memory calibration mismatch')
+          physical=m.get('systemPhysicalMemoryBytes',0)
+          peaks=[v for k,v in m.items() if k.startswith('peakResidentBytes')]
+          if not physical or not peaks or any(not isinstance(v,int) or v<=0 or v>physical for v in peaks): raise SystemExit('peak RSS gate failed')
+          if peaks != sorted(peaks): raise SystemExit('peak RSS checkpoints are not monotonic')
+          PY
+            fi
+            [[ ${validation_status} -eq 0 ]] && cat "${BENCHMARK_OUTPUT}" || status=${validation_status}
+          fi
+          exit ${status}
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- "${BENCHMARK_CONFIG}"
+          python3 - "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" <<'PY'
+          import hashlib,json,sys
+          from pathlib import Path
+          paths=[Path('benchmark-source.txt'),Path('benchmark-changes.txt'),Path('history-benchmark/history-segmented-baseline.json'),Path('history-benchmark-build.log'),Path('history-benchmark-build-diagnostics.txt'),Path('history-benchmark-run.log'),Path('history-benchmark-run-diagnostics.txt')]
+          files=[]
+          for path in paths:
+              if path.is_file() and not path.is_symlink():
+                  data=path.read_bytes(); files.append({'path':str(path),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})
+          Path('history-benchmark-evidence-manifest.json').write_text(json.dumps({'schemaVersion':1,'productBaseSHA':sys.argv[1],'benchmarkSHA':sys.argv[2],'files':files},indent=2,sort_keys=True)+'\n')
+          if not files: raise SystemExit('benchmark produced no evidence')
+          PY
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: history-segmented-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            benchmark-source.txt
+            benchmark-changes.txt
+            history-benchmark/
+            history-benchmark-build.log
+            history-benchmark-build-diagnostics.txt
+            history-benchmark-run.log
+            history-benchmark-run-diagnostics.txt
+            history-benchmark-evidence-manifest.json
+          if-no-files-found: warn
+          retention-days: 30
