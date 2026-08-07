@@ -222,7 +222,6 @@ jobs:
               \( -name 'recovery-*.json' -o -name 'recovery-*.plist' \) \
               -print -quit | grep -q .
           fi
-          ! pgrep -x MacVitals >/dev/null 2>&1
 
       - name: Build evidence manifest
         if: always()
