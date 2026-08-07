@@ -6,15 +6,10 @@ import XCTest
 
 final class HistoricalConsumptionBenchmarkTests: XCTestCase {
   func testMatureSevenDayArchiveBaseline() async throws {
-    guard ProcessInfo.processInfo.environment["MACVITALS_RUN_HISTORY_BENCHMARK"] == "1"
-    else {
-      throw XCTSkip("Mature history benchmark is opt-in")
-    }
-
-    let environment = ProcessInfo.processInfo.environment
-    let outputPath = try XCTUnwrap(environment["MACVITALS_HISTORY_BENCHMARK_OUTPUT"])
-    let productBaseSHA = try XCTUnwrap(environment["MACVITALS_HISTORY_PRODUCT_BASE_SHA"])
-    let benchmarkSHA = try XCTUnwrap(environment["GITHUB_SHA"])
+    let configuration = try benchmarkConfiguration()
+    let outputPath = configuration.outputPath
+    let productBaseSHA = configuration.productBaseSHA
+    let benchmarkSHA = configuration.benchmarkSHA
     XCTAssertTrue(productBaseSHA.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil)
     XCTAssertTrue(benchmarkSHA.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil)
 
@@ -171,6 +166,19 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
     XCTAssertGreaterThan(reportData.count, 0)
   }
 
+  private func benchmarkConfiguration() throws -> BenchmarkConfiguration {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+    let projectRoot = sourceURL.deletingLastPathComponent().deletingLastPathComponent()
+    let configurationURL = projectRoot.appendingPathComponent(
+      ".macvitals-history-benchmark.json",
+      isDirectory: false)
+    guard FileManager.default.fileExists(atPath: configurationURL.path) else {
+      throw XCTSkip("Mature history benchmark is opt-in")
+    }
+    let data = try Data(contentsOf: configurationURL)
+    return try JSONDecoder().decode(BenchmarkConfiguration.self, from: data)
+  }
+
   private func writeMatureArchive(
     to archiveURL: URL,
     bucketDuration: TimeInterval,
@@ -278,5 +286,11 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
     guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
     let peakRSSKilobytes = max(0, usage.ru_maxrss)
     return UInt64(peakRSSKilobytes) * 1_024
+  }
+
+  private struct BenchmarkConfiguration: Decodable {
+    let productBaseSHA: String
+    let benchmarkSHA: String
+    let outputPath: String
   }
 }
