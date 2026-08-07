@@ -13,6 +13,19 @@ base = hardened.base
 _original_hardened_self_test = hardened.self_test
 
 
+def _require_runtime_evidence_contract() -> None:
+    """Refuse to launch unless the delegated canonical runner collects and reports resources."""
+    runner = Path(__file__).resolve().with_name("run_ci_physical_validation.sh")
+    if not runner.is_file() or runner.is_symlink():
+        raise base.ValidationError("Canonical physical runner is missing or unsafe")
+    text = runner.read_text(encoding="utf-8")
+    for marker in ("collect_runtime_metrics.sh", "report_runtime_resources.py"):
+        if marker not in text:
+            raise base.ValidationError(
+                f"Canonical physical runner is missing runtime evidence contract: {marker}"
+            )
+
+
 def _application_for_executable(executable: Path) -> Path:
     resolved = executable.resolve()
     try:
@@ -47,6 +60,7 @@ def matching_pid(executable: Path, warmup: float) -> tuple[int, bool]:
     if existing:
         return existing[0], False
 
+    _require_runtime_evidence_contract()
     application = _application_for_executable(executable)
     started = time.monotonic()
     launched = base.command(
@@ -93,6 +107,7 @@ def self_test(args: argparse.Namespace | None = None) -> int:
     result = _original_hardened_self_test(args)
     base.matching_pid = matching_pid
 
+    _require_runtime_evidence_contract()
     fixture = Path("/tmp/MacVitals.app/Contents/MacOS/MacVitals")
     assert _application_for_executable(fixture) == Path("/tmp/MacVitals.app")
     try:
