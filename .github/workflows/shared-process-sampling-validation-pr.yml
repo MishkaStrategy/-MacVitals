@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/shared-process-sampling-validation-pr.yml
       - MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift
+      - MacVitalsUITests/SharedProcessSamplingValidationUITests.swift
       - scripts/validate_shared_process_sampling_contract.py
   workflow_dispatch:
 
@@ -51,7 +52,7 @@ jobs:
             4d143aaa082b0fb15ce86d19ba72c40557939692 \
             "${VALIDATION_SHA}"
           git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}"
-          git diff --quiet "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml
           git diff --name-only "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" > shared-sampling-validation-changes.txt
           python3 - <<'PY'
           from pathlib import Path
@@ -59,6 +60,7 @@ jobs:
           expected = {
               ".github/workflows/shared-process-sampling-validation-pr.yml",
               "MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift",
+              "MacVitalsUITests/SharedProcessSamplingValidationUITests.swift",
               "scripts/validate_shared_process_sampling_contract.py",
           }
           actual = {
@@ -94,7 +96,10 @@ jobs:
         run: xcodegen generate
 
       - name: Validate targeted Swift formatting
-        run: swift format lint MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift
+        run: |
+          swift format lint \
+            MacVitalsTests/ProcessMetricsSamplingCenterValidationTests.swift \
+            MacVitalsUITests/SharedProcessSamplingValidationUITests.swift
 
       - name: Run exact shared sampling validation tests
         shell: bash
