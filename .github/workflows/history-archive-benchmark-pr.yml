@@ -29,6 +29,7 @@ jobs:
       BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       BENCHMARK_OUTPUT: ${{ github.workspace }}/history-benchmark/history-archive-baseline.json
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-HistoryBenchmark
+      BENCHMARK_CONFIG: ${{ github.workspace }}/.macvitals-history-benchmark.json
     steps:
       - name: Checkout exact benchmark head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -82,7 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           ruby -e "require 'yaml'; YAML.load_file('.github/workflows/history-archive-benchmark-pr.yml')"
-          grep -Fq 'MACVITALS_RUN_HISTORY_BENCHMARK' \
+          grep -Fq 'benchmarkConfiguration()' \
+            MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
+          grep -Fq '.macvitals-history-benchmark.json' \
             MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
           grep -Fq 'HistoricalConsumptionRange.sevenDays' \
             MacVitalsTests/HistoricalConsumptionBenchmarkTests.swift
@@ -126,10 +129,35 @@ jobs:
         run: |
           set +e
           mkdir -p "$(dirname "${BENCHMARK_OUTPUT}")"
-          GITHUB_SHA="${BENCHMARK_SHA}" \
-          MACVITALS_RUN_HISTORY_BENCHMARK=1 \
-          MACVITALS_HISTORY_PRODUCT_BASE_SHA="${PRODUCT_BASE_SHA}" \
-          MACVITALS_HISTORY_BENCHMARK_OUTPUT="${BENCHMARK_OUTPUT}" \
+          rm -f -- "${BENCHMARK_OUTPUT}" "${BENCHMARK_CONFIG}"
+
+          python3 - \
+            "${BENCHMARK_CONFIG}" \
+            "${PRODUCT_BASE_SHA}" \
+            "${BENCHMARK_SHA}" \
+            "${BENCHMARK_OUTPUT}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          config = Path(sys.argv[1])
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          if config.resolve().parent != workspace:
+              raise SystemExit("benchmark config must remain at the workspace root")
+          payload = {
+              "productBaseSHA": sys.argv[2],
+              "benchmarkSHA": sys.argv[3],
+              "outputPath": sys.argv[4],
+          }
+          config.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+          config.chmod(0o600)
+          PY
+          config_status=$?
+          if [[ ${config_status} -ne 0 ]]; then
+            exit ${config_status}
+          fi
+
           xcodebuild \
             -project MacVitals.xcodeproj \
             -scheme MacVitals \
@@ -140,14 +168,25 @@ jobs:
             -only-testing:MacVitalsTests/HistoricalConsumptionBenchmarkTests/testMatureSevenDayArchiveBaseline \
             > history-benchmark-run.log 2>&1
           status=$?
-          grep -E 'failed|Failure|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' \
+          rm -f -- "${BENCHMARK_CONFIG}"
+
+          grep -E 'failed|Failure|skipped|Test Suite|Executed [0-9]+ tests|TEST (FAILED|SUCCEEDED)' \
             history-benchmark-run.log | tail -n 400 \
             > history-benchmark-run-diagnostics.txt || true
           cat history-benchmark-run-diagnostics.txt
+
           if [[ ${status} -eq 0 ]]; then
-            test -s "${BENCHMARK_OUTPUT}"
-            python3 -m json.tool "${BENCHMARK_OUTPUT}" >/dev/null
-            python3 - "${BENCHMARK_OUTPUT}" "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" <<'PY'
+            validation_status=0
+            if grep -Fq 'Test skipped - Mature history benchmark is opt-in' history-benchmark-run.log; then
+              echo 'Benchmark unexpectedly skipped despite explicit workspace configuration.' >&2
+              validation_status=1
+            fi
+            test -s "${BENCHMARK_OUTPUT}" || validation_status=1
+            if [[ ${validation_status} -eq 0 ]]; then
+              python3 -m json.tool "${BENCHMARK_OUTPUT}" >/dev/null || validation_status=$?
+            fi
+            if [[ ${validation_status} -eq 0 ]]; then
+              python3 - "${BENCHMARK_OUTPUT}" "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" <<'PY' || validation_status=$?
           import json
           import sys
           from pathlib import Path
@@ -170,7 +209,12 @@ jobs:
           if record.get("sampleCount") != 120:
               raise SystemExit("benchmark record sample count mismatch")
           PY
-            cat "${BENCHMARK_OUTPUT}"
+            fi
+            if [[ ${validation_status} -eq 0 ]]; then
+              cat "${BENCHMARK_OUTPUT}"
+            else
+              status=${validation_status}
+            fi
           fi
           exit ${status}
 
@@ -179,6 +223,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -f -- "${BENCHMARK_CONFIG}"
           python3 - "${PRODUCT_BASE_SHA}" "${BENCHMARK_SHA}" <<'PY'
           from pathlib import Path
           import hashlib
