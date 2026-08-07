@@ -63,6 +63,10 @@ TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS = Path(
 )
 TARGETED_LAUNCHSERVICES_HARNESS_MARKERS = (
     "import run_physical_validation_hardened as hardened",
+    "def host_snapshot()",
+    "return base.host_snapshot()",
+    "def power_snapshot(",
+    "return hardened.power_snapshot(started)",
     "_require_delegated_hardened_runner_contract",
     "base.matching_pid = matching_pid",
     "hardened._owned_process_executables[pid]",
@@ -252,6 +256,10 @@ def self_test() -> None:
 
     launchservices_harness = """
     import run_physical_validation_hardened as hardened
+    def host_snapshot():
+        return base.host_snapshot()
+    def power_snapshot(started=None):
+        return hardened.power_snapshot(started)
     def _require_delegated_hardened_runner_contract():
         return None
     def matching_pid(executable, warmup):
@@ -281,6 +289,16 @@ def self_test() -> None:
     )
     assert len(
         validate_text(TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, incomplete_launchservices)
+    ) == 2
+
+    missing_module_api = launchservices_harness.replace(
+        "return hardened.power_snapshot(started)", "return {}"
+    )
+    assert not uses_canonical_physical_evidence(
+        TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, missing_module_api
+    )
+    assert len(
+        validate_text(TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, missing_module_api)
     ) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
