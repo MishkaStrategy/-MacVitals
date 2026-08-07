@@ -181,8 +181,9 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
 
     let reloaded = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
     let leaders = await reloaded.leaders(metric: .cpu, range: .oneHour, now: now)
+    let firstRecordedAt = await reloaded.firstRecordedAt()
     XCTAssertTrue(leaders.isEmpty)
-    XCTAssertNil(await reloaded.firstRecordedAt())
+    XCTAssertNil(firstRecordedAt)
   }
 
   func testSteadyStateFlushWritesOnlyDirtyHourAndNoOpFlushWritesNothing() async throws {
