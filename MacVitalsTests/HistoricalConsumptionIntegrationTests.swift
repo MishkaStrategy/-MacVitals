@@ -240,11 +240,7 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
 
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let segmentDirectory = HistoricalConsumptionArchiveStore.segmentDirectoryURL(for: archiveURL)
-    let symlinkTarget = root.appendingPathComponent("unsafe-target", isDirectory: true)
-    try FileManager.default.createDirectory(at: symlinkTarget, withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(
-      at: segmentDirectory,
-      withDestinationURL: symlinkTarget)
+    try Data("directory-blocker".utf8).write(to: segmentDirectory)
 
     let now = Date(timeIntervalSince1970: 1_800_600_000)
     let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
@@ -257,6 +253,7 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
     let failed = await store.persistenceDiagnostics()
     XCTAssertFalse(failed.segmentedPersistenceReady)
     XCTAssertGreaterThan(failed.dirtySegmentCount, 0)
+    XCTAssertEqual(failed.fileWriteCount, 0)
 
     try FileManager.default.removeItem(at: segmentDirectory)
     await store.flush()
@@ -269,6 +266,129 @@ final class HistoricalConsumptionIntegrationTests: XCTestCase {
     let reloaded = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
     let leaders = await reloaded.leaders(metric: .cpu, range: .oneHour, now: now)
     XCTAssertEqual(leaders.map(\.id), ["retry"])
+  }
+
+  func testSymlinkSegmentDirectoryIsRejectedWithoutWritingThroughTarget() async throws {
+    let archiveURL = temporaryArchiveURL()
+    let root = archiveURL.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let segmentDirectory = HistoricalConsumptionArchiveStore.segmentDirectoryURL(for: archiveURL)
+    let symlinkTarget = root.appendingPathComponent("unsafe-target", isDirectory: true)
+    try FileManager.default.createDirectory(at: symlinkTarget, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      at: segmentDirectory,
+      withDestinationURL: symlinkTarget)
+
+    let now = Date(timeIntervalSince1970: 1_800_610_000)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    await store.record(
+      snapshot: snapshot(
+        at: now,
+        applications: [application(id: "blocked", name: "Blocked", cpu: 60)]),
+      elapsed: 5)
+
+    let diagnostics = await store.persistenceDiagnostics()
+    XCTAssertFalse(diagnostics.segmentedPersistenceReady)
+    XCTAssertGreaterThan(diagnostics.dirtySegmentCount, 0)
+    XCTAssertEqual(diagnostics.fileWriteCount, 0)
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: symlinkTarget.path).isEmpty)
+  }
+
+  func testSymlinkSegmentDestinationIsRejectedAndRetriesWithoutTouchingTarget() async throws {
+    let archiveURL = temporaryArchiveURL()
+    let root = archiveURL.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let now = Date(timeIntervalSince1970: 1_800_620_000)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    await store.record(
+      snapshot: snapshot(
+        at: now,
+        applications: [application(id: "safe", name: "Safe", cpu: 70)]),
+      elapsed: 5)
+    await store.flush()
+
+    let segmentURL = try XCTUnwrap(try persistedSegmentFiles(for: archiveURL).first)
+    let targetURL = root.appendingPathComponent("segment-target.json")
+    let targetData = Data("must-remain-unchanged".utf8)
+    try targetData.write(to: targetURL)
+    try FileManager.default.removeItem(at: segmentURL)
+    try FileManager.default.createSymbolicLink(
+      at: segmentURL,
+      withDestinationURL: targetURL)
+
+    await store.resetPersistenceDiagnostics()
+    await store.record(
+      snapshot: snapshot(
+        at: now.addingTimeInterval(10),
+        applications: [application(id: "safe", name: "Safe", cpu: 80)]),
+      elapsed: 5)
+    await store.flush()
+
+    let failed = await store.persistenceDiagnostics()
+    XCTAssertTrue(failed.segmentedPersistenceReady)
+    XCTAssertGreaterThan(failed.dirtySegmentCount, 0)
+    XCTAssertEqual(failed.fileWriteCount, 0)
+    XCTAssertEqual(try Data(contentsOf: targetURL), targetData)
+
+    try FileManager.default.removeItem(at: segmentURL)
+    await store.flush()
+    let recovered = await store.persistenceDiagnostics()
+    XCTAssertEqual(recovered.dirtySegmentCount, 0)
+    XCTAssertEqual(recovered.fileWriteCount, 1)
+    XCTAssertEqual(try Data(contentsOf: targetURL), targetData)
+
+    let reloaded = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    let leaders = await reloaded.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertEqual(leaders.map(\.id), ["safe"])
+  }
+
+  func testSymlinkFormatMarkerIsRejectedUntilRemoved() async throws {
+    let archiveURL = temporaryArchiveURL()
+    let root = archiveURL.deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let now = Date(timeIntervalSince1970: 1_800_630_000)
+    try writeLegacyArchive(
+      to: archiveURL,
+      bucketStart: bucketStart(for: now),
+      applications: [application(id: "legacy-safe", name: "Legacy Safe", cpu: 65)],
+      elapsed: 5)
+
+    let segmentDirectory = HistoricalConsumptionArchiveStore.segmentDirectoryURL(for: archiveURL)
+    try FileManager.default.createDirectory(at: segmentDirectory, withIntermediateDirectories: true)
+    let markerURL = segmentDirectory.appendingPathComponent("FORMAT.json")
+    let targetURL = root.appendingPathComponent("marker-target.json")
+    let targetData = Data("marker-target".utf8)
+    try targetData.write(to: targetURL)
+    try FileManager.default.createSymbolicLink(
+      at: markerURL,
+      withDestinationURL: targetURL)
+
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    await store.flush()
+
+    let failed = await store.persistenceDiagnostics()
+    XCTAssertFalse(failed.segmentedPersistenceReady)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: archiveURL.path))
+    XCTAssertEqual(try Data(contentsOf: targetURL), targetData)
+
+    let fallback = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    let fallbackLeaders = await fallback.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertEqual(fallbackLeaders.map(\.id), ["legacy-safe"])
+
+    try FileManager.default.removeItem(at: markerURL)
+    await store.resetPersistenceDiagnostics()
+    await store.flush()
+
+    let recovered = await store.persistenceDiagnostics()
+    XCTAssertTrue(recovered.segmentedPersistenceReady)
+    XCTAssertEqual(recovered.segmentFileCount, 1)
+    XCTAssertEqual(recovered.fileWriteCount, 2)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: archiveURL.path))
+    XCTAssertEqual(try Data(contentsOf: targetURL), targetData)
   }
 
   func testCorruptArchiveFailsClosed() async throws {
