@@ -11,6 +11,7 @@ on:
       - scripts/run_safe_physical_validation_same_session.sh
       - scripts/run_ci_physical_validation_same_session.sh
       - scripts/run_physical_validation_launchservices.py
+      - scripts/validate_runtime_resource_policy.py
   workflow_dispatch:
 
 permissions:
@@ -79,6 +80,7 @@ jobs:
               "scripts/run_safe_physical_validation_same_session.sh",
               "scripts/run_ci_physical_validation_same_session.sh",
               "scripts/run_physical_validation_launchservices.py",
+              "scripts/validate_runtime_resource_policy.py",
           }
           actual = {
               line.strip()
@@ -107,9 +109,11 @@ jobs:
           ruby -e "require 'yaml'; YAML.load_file('.github/workflows/safe-physical-validation-pr.yml')"
           python3 -m py_compile \
             scripts/physical_preference_recovery_guard.py \
-            scripts/run_physical_validation_launchservices.py
+            scripts/run_physical_validation_launchservices.py \
+            scripts/validate_runtime_resource_policy.py
           python3 scripts/physical_preference_recovery_guard.py self-test
           python3 scripts/run_physical_validation_launchservices.py self-test
+          python3 scripts/validate_runtime_resource_policy.py --self-test
           bash -n \
             scripts/physical_runtime_lock.sh \
             scripts/run_safe_physical_validation.sh \
@@ -133,6 +137,7 @@ jobs:
           grep -Fq 'run_physical_validation_launchservices.py' scripts/run_ci_physical_validation_same_session.sh
           grep -Fq '"open",' scripts/run_physical_validation_launchservices.py
           grep -Fq 'hardened._owned_process_executables[pid]' scripts/run_physical_validation_launchservices.py
+          grep -Fq 'TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS' scripts/validate_runtime_resource_policy.py
           grep -Fq 'candidate_pid_is_owned' scripts/run_ci_physical_validation_hardened.sh
 
       - name: Verify same-user GUI context
