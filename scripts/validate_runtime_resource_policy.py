@@ -74,6 +74,22 @@ TARGETED_LAUNCHSERVICES_HARNESS_MARKERS = (
     '"-na",',
     "base.terminate is hardened.terminate",
 )
+TARGETED_SAFE_SAME_SESSION_WRAPPER = Path(
+    "scripts/run_safe_physical_validation_same_session.sh"
+)
+TARGETED_SAFE_SAME_SESSION_MARKERS = (
+    "run_ci_physical_validation_same_session.sh",
+    "physical_preference_recovery_guard.py",
+    "physical_runtime_lock_directory",
+    "recover_orphaned_preferences",
+    "identify_orphan_recovery_token",
+    "validate_new_session",
+    "expected exactly one new physical session",
+    "Same-session physical acceptance evidence passed",
+    "RUNNER_SUMMARY.txt",
+    "PRIVACY_SCAN_PASSED.txt",
+    'bash "${TEMP_WRAPPER}" "$@"',
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -107,6 +123,8 @@ def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
         return all(marker in text for marker in HARDENED_PHYSICAL_HARNESS_MARKERS)
     if path == TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS:
         return all(marker in text for marker in TARGETED_LAUNCHSERVICES_HARNESS_MARKERS)
+    if path == TARGETED_SAFE_SAME_SESSION_WRAPPER:
+        return all(marker in text for marker in TARGETED_SAFE_SAME_SESSION_MARKERS)
     return False
 
 
@@ -299,6 +317,41 @@ def self_test() -> None:
     )
     assert len(
         validate_text(TARGETED_LAUNCHSERVICES_PHYSICAL_HARNESS, missing_module_api)
+    ) == 2
+
+    same_session_safe_wrapper = """
+    SAME_SESSION_RUNNER="${SCRIPT_DIR}/run_ci_physical_validation_same_session.sh"
+    RECOVERY_GUARD="${SCRIPT_DIR}/physical_preference_recovery_guard.py"
+    physical_runtime_lock_directory
+    identify_orphan_recovery_token() { pgrep -x MacVitals >/dev/null; }
+    recover_orphaned_preferences() { identify_orphan_recovery_token; }
+    validate_new_session() {
+      echo "expected exactly one new physical session"
+      echo "Same-session physical acceptance evidence passed"
+      cat RUNNER_SUMMARY.txt PRIVACY_SCAN_PASSED.txt
+    }
+    bash "${TEMP_WRAPPER}" "$@"
+    """
+    assert is_runtime_launcher(same_session_safe_wrapper)
+    assert uses_canonical_physical_evidence(
+        TARGETED_SAFE_SAME_SESSION_WRAPPER, same_session_safe_wrapper
+    )
+    assert validate_text(TARGETED_SAFE_SAME_SESSION_WRAPPER, same_session_safe_wrapper) == []
+
+    same_session_safe_lookalike = Path("scripts/not-the-safe-same-session-wrapper.sh")
+    assert not uses_canonical_physical_evidence(
+        same_session_safe_lookalike, same_session_safe_wrapper
+    )
+    assert len(validate_text(same_session_safe_lookalike, same_session_safe_wrapper)) == 2
+
+    incomplete_same_session_safe = same_session_safe_wrapper.replace(
+        "validate_new_session", "validate_session"
+    )
+    assert not uses_canonical_physical_evidence(
+        TARGETED_SAFE_SAME_SESSION_WRAPPER, incomplete_same_session_safe
+    )
+    assert len(
+        validate_text(TARGETED_SAFE_SAME_SESSION_WRAPPER, incomplete_same_session_safe)
     ) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
