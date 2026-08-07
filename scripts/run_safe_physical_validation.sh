@@ -39,7 +39,7 @@ import sys
 source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 text = source.read_text(encoding="utf-8")
-old = r'''process_cleanup = r'''terminate_exact_candidate_processes() {
+old = r"""process_cleanup = r'''terminate_exact_candidate_processes() {
   local pid
   local command_line
   local remaining=()
@@ -72,8 +72,8 @@ old = r'''process_cleanup = r'''terminate_exact_candidate_processes() {
 }
 
 '''
-'''
-new = r'''process_cleanup = r'''candidate_pid_is_owned() {
+"""
+new = r"""process_cleanup = r'''candidate_pid_is_owned() {
   local pid="$1"
   local command_line
   [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
@@ -114,7 +114,7 @@ terminate_exact_candidate_processes() {
 }
 
 '''
-'''
+"""
 if text.count(old) != 1:
     raise SystemExit("canonical hardened runner process cleanup is not uniquely patchable")
 patched = text.replace(old, new)
