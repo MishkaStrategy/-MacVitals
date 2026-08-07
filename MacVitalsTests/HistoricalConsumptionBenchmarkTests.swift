@@ -28,7 +28,8 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       at: outputURL.deletingLastPathComponent(),
       withIntermediateDirectories: true)
 
-    let peakRSSAtStart = peakResidentBytes()
+    let memoryCalibration = try peakRSSCalibration()
+    let peakRSSAtStart = try peakResidentBytes(using: memoryCalibration)
     let bucketDuration: TimeInterval = 5 * 60
     let bucketCount = Int(HistoricalConsumptionRange.sevenDays.duration / bucketDuration)
     let applicationsPerBucket = 24
@@ -41,13 +42,13 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       bucketCount: bucketCount,
       applicationsPerBucket: applicationsPerBucket,
       firstBucketStart: firstBucketStart)
-    let peakRSSAfterFixture = peakResidentBytes()
+    let peakRSSAfterFixture = try peakResidentBytes(using: memoryCalibration)
 
     let loadMeasurement = measuredSync {
       HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
     }
     let store = loadMeasurement.value
-    let peakRSSAfterLoad = peakResidentBytes()
+    let peakRSSAfterLoad = try peakResidentBytes(using: memoryCalibration)
     let benchmarkNow = Date(timeIntervalSince1970: currentBucketStart + 1)
     let sampledApplications = (0..<120).map { application(index: $0, phase: 10_000) }
 
@@ -68,7 +69,7 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       }
       recordDurations.append(measurement.milliseconds)
     }
-    let peakRSSAfterRecords = peakResidentBytes()
+    let peakRSSAfterRecords = try peakResidentBytes(using: memoryCalibration)
 
     var flushDurations: [Double] = []
     flushDurations.reserveCapacity(3)
@@ -114,11 +115,11 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       await store.leaders(metric: .network, range: .sevenDays, now: benchmarkNow)
     }
     XCTAssertTrue(networkMeasurement.value.isEmpty)
-    let peakRSSAfterQueries = peakResidentBytes()
+    let peakRSSAfterQueries = try peakResidentBytes(using: memoryCalibration)
 
     let finalArchiveBytes = try fileSize(at: archiveURL)
     let report: [String: Any] = [
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "identity": [
         "productBaseSHA": productBaseSHA,
         "benchmarkSHA": benchmarkSHA,
@@ -133,6 +134,10 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
       "memory": [
         "semantics": "processLifetimePeakRSS",
         "unit": "bytes",
+        "ruMaxRSSRawAtCalibration": memoryCalibration.rawPeakRSS,
+        "currentResidentKiBAtCalibration": memoryCalibration.currentResidentKiB,
+        "ruMaxRSSScaleToBytes": memoryCalibration.scaleToBytes,
+        "systemPhysicalMemoryBytes": memoryCalibration.systemPhysicalMemoryBytes,
         "peakResidentBytesAtStart": peakRSSAtStart,
         "peakResidentBytesAfterFixture": peakRSSAfterFixture,
         "peakResidentBytesAfterLoad": peakRSSAfterLoad,
@@ -281,16 +286,105 @@ final class HistoricalConsumptionBenchmarkTests: XCTestCase {
     ).uint64Value
   }
 
-  private func peakResidentBytes() -> UInt64 {
+  private func rawPeakRSS() throws -> UInt64 {
     var usage = rusage()
-    guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
-    let peakRSSKilobytes = max(0, usage.ru_maxrss)
-    return UInt64(peakRSSKilobytes) * 1_024
+    guard getrusage(RUSAGE_SELF, &usage) == 0 else {
+      throw BenchmarkError.message("getrusage(RUSAGE_SELF) failed")
+    }
+    return UInt64(max(0, usage.ru_maxrss))
+  }
+
+  private func currentResidentKiB() throws -> UInt64 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/ps")
+    process.arguments = ["-o", "rss=", "-p", String(getpid())]
+    let output = Pipe()
+    let errors = Pipe()
+    process.standardOutput = output
+    process.standardError = errors
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+      let message = String(
+        data: errors.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8) ?? "unknown ps error"
+      throw BenchmarkError.message("ps RSS probe failed: \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
+    }
+    let text = String(
+      data: output.fileHandleForReading.readDataToEndOfFile(),
+      encoding: .utf8) ?? ""
+    guard let value = UInt64(text.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
+      throw BenchmarkError.message("ps RSS probe returned an invalid value: \(text)")
+    }
+    return value
+  }
+
+  private func peakRSSCalibration() throws -> PeakRSSCalibration {
+    let raw = try rawPeakRSS()
+    let currentKiB = try currentResidentKiB()
+    let (currentBytes, currentOverflow) = currentKiB.multipliedReportingOverflow(by: 1_024)
+    guard !currentOverflow, currentBytes > 0, raw > 0 else {
+      throw BenchmarkError.message("peak RSS calibration inputs are invalid")
+    }
+
+    let scaleOne = raw
+    let (scaleKiB, scaleKiBOverflow) = raw.multipliedReportingOverflow(by: 1_024)
+    let candidates: [(scale: UInt64, bytes: UInt64)] = [
+      (1, scaleOne),
+      (1_024, scaleKiBOverflow ? UInt64.max : scaleKiB),
+    ]
+    let chosen = candidates.min { lhs, rhs in
+      absoluteDifference(lhs.bytes, currentBytes) < absoluteDifference(rhs.bytes, currentBytes)
+    }!
+
+    let physicalMemory = ProcessInfo.processInfo.physicalMemory
+    guard chosen.bytes >= currentBytes / 2 else {
+      throw BenchmarkError.message(
+        "calibrated peak RSS is implausibly below current RSS: peak=\(chosen.bytes) current=\(currentBytes)")
+    }
+    guard chosen.bytes <= physicalMemory else {
+      throw BenchmarkError.message(
+        "calibrated peak RSS exceeds physical memory: peak=\(chosen.bytes) physical=\(physicalMemory)")
+    }
+
+    return PeakRSSCalibration(
+      rawPeakRSS: raw,
+      currentResidentKiB: currentKiB,
+      scaleToBytes: chosen.scale,
+      systemPhysicalMemoryBytes: physicalMemory)
+  }
+
+  private func peakResidentBytes(using calibration: PeakRSSCalibration) throws -> UInt64 {
+    let raw = try rawPeakRSS()
+    let (value, overflow) = raw.multipliedReportingOverflow(by: calibration.scaleToBytes)
+    guard !overflow else {
+      throw BenchmarkError.message("peak RSS conversion overflowed")
+    }
+    guard value <= calibration.systemPhysicalMemoryBytes else {
+      throw BenchmarkError.message(
+        "peak RSS exceeds physical memory after calibration: peak=\(value) physical=\(calibration.systemPhysicalMemoryBytes)")
+    }
+    return value
+  }
+
+  private func absoluteDifference(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+    lhs >= rhs ? lhs - rhs : rhs - lhs
   }
 
   private struct BenchmarkConfiguration: Decodable {
     let productBaseSHA: String
     let benchmarkSHA: String
     let outputPath: String
+  }
+
+  private struct PeakRSSCalibration {
+    let rawPeakRSS: UInt64
+    let currentResidentKiB: UInt64
+    let scaleToBytes: UInt64
+    let systemPhysicalMemoryBytes: UInt64
+  }
+
+  private enum BenchmarkError: Error {
+    case message(String)
   }
 }
