@@ -44,11 +44,19 @@ SAFE_PHYSICAL_EVIDENCE_MARKERS = (
     "physical-validation-results",
 )
 CANONICAL_HARDENED_PHYSICAL_WRAPPER = Path("scripts/run_ci_physical_validation_hardened.sh")
-HARDENED_PHYSICAL_EVIDENCE_MARKERS = (
+HARDENED_PHYSICAL_WRAPPER_MARKERS = (
     "run_ci_physical_validation.sh",
     "run_physical_validation_hardened.py",
     "candidate_pid_is_owned",
     'GITHUB_SHA="${EXPECTED_SHA}"',
+)
+CANONICAL_HARDENED_PHYSICAL_HARNESS = Path("scripts/run_physical_validation_hardened.py")
+HARDENED_PHYSICAL_HARNESS_MARKERS = (
+    "import run_physical_validation as base",
+    "_original_run_scenario = base.run_scenario",
+    "base.matching_pid = matching_pid",
+    "base.terminate = terminate",
+    "_completion_failures",
 )
 
 
@@ -78,7 +86,9 @@ def uses_canonical_physical_evidence(path: Path, text: str) -> bool:
     if path == CANONICAL_SAFE_PHYSICAL_WRAPPER:
         return all(marker in text for marker in SAFE_PHYSICAL_EVIDENCE_MARKERS)
     if path == CANONICAL_HARDENED_PHYSICAL_WRAPPER:
-        return all(marker in text for marker in HARDENED_PHYSICAL_EVIDENCE_MARKERS)
+        return all(marker in text for marker in HARDENED_PHYSICAL_WRAPPER_MARKERS)
+    if path == CANONICAL_HARDENED_PHYSICAL_HARNESS:
+        return all(marker in text for marker in HARDENED_PHYSICAL_HARNESS_MARKERS)
     return False
 
 
@@ -174,27 +184,55 @@ def self_test() -> None:
     assert not uses_canonical_physical_evidence(safe_lookalike, safe_physical)
     assert len(validate_text(safe_lookalike, safe_physical)) == 2
 
-    hardened_physical = """
+    hardened_wrapper = """
     ORIGINAL="${SCRIPT_DIR}/run_ci_physical_validation.sh"
     HARDENED="${SCRIPT_DIR}/run_physical_validation_hardened.py"
     candidate_pid_is_owned() { pgrep -x MacVitals >/dev/null; }
     GITHUB_SHA="${EXPECTED_SHA}" bash "${TEMP_RUNNER}" "$@"
     """
-    assert is_runtime_launcher(hardened_physical)
+    assert is_runtime_launcher(hardened_wrapper)
     assert uses_canonical_physical_evidence(
-        CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_physical
+        CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_wrapper
     )
-    assert validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_physical) == []
+    assert validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, hardened_wrapper) == []
 
-    hardened_lookalike = Path("scripts/not-the-hardened-physical-wrapper.sh")
-    assert not uses_canonical_physical_evidence(hardened_lookalike, hardened_physical)
-    assert len(validate_text(hardened_lookalike, hardened_physical)) == 2
+    hardened_wrapper_lookalike = Path("scripts/not-the-hardened-physical-wrapper.sh")
+    assert not uses_canonical_physical_evidence(hardened_wrapper_lookalike, hardened_wrapper)
+    assert len(validate_text(hardened_wrapper_lookalike, hardened_wrapper)) == 2
 
-    incomplete_hardened = hardened_physical.replace("candidate_pid_is_owned", "pid_is_owned")
+    incomplete_wrapper = hardened_wrapper.replace("candidate_pid_is_owned", "pid_is_owned")
     assert not uses_canonical_physical_evidence(
-        CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_hardened
+        CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_wrapper
     )
-    assert len(validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_hardened)) == 2
+    assert len(validate_text(CANONICAL_HARDENED_PHYSICAL_WRAPPER, incomplete_wrapper)) == 2
+
+    hardened_harness = """
+    import run_physical_validation as base
+    _original_run_scenario = base.run_scenario
+    def matching_pid(executable, warmup):
+        return 1, True
+    def terminate(pid):
+        return None
+    base.matching_pid = matching_pid
+    base.terminate = terminate
+    def _completion_failures(record, summary):
+        return []
+    """
+    assert is_runtime_launcher(hardened_harness)
+    assert uses_canonical_physical_evidence(
+        CANONICAL_HARDENED_PHYSICAL_HARNESS, hardened_harness
+    )
+    assert validate_text(CANONICAL_HARDENED_PHYSICAL_HARNESS, hardened_harness) == []
+
+    hardened_harness_lookalike = Path("scripts/not-the-hardened-physical-harness.py")
+    assert not uses_canonical_physical_evidence(hardened_harness_lookalike, hardened_harness)
+    assert len(validate_text(hardened_harness_lookalike, hardened_harness)) == 2
+
+    incomplete_harness = hardened_harness.replace("base.terminate = terminate", "base.terminate = base.terminate")
+    assert not uses_canonical_physical_evidence(
+        CANONICAL_HARDENED_PHYSICAL_HARNESS, incomplete_harness
+    )
+    assert len(validate_text(CANONICAL_HARDENED_PHYSICAL_HARNESS, incomplete_harness)) == 2
 
     exact_process_probe = "pgrep -x MacVitals"
     assert is_runtime_launcher(exact_process_probe)
