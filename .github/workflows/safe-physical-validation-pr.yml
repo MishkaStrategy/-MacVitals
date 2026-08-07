@@ -84,7 +84,10 @@ jobs:
                   f"validation branch contains unexpected changes: expected={sorted(expected)} actual={sorted(actual)}"
               )
           PY
-          ! git grep -nE 'Pet|petState|PetView' -- MacVitals
+          if git grep -nE 'Pet|petState|PetView' -- MacVitals; then
+            printf '%s\n' 'Forbidden pet implementation remains in product candidate' >&2
+            exit 1
+          fi
           {
             printf 'product_base_sha=%s\n' "${PRODUCT_BASE_SHA}"
             printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
@@ -103,11 +106,15 @@ jobs:
             scripts/run_ci_physical_validation_hardened.sh
           bash scripts/physical_runtime_lock.sh --self-test
           bash scripts/run_safe_physical_validation.sh --self-test
-          ! grep -R -nE \
+          if grep -R -nE \
             'pkill[[:space:]].*MacVitals|killall[[:space:]].*MacVitals|kill[[:space:]]+-TERM[[:space:]].*pgrep|kill[[:space:]]+-KILL[[:space:]].*pgrep' \
             scripts/physical_runtime_lock.sh \
-            scripts/run_safe_physical_validation.sh \
-            scripts/run_ci_physical_validation_hardened.sh
+            scripts/run_ci_physical_validation_hardened.sh; then
+            printf '%s\n' 'Forbidden broad process operation found outside the scoped wrapper self-test' >&2
+            exit 1
+          fi
+          grep -Fq 'recover_interrupted_preferences' \
+            scripts/run_safe_physical_validation.sh
           grep -Fq 'bash "${RUNNER}" "${VERSION}" "${RUN_APP}" "${EXPECTED_SHA}"' \
             scripts/run_safe_physical_validation.sh
           grep -Fq 'physical_runtime_lock_clear_recovery_required' \
@@ -207,21 +214,39 @@ jobs:
           fi
           exit ${status}
 
-      - name: Verify successful recovery cleanup
+      - name: Verify recovery cleanup state
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           # shellcheck source=physical_runtime_lock.sh
           source scripts/physical_runtime_lock.sh
           LOCK_DIR="$(physical_runtime_lock_directory)"
-          test ! -e "${LOCK_DIR}"
-          test ! -L "${LOCK_DIR}"
           RECOVERY_ROOT="${HOME}/Library/Caches/MacVitals-CI/physical-validation-recovery"
-          if [[ -d "${RECOVERY_ROOT}" && ! -L "${RECOVERY_ROOT}" ]]; then
-            ! find "${RECOVERY_ROOT}" -maxdepth 1 \
-              \( -name 'recovery-*.json' -o -name 'recovery-*.plist' \) \
-              -print -quit | grep -q .
+          cleanup_status=0
+          lock_absent=true
+          recovery_pending=false
+          if [[ -e "${LOCK_DIR}" || -L "${LOCK_DIR}" ]]; then
+            lock_absent=false
+            cleanup_status=1
           fi
+          if [[ -d "${RECOVERY_ROOT}" && ! -L "${RECOVERY_ROOT}" ]]; then
+            if find "${RECOVERY_ROOT}" -maxdepth 1 \
+              \( -name 'recovery-*.json' -o -name 'recovery-*.plist' \) \
+              -print -quit | grep -q .; then
+              recovery_pending=true
+              cleanup_status=1
+            fi
+          elif [[ -e "${RECOVERY_ROOT}" || -L "${RECOVERY_ROOT}" ]]; then
+            recovery_pending=true
+            cleanup_status=1
+          fi
+          {
+            printf 'schemaVersion=1\n'
+            printf 'lockAbsent=%s\n' "${lock_absent}"
+            printf 'recoveryPending=%s\n' "${recovery_pending}"
+          } > physical-recovery-cleanup.txt
+          exit ${cleanup_status}
 
       - name: Build evidence manifest
         if: always()
@@ -229,9 +254,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -d physical-validation-results ]]; then
-            ! find physical-validation-results -type f \
-              \( -name '*.ips' -o -name '*.crash' \) -print -quit | grep -q .
-            ! find physical-validation-results -type l -print -quit | grep -q .
+            if find physical-validation-results -type f \
+              \( -name '*.ips' -o -name '*.crash' \) -print -quit | grep -q .; then
+              printf '%s\n' 'Raw crash report found in uploadable physical evidence' >&2
+              exit 1
+            fi
+            if find physical-validation-results -type l -print -quit | grep -q .; then
+              printf '%s\n' 'Symbolic link found in uploadable physical evidence' >&2
+              exit 1
+            fi
           fi
           python3 - \
             "${PRODUCT_BASE_SHA}" \
@@ -249,6 +280,7 @@ jobs:
               Path("validation-changes.txt"),
               Path("physical-package.log"),
               Path("safe-physical-validation.log"),
+              Path("physical-recovery-cleanup.txt"),
           ]
           evidence_root = Path("physical-validation-results")
           if evidence_root.is_dir() and not evidence_root.is_symlink():
@@ -292,6 +324,7 @@ jobs:
             validation-changes.txt
             physical-package.log
             safe-physical-validation.log
+            physical-recovery-cleanup.txt
             physical-validation-evidence-manifest.json
             physical-validation-results/
           if-no-files-found: warn
