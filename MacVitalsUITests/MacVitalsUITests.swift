@@ -34,27 +34,44 @@ final class MacVitalsUITests: XCTestCase {
   func testCaptureReadmeScreenshots() {
     let app = XCUIApplication()
     app.launchArguments = [
-      "-AppleLanguages", "(en)",
-      "-AppleLocale", "en_US",
+      "-AppleLanguages", "(ru)",
+      "-AppleLocale", "ru_RU",
       "-AppleInterfaceStyle", "Dark",
-      "-interfaceColorScheme", "duotone",
+      "-interfaceColorScheme", "multicolor",
     ]
     app.launch()
-    app.typeKey(",", modifierFlags: .command)
 
+    guard let statusItem = findStatusItem(in: app) else {
+      XCTFail("MacVitals status item did not appear for README screenshot capture")
+      app.terminate()
+      return
+    }
+
+    Thread.sleep(forTimeInterval: 2)
+    statusItem.click()
+    XCTAssertTrue(
+      app.staticTexts["MacVitals"].firstMatch.waitForExistence(timeout: 5),
+      "MacVitals overview popover did not open for README screenshot capture")
+    Thread.sleep(forTimeInterval: 0.5)
+    captureScreenScreenshot(named: "status-bar-overview")
+
+    statusItem.click()
+    Thread.sleep(forTimeInterval: 0.5)
+    app.typeKey(",", modifierFlags: .command)
     XCTAssertTrue(
       app.windows.firstMatch.waitForExistence(timeout: 5),
       "Preferences window did not open for README screenshot capture")
 
     captureWindowScreenshot(named: "preferences-general", in: app)
 
-    selectTab("Menu Bar", language: "en", in: app, file: #filePath, line: #line)
+    selectTab("Строка меню", language: "ru", in: app, file: #filePath, line: #line)
+    assertModernMenuBarPreview(in: app, file: #filePath, line: #line)
     captureWindowScreenshot(named: "preferences-menu-bar", in: app)
 
-    selectTab("Fans", language: "en", in: app, file: #filePath, line: #line)
+    selectTab("Вентиляторы", language: "ru", in: app, file: #filePath, line: #line)
     captureWindowScreenshot(named: "preferences-fans", in: app)
 
-    selectTab("Diagnostics", language: "en", in: app, file: #filePath, line: #line)
+    selectTab("Диагностика", language: "ru", in: app, file: #filePath, line: #line)
     captureWindowScreenshot(named: "preferences-diagnostics", in: app)
 
     app.terminate()
@@ -169,6 +186,21 @@ final class MacVitalsUITests: XCTestCase {
     app.terminate()
   }
 
+  private func findStatusItem(in app: XCUIApplication) -> XCUIElement? {
+    let labelPredicate = NSPredicate(format: "label == %@", "MacVitals")
+    let candidates = [
+      app.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
+      app.menuBars.statusItems.matching(identifier: "macVitalsStatusItem").firstMatch,
+      app.descendants(matching: .statusItem)
+        .matching(identifier: "macVitalsStatusItem").firstMatch,
+      app.statusItems.matching(labelPredicate).firstMatch,
+      app.menuBars.statusItems.matching(labelPredicate).firstMatch,
+      app.descendants(matching: .statusItem).matching(labelPredicate).firstMatch,
+    ]
+
+    return candidates.first { $0.waitForExistence(timeout: 2) }
+  }
+
   private func selectTab(
     _ localizedLabel: String,
     language: String,
@@ -190,6 +222,14 @@ final class MacVitalsUITests: XCTestCase {
       return
     }
     element.click()
+    Thread.sleep(forTimeInterval: 0.25)
+  }
+
+  private func captureScreenScreenshot(named name: String) {
+    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    attachment.name = "\(name).png"
+    attachment.lifetime = .keepAlways
+    add(attachment)
   }
 
   private func captureWindowScreenshot(
@@ -204,6 +244,7 @@ final class MacVitalsUITests: XCTestCase {
       return
     }
 
+    Thread.sleep(forTimeInterval: 0.25)
     let attachment = XCTAttachment(screenshot: window.screenshot())
     attachment.name = "\(name).png"
     attachment.lifetime = .keepAlways
