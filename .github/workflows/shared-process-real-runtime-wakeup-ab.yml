@@ -1,0 +1,202 @@
+name: Shared Process Real Runtime Wakeup A/B
+
+on:
+  pull_request:
+    branches:
+      - perf/shared-process-single-clock-9afc
+    paths:
+      - .github/workflows/shared-process-real-runtime-wakeup-ab.yml
+      - MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift
+      - scripts/process_wakeup_probe.c
+      - scripts/run_real_runtime_wakeup_ab.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-process-real-runtime-ab-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-runtime-ab:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      BASELINE_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
+      CANDIDATE_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVIDENCE_DIR: ${{ github.workspace }}/real-runtime-wakeup-evidence
+      PROBE: /private/tmp/macvitals-real-runtime-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "${BASELINE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor 4d143aaa082b0fb15ce86d19ba72c40557939692 "${BASELINE_SHA}"
+          git merge-base --is-ancestor "${BASELINE_SHA}" "${CANDIDATE_SHA}"
+          git merge-base --is-ancestor "${CANDIDATE_SHA}" "${VALIDATION_SHA}"
+
+          git diff --name-only "${BASELINE_SHA}" "${CANDIDATE_SHA}" > real-runtime-product-delta.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              "MacVitals/UI/Overview/ProcessConsumersView.swift",
+              "MacVitals/History/HistoricalConsumptionCenter.swift",
+              "MacVitalsTests/ProcessMetricsSingleClockTests.swift",
+          }
+          actual = {
+              line.strip()
+              for line in Path("real-runtime-product-delta.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"unexpected baseline→candidate product delta: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+
+          git diff --quiet "${CANDIDATE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml
+          git diff --name-only "${CANDIDATE_SHA}" "${VALIDATION_SHA}" > real-runtime-validation-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/shared-process-real-runtime-wakeup-ab.yml",
+              "MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift",
+              "scripts/process_wakeup_probe.c",
+              "scripts/run_real_runtime_wakeup_ab.sh",
+          }
+          actual = {
+              line.strip()
+              for line in Path("real-runtime-validation-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"real-runtime validation scope mismatch: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+
+          {
+            printf 'baseline_sha=%s\n' "${BASELINE_SHA}"
+            printf 'candidate_sha=%s\n' "${CANDIDATE_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+            printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
+            printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
+            printf 'method=ordinary-app-direct-launch-plus-external-xcuitest-driver\n'
+            printf 'pair_order=baseline-candidate,candidate-baseline,baseline-candidate\n'
+          } > real-runtime-source.txt
+
+      - name: Validate measurement tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/run_real_runtime_wakeup_ab.sh
+          swift format lint MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift
+          xcrun clang \
+            -std=c11 \
+            -Wall -Wextra -Werror \
+            scripts/process_wakeup_probe.c \
+            -o "${PROBE}"
+          test -x "${PROBE}"
+          "${PROBE}" "$$" 1 > real-runtime-probe-self-test.json
+          python3 - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+          value = json.loads(Path("real-runtime-probe-self-test.json").read_text(encoding="utf-8"))
+          if value.get("schemaVersion") != 1 or float(value.get("durationSeconds", 0)) < 0.9:
+              raise SystemExit("real-runtime wakeup probe self-test is invalid")
+          for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
+              metric = value.get(key)
+              if not isinstance(metric, (int, float)) or not math.isfinite(float(metric)) or float(metric) < 0:
+                  raise SystemExit(f"invalid wakeup probe field: {key}")
+          PY
+          python3 scripts/report_runtime_resources.py --self-test
+          python3 scripts/validate_runtime_resource_policy.py scripts/run_real_runtime_wakeup_ab.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run paired ordinary-application wakeup A/B
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/run_real_runtime_wakeup_ab.sh \
+            "${GITHUB_WORKSPACE}" \
+            "${EVIDENCE_DIR}" \
+            "${PROBE}"
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp real-runtime-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp real-runtime-product-delta.txt "${EVIDENCE_DIR}/product-delta.txt" 2>/dev/null || true
+          cp real-runtime-validation-changes.txt "${EVIDENCE_DIR}/validation-changes.txt" 2>/dev/null || true
+          cp real-runtime-probe-self-test.json "${EVIDENCE_DIR}/probe-self-test.json" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+
+          root = Path("real-runtime-wakeup-evidence")
+          entries = []
+          if root.is_dir() and not root.is_symlink():
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                      continue
+                  data = path.read_bytes()
+                  entries.append({
+                      "path": str(path.relative_to(root)),
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          manifest = {
+              "schemaVersion": 1,
+              "baselineSha": os.environ.get("BASELINE_SHA"),
+              "candidateSha": os.environ.get("CANDIDATE_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload real-runtime wakeup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-process-real-runtime-wakeup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: real-runtime-wakeup-evidence
+          if-no-files-found: error
+          retention-days: 1
