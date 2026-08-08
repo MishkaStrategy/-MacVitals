@@ -12,6 +12,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
   private let center = ProcessMetricsSamplingCenter.shared
   private let store = HistoricalConsumptionArchiveStore()
   private var samplingTask: Task<Void, Never>?
+  private var lifetimeContinuation: AsyncStream<Void>.Continuation?
   private var lastSnapshotAt: Date?
   private var currentInterval: TimeInterval = 1
   private var generation: UInt64 = 0
@@ -75,6 +76,8 @@ final class HistoricalConsumptionCenter: ObservableObject {
     let subscriberID = UUID()
     let delay = normalizedDelay(initialDelay)
     let refreshInterval = currentInterval
+    let lifetime = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    lifetimeContinuation = lifetime.continuation
     isCollecting = true
 
     samplingTask = Task { [weak self, center, store] in
@@ -88,34 +91,49 @@ final class HistoricalConsumptionCenter: ObservableObject {
           return
         }
       }
-      guard let self, self.generation == activeGeneration, !Task.isCancelled else { return }
+      guard self?.generation == activeGeneration, !Task.isCancelled else { return }
 
-      let stream = await center.subscribe(
+      await center.subscribe(
         subscriberID,
-        minimumInterval: refreshInterval)
+        minimumInterval: refreshInterval
+      ) { [weak self] snapshot in
+        guard let self else { return }
+        await self.consume(snapshot, generation: activeGeneration)
+      }
+
+      guard !Task.isCancelled, self?.generation == activeGeneration else {
+        await center.unsubscribe(subscriberID)
+        return
+      }
 
       if let first = await store.firstRecordedAt(),
-        self.generation == activeGeneration,
+        self?.generation == activeGeneration,
         !Task.isCancelled
       {
-        self.historyStartedAt = first
+        self?.historyStartedAt = first
       }
 
-      for await snapshot in stream {
-        if Task.isCancelled || self.generation != activeGeneration { break }
-
-        let previous = self.lastSnapshotAt
-        self.lastSnapshotAt = snapshot.timestamp
-        if let previous {
-          let elapsed = snapshot.timestamp.timeIntervalSince(previous)
-          await store.record(snapshot: snapshot, elapsed: elapsed)
-          guard !Task.isCancelled, self.generation == activeGeneration else { break }
-          self.revision &+= 1
-          self.historyStartedAt = await store.firstRecordedAt()
-        }
+      for await _ in lifetime.stream {
+        if Task.isCancelled { break }
       }
-
       await center.unsubscribe(subscriberID)
+    }
+  }
+
+  private func consume(
+    _ snapshot: ProcessMetricsSnapshot,
+    generation activeGeneration: UInt64
+  ) async {
+    guard generation == activeGeneration, isCollecting else { return }
+
+    let previous = lastSnapshotAt
+    lastSnapshotAt = snapshot.timestamp
+    if let previous {
+      let elapsed = snapshot.timestamp.timeIntervalSince(previous)
+      await store.record(snapshot: snapshot, elapsed: elapsed)
+      guard generation == activeGeneration, isCollecting else { return }
+      revision &+= 1
+      historyStartedAt = await store.firstRecordedAt()
     }
   }
 
@@ -123,6 +141,8 @@ final class HistoricalConsumptionCenter: ObservableObject {
   private func stopCollection() -> Task<Void, Never>? {
     generation &+= 1
     let previousTask = samplingTask
+    lifetimeContinuation?.finish()
+    lifetimeContinuation = nil
     previousTask?.cancel()
     samplingTask = nil
     isCollecting = false
@@ -139,6 +159,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
   }
 
   deinit {
+    lifetimeContinuation?.finish()
     samplingTask?.cancel()
   }
 }
