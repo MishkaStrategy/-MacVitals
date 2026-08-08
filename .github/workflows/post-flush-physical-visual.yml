@@ -19,7 +19,7 @@ concurrency:
 jobs:
   physical-visual:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
@@ -29,6 +29,7 @@ jobs:
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-PostFlushPhysicalVisual
       EVIDENCE_DIR: ${{ github.workspace }}/physical-visual-evidence
+      READY_FILE: ${{ github.workspace }}/physical-visual-surfaces-ready.txt
     steps:
       - name: Checkout exact validation head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -104,6 +105,17 @@ jobs:
             exit 1
           fi
 
+      - name: Validate canonical runtime evidence tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile \
+            scripts/collect_runtime_metrics.py \
+            scripts/report_runtime_resources.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/report_runtime_resources.py --self-test
+          bash -n scripts/collect_runtime_metrics.sh
+
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
 
@@ -120,7 +132,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf -- "${EVIDENCE_DIR}" "${DERIVED_DATA}"
+          rm -rf -- "${EVIDENCE_DIR}" "${DERIVED_DATA}" physical-visual-runtime
+          rm -f -- "${READY_FILE}"
           mkdir -p "${EVIDENCE_DIR}"
           cp project.yml physical-visual-project.yml
           cat >> physical-visual-project.yml <<YAML
@@ -138,6 +151,7 @@ jobs:
                 environmentVariables:
                   MACVITALS_PHYSICAL_VISUAL_EVIDENCE_DIR: "${EVIDENCE_DIR}"
                   MACVITALS_NOTCH_DIAGNOSTICS_PATH: "${EVIDENCE_DIR}/notch-controller.json"
+                  MACVITALS_PHYSICAL_VISUAL_READY_FILE: "${READY_FILE}"
           YAML
           xcodegen generate --spec physical-visual-project.yml
           xcodebuild \
@@ -152,13 +166,14 @@ jobs:
             > physical-visual-build.log 2>&1
           test -x "${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
 
-      - name: Run physical visual product-host validation
+      - name: Run physical visual product-host validation with resources
         shell: bash
         run: |
           set -Eeuo pipefail
           EXPECTED_EXECUTABLE="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
           TEST_PID=""
           OWNED_PID=""
+          CLEANUP_STATUS=0
 
           command_for_pid() {
             ps -p "$1" -o command= 2>/dev/null || true
@@ -194,10 +209,14 @@ jobs:
             set +e
             if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
               kill -TERM "${TEST_PID}" 2>/dev/null || true
-              wait "${TEST_PID}" 2>/dev/null || true
+              wait "${TEST_PID}" 2>/dev/null || CLEANUP_STATUS=1
             fi
-            terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || true
-            exit "${original_status}"
+            terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || CLEANUP_STATUS=1
+            rm -f -- "${READY_FILE}"
+            if [[ ${original_status} -ne 0 ]]; then
+              exit "${original_status}"
+            fi
+            exit "${CLEANUP_STATUS}"
           }
           trap cleanup EXIT HUP INT TERM
 
@@ -223,20 +242,61 @@ jobs:
             > physical-visual-test.log 2>&1 &
           TEST_PID=$!
 
+          ready=0
           for _ in {1..120}; do
+            owned_count=0
+            OWNED_PID=""
             while IFS= read -r pid; do
               [[ "${pid}" =~ ^[0-9]+$ ]] || continue
               command_line="$(command_for_pid "${pid}")"
+              [[ -n "${command_line}" ]] || continue
               if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
                 OWNED_PID="${pid}"
-              elif [[ -n "${command_line}" ]]; then
+                owned_count=$((owned_count + 1))
+              else
                 printf 'Foreign MacVitals process appeared and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
                 exit 1
               fi
             done < <(pgrep -x MacVitals 2>/dev/null || true)
-            kill -0 "${TEST_PID}" 2>/dev/null || break
+            if [[ ${owned_count} -gt 1 ]]; then
+              printf '%s\n' 'Multiple validation-owned MacVitals processes appeared' >&2
+              exit 1
+            fi
+            if [[ ${owned_count} -eq 1 && -f "${READY_FILE}" ]]; then
+              grep -Fxq 'surfaces-ready' "${READY_FILE}"
+              ready=1
+              break
+            fi
+            if ! kill -0 "${TEST_PID}" 2>/dev/null; then
+              break
+            fi
             sleep 1
           done
+          if [[ ${ready} -ne 1 || -z "${OWNED_PID}" ]]; then
+            tail -n 400 physical-visual-test.log || true
+            printf '%s\n' 'Physical visual host never reached the surfaces-ready resource window' >&2
+            exit 1
+          fi
+          exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}"
+
+          PROCESS_ID="${OWNED_PID}" \
+          EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
+          OUTPUT_ROOT="${GITHUB_WORKSPACE}/physical-visual-runtime" \
+            bash scripts/collect_runtime_metrics.sh 60 2 \
+            > physical-visual-runtime-collector.log 2>&1
+          cat physical-visual-runtime-collector.log
+
+          summaries="$(find physical-visual-runtime -mindepth 2 -maxdepth 2 -type f -name summary.json -print)"
+          summary_count="$(printf '%s\n' "${summaries}" | awk 'NF { count += 1 } END { print count + 0 }')"
+          [[ "${summary_count}" == "1" ]]
+          summary_path="$(printf '%s\n' "${summaries}" | awk 'NF { print; exit }')"
+          [[ -n "${summary_path}" && -f "${summary_path}" ]]
+          python3 scripts/report_runtime_resources.py \
+            "${summary_path}" \
+            --scenario post-flush-physical-visual \
+            --source-sha "${PRODUCT_BASE_SHA}" \
+            --output physical-visual-resource-summary.json \
+            | tee physical-visual-resource-summary.txt
 
           set +e
           wait "${TEST_PID}"
@@ -250,7 +310,7 @@ jobs:
           grep -Eq "PhysicalVisualAcceptanceTests.*passed|testAcceptedHUDOverviewAndHistorySurfaces.*passed" \
             physical-visual-test.log
 
-      - name: Verify physical visual evidence
+      - name: Verify physical visual and runtime evidence
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -267,6 +327,8 @@ jobs:
               raise SystemExit("physical visual summary did not pass")
           if summary.get("preferencesWrittenByValidation") is not False:
               raise SystemExit("visual validation unexpectedly wrote preferences")
+          if summary.get("resourceObservationHoldSeconds") != 70:
+              raise SystemExit("visual host did not preserve the expected resource observation window")
           if summary.get("hudPanelCountBeforePopover") != 1:
               raise SystemExit("HUD was not a single AppKit panel")
           hud = summary.get("hud") or {}
@@ -279,8 +341,12 @@ jobs:
               raise SystemExit("accepted single CPU contour profile was not active")
           if float(hud["safeAreaTop"]) <= 0 or float(hud["hardwareNotchWidth"]) <= 0:
               raise SystemExit("physical notched-display evidence is missing")
-          if int((summary.get("network") or {}).get("historyCount", 0)) < 2:
+          network = summary.get("network") or {}
+          if int(network.get("historyCount", 0)) < 2:
               raise SystemExit("network history did not become live")
+          for key in ("downloadBytesPerSecond", "uploadBytesPerSecond"):
+              if not isinstance(network.get(key), (int, float)) or not math.isfinite(float(network[key])):
+                  raise SystemExit(f"network rate is invalid: {key}")
           storage = summary.get("storage") or {}
           if int(storage.get("historyCount", 0)) < 2:
               raise SystemExit("storage history did not become live")
@@ -289,7 +355,6 @@ jobs:
           history = summary.get("historicalConsumption") or {}
           if int(history.get("memoryLeaderCount", 0)) <= 0 or history.get("firstRecordedAtPresent") is not True:
               raise SystemExit("historical leaders were not available")
-          expected = set(summary.get("captures") or [])
           required = {
               "overview.png",
               "network-history.png",
@@ -297,12 +362,37 @@ jobs:
               "historical-leaders.png",
               "fan-read-only.png",
           }
-          if expected != required:
-              raise SystemExit(f"unexpected capture set: {sorted(expected)}")
+          if set(summary.get("captures") or []) != required:
+              raise SystemExit("unexpected physical visual capture set")
           for name in sorted(required):
               path = root / name
               if path.is_symlink() or not path.is_file() or path.stat().st_size <= 1024:
                   raise SystemExit(f"capture is missing or unsafe: {name}")
+
+          resource = json.loads(Path("physical-visual-resource-summary.json").read_text(encoding="utf-8"))
+          if resource.get("schemaVersion") != 1:
+              raise SystemExit("runtime resource summary schema is invalid")
+          if resource.get("scenario") != "post-flush-physical-visual":
+              raise SystemExit("runtime resource scenario mismatch")
+          if resource.get("sourceSha") != "9afc7d9ed904bdb394ea0d0a95c1995e265c472e":
+              raise SystemExit("runtime resource source SHA mismatch")
+          process = resource.get("process") or {}
+          if process.get("name") != "MacVitals" or process.get("identityStable") is not True:
+              raise SystemExit("runtime process identity was not stable")
+          if process.get("aliveAtEnd") is not True:
+              raise SystemExit("MacVitals did not remain alive through the runtime sample window")
+          measurement = resource.get("measurement") or {}
+          if int(measurement.get("sampleCount", 0)) < 30:
+              raise SystemExit("runtime resource sample count is insufficient")
+          if float(measurement.get("durationSeconds", 0)) < 55:
+              raise SystemExit("runtime resource duration is insufficient")
+          rss = measurement.get("residentMemoryMiB") or {}
+          if not math.isfinite(float(rss.get("growth"))):
+              raise SystemExit("runtime RSS growth is non-finite")
+          threads = measurement.get("threads") or {}
+          if threads.get("max") is None or not math.isfinite(float(threads["max"])):
+              raise SystemExit("runtime thread evidence is missing")
+
           print(json.dumps({
               "result": "passed",
               "screen": [hud.get("screenWidth"), hud.get("screenHeight")],
@@ -310,9 +400,13 @@ jobs:
               "notchWidth": hud.get("hardwareNotchWidth"),
               "notchCenterX": hud.get("hardwareNotchCenterX"),
               "frame": [hud.get("frameX"), hud.get("frameY"), hud.get("frameWidth"), hud.get("frameHeight")],
-              "networkHistoryCount": (summary.get("network") or {}).get("historyCount"),
+              "networkHistoryCount": network.get("historyCount"),
               "storageHistoryCount": storage.get("historyCount"),
               "historicalLeaderCount": history.get("memoryLeaderCount"),
+              "resourceSamples": measurement.get("sampleCount"),
+              "resourceDurationSeconds": measurement.get("durationSeconds"),
+              "rssGrowthMiB": rss.get("growth"),
+              "threadsMax": threads.get("max"),
           }, indent=2, sort_keys=True))
           PY
 
@@ -329,13 +423,26 @@ jobs:
             printf 'workflowRunAttempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
             printf 'captureScope=MacVitals-owned-window-content-only\n'
             printf 'preferencesWrittenByValidation=false\n'
-            find physical-visual-evidence -type f -print | LC_ALL=C sort | while IFS= read -r path; do
-              [[ -f "${path}" && ! -L "${path}" ]]
-              printf 'file=%s bytes=%s sha256=%s\n' \
-                "${path}" \
-                "$(stat -f %z "${path}")" \
-                "$(shasum -a 256 "${path}" | awk '{print $1}')"
+            for path in \
+              physical-visual-source.txt \
+              physical-visual-changes.txt \
+              physical-visual-build.log \
+              physical-visual-test.log \
+              physical-visual-test-diagnostics.txt \
+              physical-visual-runtime-collector.log \
+              physical-visual-resource-summary.json \
+              physical-visual-resource-summary.txt; do
+              if [[ -f "${path}" && ! -L "${path}" ]]; then
+                printf 'file=%s bytes=%s sha256=%s\n' \
+                  "${path}" "$(stat -f %z "${path}")" "$(shasum -a 256 "${path}" | awk '{print $1}')"
+              fi
             done
+            find physical-visual-runtime physical-visual-evidence -type f -print 2>/dev/null \
+              | LC_ALL=C sort | while IFS= read -r path; do
+                [[ -f "${path}" && ! -L "${path}" ]]
+                printf 'file=%s bytes=%s sha256=%s\n' \
+                  "${path}" "$(stat -f %z "${path}")" "$(shasum -a 256 "${path}" | awk '{print $1}')"
+              done
           } > physical-visual-manifest.txt
 
       - name: Upload physical visual evidence
@@ -349,6 +456,10 @@ jobs:
             physical-visual-build.log
             physical-visual-test.log
             physical-visual-test-diagnostics.txt
+            physical-visual-runtime-collector.log
+            physical-visual-resource-summary.json
+            physical-visual-resource-summary.txt
+            physical-visual-runtime/
             physical-visual-manifest.txt
             physical-visual-evidence/
           if-no-files-found: warn
