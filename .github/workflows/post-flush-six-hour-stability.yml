@@ -1,0 +1,232 @@
+name: Post-Flush Six-Hour Stability
+
+on:
+  pull_request:
+    branches:
+      - fix/history-final-flush-a9d
+    paths:
+      - .github/workflows/post-flush-six-hour-stability.yml
+      - scripts/run_post_flush_long_stability.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  six-hour-stability:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 390
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      PRODUCT_BASE_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-PostFlushSixHour
+      EVIDENCE_DIR: ${{ github.workspace }}/post-flush-six-hour-evidence
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "${PRODUCT_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor 4d143aaa082b0fb15ce86d19ba72c40557939692 "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsTests MacVitalsUITests
+          git diff --name-only "${PRODUCT_BASE_SHA}" "${VALIDATION_SHA}" > six-hour-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/post-flush-six-hour-stability.yml",
+              "scripts/run_post_flush_long_stability.sh",
+          }
+          actual = {
+              line.strip()
+              for line in Path("six-hour-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"six-hour validation scope mismatch: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          {
+            printf 'product_base_sha=%s\n' "${PRODUCT_BASE_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+            printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
+            printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
+            printf 'requested_duration_seconds=21600\n'
+            printf 'sample_interval_seconds=30\n'
+            printf 'preferences_written_by_validation=false\n'
+          } > six-hour-source.txt
+
+      - name: Validate stability tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/run_post_flush_long_stability.sh
+          bash scripts/run_post_flush_long_stability.sh --self-test
+          python3 -m py_compile scripts/collect_runtime_metrics.py scripts/report_runtime_resources.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/report_runtime_resources.py --self-test
+          bash -n scripts/collect_runtime_metrics.sh
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build exact unsigned Release ARM64 application
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf -- "${DERIVED_DATA}" "${EVIDENCE_DIR}"
+          mkdir -p "${EVIDENCE_DIR}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitals \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build \
+            > "${EVIDENCE_DIR}/build.log" 2>&1
+          APP="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          EXECUTABLE="${APP}/Contents/MacOS/MacVitals"
+          test -d "${APP}" && test ! -L "${APP}"
+          test -x "${EXECUTABLE}" && test ! -L "${EXECUTABLE}"
+          test "$(lipo -archs "${EXECUTABLE}")" = arm64
+          printf 'appExecutableSha256=%s\n' "$(shasum -a 256 "${EXECUTABLE}" | awk '{print $1}')" \
+            > "${EVIDENCE_DIR}/build-identity.txt"
+
+      - name: Run exact 6-hour stability observation
+        shell: bash
+        env:
+          MACVITALS_STABILITY_DURATION_SECONDS: "21600"
+          MACVITALS_STABILITY_SAMPLE_INTERVAL_SECONDS: "30"
+          MACVITALS_STABILITY_POWER_POLL_SECONDS: "30"
+        run: |
+          set -Eeuo pipefail
+          APP="${DERIVED_DATA}/Build/Products/Release/MacVitals.app"
+          bash scripts/run_post_flush_long_stability.sh \
+            "${APP}" \
+            "${VALIDATION_SHA}" \
+            "${EVIDENCE_DIR}/observation" \
+            | tee "${EVIDENCE_DIR}/six-hour.log"
+
+      - name: Verify long-stability evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f "${EVIDENCE_DIR}/observation/LONG_STABILITY_PASSED.txt"
+          grep -Fxq 'long-stability=passed' "${EVIDENCE_DIR}/observation/LONG_STABILITY_PASSED.txt"
+          test ! -s "${EVIDENCE_DIR}/observation/new-crash-reports.txt"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import math
+          root = Path("post-flush-six-hour-evidence/observation")
+          value = json.loads((root / "long-stability-summary.json").read_text(encoding="utf-8"))
+          if value.get("schemaVersion") != 1 or value.get("result") != "passed":
+              raise SystemExit("long-stability result is not passed")
+          if value.get("productSha") != "9afc7d9ed904bdb394ea0d0a95c1995e265c472e":
+              raise SystemExit("long-stability product SHA mismatch")
+          if int(value.get("requestedDurationSeconds", 0)) != 21600:
+              raise SystemExit("long-stability requested duration mismatch")
+          if float(value.get("measuredDurationSeconds", 0)) < 21400:
+              raise SystemExit("long-stability measured duration is too short")
+          if int(value.get("sampleCount", 0)) < 700:
+              raise SystemExit("long-stability sample count is insufficient")
+          if value.get("externalPowerMaintained") is not True:
+              raise SystemExit("external power was not maintained")
+          if int(value.get("newCrashReportCount", -1)) != 0:
+              raise SystemExit("new crash reports were observed")
+          for section, keys in {
+              "cpu": ("mean", "p95", "max"),
+              "residentMemoryMiB": ("growth", "peak"),
+              "threads": ("max",),
+          }.items():
+              payload = value.get(section) or {}
+              for key in keys:
+                  number = payload.get(key)
+                  if not isinstance(number, (int, float)) or not math.isfinite(float(number)):
+                      raise SystemExit(f"invalid {section}.{key}")
+          PY
+          if pgrep -x MacVitals >/dev/null 2>&1; then
+            printf '%s\n' 'MacVitals remained running after six-hour harness cleanup:' >&2
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              ps -p "${pid}" -o pid=,command= >&2 || true
+            done < <(pgrep -x MacVitals 2>/dev/null || true)
+            exit 1
+          fi
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp six-hour-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp six-hour-changes.txt "${EVIDENCE_DIR}/changes.txt" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          root = Path("post-flush-six-hour-evidence")
+          entries = []
+          if root.is_dir() and not root.is_symlink():
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                      continue
+                  data = path.read_bytes()
+                  entries.append({
+                      "path": str(path.relative_to(root)),
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          manifest = {
+              "schemaVersion": 1,
+              "productBaseSha": os.environ.get("PRODUCT_BASE_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload six-hour evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: post-flush-six-hour-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-flush-six-hour-evidence
+          if-no-files-found: error
+          retention-days: 30
