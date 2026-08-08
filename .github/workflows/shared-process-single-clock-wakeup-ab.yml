@@ -1,0 +1,271 @@
+name: Shared Process Single-Clock Wakeup A/B
+
+on:
+  pull_request:
+    branches:
+      - perf/shared-process-single-clock-9afc
+    paths:
+      - .github/workflows/shared-process-single-clock-wakeup-ab.yml
+      - MacVitalsTests/ProcessWakeupSingleClockValidationTests.swift
+      - scripts/process_wakeup_probe.c
+      - scripts/run_single_clock_wakeup_ab.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wakeup-ab:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      LEGACY_REFERENCE_SHA: c10831e3717ca0bbf50ca0a8f784c8cca3da5411
+      PRODUCT_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-SingleClockWakeupAB
+      EVIDENCE_DIR: ${{ github.workspace }}/single-clock-wakeup-evidence
+      PROBE: /private/tmp/macvitals-single-clock-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "${PRODUCT_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor 4d143aaa082b0fb15ce86d19ba72c40557939692 "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --name-only "${PRODUCT_SHA}" "${VALIDATION_SHA}" > single-clock-wakeup-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/shared-process-single-clock-wakeup-ab.yml",
+              "MacVitalsTests/ProcessWakeupSingleClockValidationTests.swift",
+              "scripts/process_wakeup_probe.c",
+              "scripts/run_single_clock_wakeup_ab.sh",
+          }
+          actual = {
+              line.strip()
+              for line in Path("single-clock-wakeup-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(
+                  f"single-clock wakeup scope mismatch: expected={sorted(expected)} actual={sorted(actual)}"
+              )
+          PY
+          grep -F 'private let provider = ProcessMetricsProvider()' \
+            <(git show "${LEGACY_REFERENCE_SHA}:MacVitals/UI/Overview/ProcessConsumersView.swift")
+          grep -F 'for await next in stream' MacVitals/UI/Overview/ProcessConsumersView.swift
+          grep -F 'for await snapshot in stream' MacVitals/History/HistoricalConsumptionCenter.swift
+          if grep -F 'try? await Task.sleep' MacVitals/UI/Overview/ProcessConsumersView.swift; then
+            printf '%s\n' 'ProcessConsumersMonitor still contains a recurring sleep loop' >&2
+            exit 1
+          fi
+          {
+            printf 'legacy_reference_sha=%s\n' "${LEGACY_REFERENCE_SHA}"
+            printf 'product_sha=%s\n' "${PRODUCT_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+            printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
+            printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
+            printf 'comparison=same-current-binary-legacy-independent-vs-product-single-clock\n'
+            printf 'pair_order=legacy-single-clock,single-clock-legacy,legacy-single-clock\n'
+            printf 'task_power_info=true\n'
+          } > single-clock-wakeup-source.txt
+
+      - name: Validate measurement tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/run_single_clock_wakeup_ab.sh
+          swift format lint MacVitalsTests/ProcessWakeupSingleClockValidationTests.swift
+          test -f scripts/collect_runtime_metrics.sh
+          test -f scripts/report_runtime_resources.py
+          xcrun clang \
+            -std=c11 \
+            -Wall -Wextra -Werror \
+            scripts/process_wakeup_probe.c \
+            -o "${PROBE}"
+          test -x "${PROBE}"
+          "${PROBE}" "$$" 1 > wakeup-probe-self-test.json
+          python3 - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+          value = json.loads(Path("wakeup-probe-self-test.json").read_text(encoding="utf-8"))
+          if value.get("schemaVersion") != 1 or float(value.get("durationSeconds", 0)) < 0.9:
+              raise SystemExit("wakeup probe self-test is invalid")
+          for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
+              metric = value.get(key)
+              if not isinstance(metric, (int, float)) or not math.isfinite(float(metric)) or float(metric) < 0:
+                  raise SystemExit(f"invalid wakeup probe field: {key}")
+          PY
+          python3 scripts/report_runtime_resources.py --self-test
+          python3 scripts/validate_runtime_resource_policy.py scripts/run_single_clock_wakeup_ab.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run paired same-runner wakeup A/B
+        shell: bash
+        env:
+          PRODUCT_SHA: ${{ env.PRODUCT_SHA }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/run_single_clock_wakeup_ab.sh \
+            "${GITHUB_WORKSPACE}" \
+            "${DERIVED_DATA}" \
+            "${EVIDENCE_DIR}" \
+            "${PROBE}"
+
+      - name: Build quantitative A/B comparison
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import math
+          import statistics
+
+          root = Path("single-clock-wakeup-evidence")
+          groups = {}
+          for label in ("legacy", "single-clock"):
+              rows = []
+              for index in (1, 2, 3):
+                  run = root / label / f"run-{index}"
+                  proc = json.loads((run / "proc-rusage-wakeups.json").read_text(encoding="utf-8"))
+                  task = json.loads((run / "task-power-wakeups.json").read_text(encoding="utf-8"))
+                  resources = json.loads((run / "resource-summary.json").read_text(encoding="utf-8"))
+                  measurement = resources["measurement"]
+                  row = {
+                      "iteration": index,
+                      "procInterruptWakeupsPerSecond": float(proc["interruptWakeupsPerSecond"]),
+                      "procPackageIdleWakeupsPerSecond": float(proc["packageIdleWakeupsPerSecond"]),
+                      "taskInterruptWakeupsPerSecond": float(task["interruptWakeupsPerSecond"]),
+                      "taskPlatformIdleWakeupsPerSecond": float(task["platformIdleWakeupsPerSecond"]),
+                      "taskTimerWakeupsBin1PerSecond": float(task["timerWakeupsBin1PerSecond"]),
+                      "taskTimerWakeupsBin2PerSecond": float(task["timerWakeupsBin2PerSecond"]),
+                      "taskTotalTimerWakeupsPerSecond": float(task["totalTimerWakeupsPerSecond"]),
+                      "cpuMeanPercent": float(measurement["cpuPercent"]["mean"]),
+                      "rssGrowthMiB": float(measurement["residentMemoryMiB"]["growth"]),
+                      "threadsMax": float(measurement["threads"]["max"]),
+                  }
+                  for key, value in row.items():
+                      if key != "iteration" and not math.isfinite(float(value)):
+                          raise SystemExit(f"non-finite {label} measurement: {key}")
+                  rows.append(row)
+
+              def median(key):
+                  return statistics.median(row[key] for row in rows)
+
+              groups[label] = {
+                  "runs": rows,
+                  "medianProcInterruptWakeupsPerSecond": median("procInterruptWakeupsPerSecond"),
+                  "medianTaskInterruptWakeupsPerSecond": median("taskInterruptWakeupsPerSecond"),
+                  "medianTaskPlatformIdleWakeupsPerSecond": median("taskPlatformIdleWakeupsPerSecond"),
+                  "medianTaskTotalTimerWakeupsPerSecond": median("taskTotalTimerWakeupsPerSecond"),
+                  "medianCpuMeanPercent": median("cpuMeanPercent"),
+              }
+
+          legacy = groups["legacy"]
+          current = groups["single-clock"]
+          def ratio(new, old):
+              return None if old == 0 else new / old
+
+          result = {
+              "schemaVersion": 1,
+              "result": "collected-pending-independent-review",
+              "productSha": "1a008f6955cc628c2aac1acd50c1f6010ed896f9",
+              "legacyReferenceSha": "c10831e3717ca0bbf50ca0a8f784c8cca3da5411",
+              "scenario": "two-concurrent-process-consumers-current-provider-legacy-pull-vs-product-single-clock",
+              "sameBinary": True,
+              "sameRunner": True,
+              "repetitionsPerModel": 3,
+              "pairOrder": ["legacy-single-clock", "single-clock-legacy", "legacy-single-clock"],
+              "metrics": groups,
+              "ratiosSingleClockOverLegacy": {
+                  "procInterruptWakeups": ratio(current["medianProcInterruptWakeupsPerSecond"], legacy["medianProcInterruptWakeupsPerSecond"]),
+                  "taskInterruptWakeups": ratio(current["medianTaskInterruptWakeupsPerSecond"], legacy["medianTaskInterruptWakeupsPerSecond"]),
+                  "taskPlatformIdleWakeups": ratio(current["medianTaskPlatformIdleWakeupsPerSecond"], legacy["medianTaskPlatformIdleWakeupsPerSecond"]),
+                  "taskTotalTimerWakeups": ratio(current["medianTaskTotalTimerWakeupsPerSecond"], legacy["medianTaskTotalTimerWakeupsPerSecond"]),
+                  "cpuMean": ratio(current["medianCpuMeanPercent"], legacy["medianCpuMeanPercent"]),
+              },
+              "classification": {
+                  "taskTimerWakeupsLower": current["medianTaskTotalTimerWakeupsPerSecond"] < legacy["medianTaskTotalTimerWakeupsPerSecond"],
+                  "taskInterruptWakeupsNoRegression": current["medianTaskInterruptWakeupsPerSecond"] <= legacy["medianTaskInterruptWakeupsPerSecond"],
+                  "cpuNoRegression": current["medianCpuMeanPercent"] <= legacy["medianCpuMeanPercent"],
+              },
+              "acceptanceNote": "Workflow only validates completeness and provenance. Direction/magnitude are independently reviewed; no invented threshold is enforced by CI.",
+          }
+          (root / "single-clock-wakeup-comparison.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp single-clock-wakeup-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp single-clock-wakeup-changes.txt "${EVIDENCE_DIR}/changes.txt" 2>/dev/null || true
+          cp wakeup-probe-self-test.json "${EVIDENCE_DIR}/probe-self-test.json" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          root = Path("single-clock-wakeup-evidence")
+          entries = []
+          if root.is_dir() and not root.is_symlink():
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                      continue
+                  data = path.read_bytes()
+                  entries.append({
+                      "path": str(path.relative_to(root)),
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          manifest = {
+              "schemaVersion": 1,
+              "productSha": os.environ.get("PRODUCT_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload single-clock wakeup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-process-single-clock-wakeup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: single-clock-wakeup-evidence
+          if-no-files-found: error
+          retention-days: 30
