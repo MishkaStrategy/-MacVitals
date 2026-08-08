@@ -134,7 +134,7 @@ prepare_source() {
         MACVITALS_WAKEUP_AB_TASK_POWER_FILE: "${marker_root}/task-power.json"
 YAML
     xcodegen generate --spec single-clock-wakeup-project.yml
-    xcodebuild \
+    if ! xcodebuild \
       -project MacVitals.xcodeproj \
       -scheme MacVitalsSingleClockWakeupAB \
       -destination 'platform=macOS' \
@@ -143,7 +143,10 @@ YAML
       ONLY_ACTIVE_ARCH=YES \
       CODE_SIGNING_ALLOWED=NO \
       build-for-testing \
-      > "${EVIDENCE_DIR}/build.log" 2>&1
+      > "${EVIDENCE_DIR}/build.log" 2>&1; then
+      tail -n 300 "${EVIDENCE_DIR}/build.log" >&2 || true
+      return 1
+    fi
     test -x "${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
   )
 }
@@ -297,7 +300,10 @@ PY
 
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail "native Apple Silicon macOS is required"
 [[ -x "${PROBE}" ]] || fail "wakeup probe is missing"
-test "$(git -C "${PRODUCT_ROOT}" rev-parse HEAD)" = "${PRODUCT_SHA}" || fail "checkout does not match exact product SHA"
+git -C "${PRODUCT_ROOT}" merge-base --is-ancestor "${PRODUCT_SHA}" HEAD || \
+  fail "validation head does not descend from product SHA"
+git -C "${PRODUCT_ROOT}" diff --quiet "${PRODUCT_SHA}" HEAD -- MacVitals project.yml MacVitalsUITests || \
+  fail "validation branch modifies product source or project contracts"
 
 rm -rf -- "${DERIVED_DATA}" "${EVIDENCE_DIR}"
 mkdir -p "${EVIDENCE_DIR}/legacy" "${EVIDENCE_DIR}/single-clock" "${EVIDENCE_DIR}/markers"
