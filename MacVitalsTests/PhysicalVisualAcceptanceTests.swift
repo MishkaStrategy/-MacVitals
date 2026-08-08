@@ -148,8 +148,12 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       settings: settings,
       fanControl: appDelegate.fanControl)
     let memoryWindow = try await waitForWindow(title: L10n.string("Memory"), timeout: 5)
+    let tabLabels = [
+      ConsumptionHistoryL10n.string("Overview"),
+      ConsumptionHistoryL10n.string("Consumption leaders"),
+    ]
     let segmented = try XCTUnwrap(
-      findSegmentedControl(in: try XCTUnwrap(memoryWindow.contentView), minimumSegments: 2),
+      findSegmentedControl(in: try XCTUnwrap(memoryWindow.contentView), labels: tabLabels),
       "Metric detail window did not expose the Overview / Consumption leaders segmented control")
     segmented.selectedSegment = 1
     _ = segmented.sendAction(segmented.action, to: segmented.target)
@@ -304,12 +308,15 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     try data.write(to: url, options: .atomic)
   }
 
-  private func findSegmentedControl(in view: NSView, minimumSegments: Int) -> NSSegmentedControl? {
-    if let control = view as? NSSegmentedControl, control.segmentCount >= minimumSegments {
+  private func findSegmentedControl(in view: NSView, labels: [String]) -> NSSegmentedControl? {
+    if let control = view as? NSSegmentedControl,
+      control.segmentCount == labels.count,
+      labels.indices.allSatisfy({ control.label(forSegment: $0) == labels[$0] })
+    {
       return control
     }
     for subview in view.subviews {
-      if let found = findSegmentedControl(in: subview, minimumSegments: minimumSegments) {
+      if let found = findSegmentedControl(in: subview, labels: labels) {
         return found
       }
     }
