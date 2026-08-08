@@ -66,10 +66,19 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       enabled: true,
       configuration: .minimal)
 
+    let diagnosticsURL = URL(fileURLWithPath: diagnosticsPath)
+    var hud: [String: Any] = [:]
     try await waitUntil(timeout: 8) {
-      FileManager.default.fileExists(atPath: diagnosticsPath)
+      guard let candidate = readJSONIfAvailable(diagnosticsURL),
+        candidate["panelVisible"] as? Bool == true,
+        candidate["frameWidth"] is Double,
+        candidate["hardwareNotchWidth"] is Double
+      else {
+        return false
+      }
+      hud = candidate
+      return true
     }
-    let hud = try readJSON(URL(fileURLWithPath: diagnosticsPath))
     try validateHUDDiagnostics(hud)
 
     let visibleHUDPanels = NSApp.windows.compactMap { $0 as? NSPanel }
@@ -163,8 +172,6 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       to: URL(fileURLWithPath: readyPath),
       options: .atomic)
 
-    // Keep the exact product host alive after all accepted surfaces are visible so the
-    // external canonical collector can obtain a full 60-second CPU/RSS/thread window.
     try await Task.sleep(for: .seconds(70))
 
     let summary: [String: Any] = [
@@ -317,9 +324,14 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     return mirror.children.first?.value
   }
 
-  private func readJSON(_ url: URL) throws -> [String: Any] {
-    let data = try Data(contentsOf: url)
-    return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+  private func readJSONIfAvailable(_ url: URL) -> [String: Any]? {
+    guard let data = try? Data(contentsOf: url),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let payload = object as? [String: Any]
+    else {
+      return nil
+    }
+    return payload
   }
 
   private enum ValidationError: Error {
