@@ -27,7 +27,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     env:
-      BASELINE_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
+      BASELINE_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
       CANDIDATE_SHA: 87788f5c11eae654bb9abd9f4a53bbd43b955118
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       OBSERVATION_SECONDS: 180
@@ -63,7 +63,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           expected = {
+              "MacVitals/History/HistoricalConsumptionCenter.swift",
               "MacVitals/UI/Overview/ProcessConsumersView.swift",
+              "MacVitalsTests/ProcessMetricsSingleClockTests.swift",
               "MacVitalsTests/ProcessSamplingClockToleranceTests.swift",
           }
           actual = {
@@ -109,7 +111,7 @@ jobs:
             printf 'method=balanced-ordinary-release-app-identical-one-shot-validation-hook\n'
             printf 'pair_order=baseline-candidate,candidate-baseline,baseline-candidate,candidate-baseline\n'
             printf 'observation_seconds=%s\n' "${OBSERVATION_SECONDS}"
-            printf 'product_hypothesis=single-shared-clock-bounded-sleep-tolerance\n'
+            printf 'product_hypothesis=end-to-end-one-clock-plus-bounded-tolerance-vs-accepted-shared-pull-baseline\n'
             printf 'xcuitest=false\n'
           } > real-runtime-source.txt
 
