@@ -77,6 +77,16 @@ final class ProcessMetricsSamplingCenterValidationTests: XCTestCase {
 
   @MainActor
   func testLivePrimaryConsumerAndAutonomousHistoryShareSamplingHost() async throws {
+    let environment = ProcessInfo.processInfo.environment
+    guard
+      let readyPath = environment["MACVITALS_SHARED_SAMPLING_READY_FILE"],
+      !readyPath.isEmpty,
+      let completePath = environment["MACVITALS_SHARED_SAMPLING_COMPLETE_FILE"],
+      !completePath.isEmpty
+    else {
+      throw XCTSkip("Live shared-sampling evidence requires explicit validation marker paths")
+    }
+
     let history = HistoricalConsumptionCenter.shared
     let monitor = ProcessConsumersMonitor()
     let initialRevision = history.revision
@@ -93,9 +103,7 @@ final class ProcessMetricsSamplingCenterValidationTests: XCTestCase {
     }
 
     let firstLiveTimestamp = monitor.snapshot.timestamp
-    try writeMarker(
-      environmentKey: "MACVITALS_SHARED_SAMPLING_READY_FILE",
-      value: "primary-and-history-active\n")
+    try writeMarker(path: readyPath, value: "primary-and-history-active\n")
 
     try await Task.sleep(for: .seconds(70))
 
@@ -116,7 +124,7 @@ final class ProcessMetricsSamplingCenterValidationTests: XCTestCase {
       "Live process snapshot and autonomous history have no shared application identity")
 
     try writeMarker(
-      environmentKey: "MACVITALS_SHARED_SAMPLING_COMPLETE_FILE",
+      path: completePath,
       value: "history-advanced-and-overlapped-live-snapshot\n")
   }
 
@@ -131,13 +139,14 @@ final class ProcessMetricsSamplingCenterValidationTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(200))
     }
     XCTFail("Timed out waiting for live primary/history multi-consumer state")
+    throw ValidationError.timedOut
   }
 
-  private func writeMarker(environmentKey: String, value: String) throws {
-    guard let path = ProcessInfo.processInfo.environment[environmentKey], !path.isEmpty else {
-      XCTFail("Missing validation marker environment: \(environmentKey)")
-      return
-    }
+  private func writeMarker(path: String, value: String) throws {
     try Data(value.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+  }
+
+  private enum ValidationError: Error {
+    case timedOut
   }
 }
