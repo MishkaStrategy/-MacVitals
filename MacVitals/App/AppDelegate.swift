@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let notificationCoordinator = NotificationCoordinator()
   private let consumptionHistory = HistoricalConsumptionCenter.shared
   private let autonomousHistoryEnabled = AutonomousSamplingPolicy.isEnabled
+  private let historyTermination = HistoricalConsumptionTerminationCoordinator()
   private var statusController: StatusItemController?
   private var cancellables = Set<AnyCancellable>()
 
@@ -70,10 +71,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard autonomousHistoryEnabled else { return .terminateNow }
+
+    let began = historyTermination.begin(
+      flush: { [weak self] in
+        await self?.consumptionHistory.stopAndFlush()
+      },
+      completion: { [weak sender] outcome in
+        if outcome == .timedOut {
+          Logger.lifecycle.warning("Historical consumption final flush timed out; terminating")
+        }
+        sender?.reply(toApplicationShouldTerminate: true)
+      })
+    return began ? .terminateLater : .terminateLater
+  }
+
   func applicationWillTerminate(_ notification: Notification) {
+    historyTermination.cancel()
     fanControl.setAllAutomatic()
     fanControl.invalidateConnection()
-    consumptionHistory.stop()
+    consumptionHistory.stop(flush: false)
     coordinator.stop()
     coordinator.onSnapshot = nil
     notificationCoordinator.onAuthorizationStateChange = nil
