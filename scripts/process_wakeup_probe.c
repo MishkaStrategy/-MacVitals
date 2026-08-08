@@ -7,6 +7,8 @@
 #include <sys/resource.h>
 #include <time.h>
 
+/* RUSAGE_INFO_V4 wakeup counters are cumulative; compare deltas over fixed windows. */
+
 static void fail(const char *message) {
   fprintf(stderr, "process-wakeup-probe: %s\n", message);
   exit(1);
