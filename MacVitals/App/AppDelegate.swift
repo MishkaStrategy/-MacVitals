@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard autonomousHistoryEnabled else { return .terminateNow }
 
-    let began = historyTermination.begin(
+    historyTermination.begin(
       flush: { [weak self] in
         await self?.consumptionHistory.stopAndFlush()
       },
@@ -84,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sender?.reply(toApplicationShouldTerminate: true)
       })
-    return began ? .terminateLater : .terminateLater
+    return .terminateLater
   }
 
   func applicationWillTerminate(_ notification: Notification) {
