@@ -10,10 +10,12 @@ actor ProcessMetricsSamplingCenter {
     @Sendable ([RunningApplicationDescriptor]) async -> ProcessMetricsSnapshot
   typealias RunningApplicationsProvider =
     @Sendable () async -> [RunningApplicationDescriptor]
+  typealias SnapshotDelivery = @Sendable (ProcessMetricsSnapshot) async -> Void
 
   private struct Subscription {
+    let token: UInt64
     let minimumInterval: TimeInterval
-    let continuation: AsyncStream<ProcessMetricsSnapshot>.Continuation
+    let delivery: SnapshotDelivery
     var lastDeliveredAt: Date?
   }
 
@@ -25,6 +27,7 @@ actor ProcessMetricsSamplingCenter {
   private var samplingTask: Task<Void, Never>?
   private var resetTask: Task<Void, Never>?
   private var clockGeneration: UInt64 = 0
+  private var nextSubscriptionToken: UInt64 = 0
 
   init() {
     let provider = ProcessMetricsProvider()
@@ -58,53 +61,50 @@ actor ProcessMetricsSamplingCenter {
     self.runningApplicationsProvider = runningApplicationsProvider
   }
 
-  func subscribe(_ id: UUID, minimumInterval: TimeInterval) async
-    -> AsyncStream<ProcessMetricsSnapshot>
-  {
+  func subscribe(
+    _ id: UUID,
+    minimumInterval: TimeInterval,
+    delivery: @escaping SnapshotDelivery
+  ) async {
     let interval = normalizedInterval(minimumInterval)
     let previousMinimum = activeMinimumInterval()
     let wasIdle = subscribers.isEmpty
 
-    if let replaced = subscribers.removeValue(forKey: id) {
-      replaced.continuation.finish()
-    }
-
-    let pair = AsyncStream<ProcessMetricsSnapshot>.makeStream(
-      bufferingPolicy: .bufferingNewest(1))
-    var subscription = Subscription(
+    nextSubscriptionToken &+= 1
+    let token = nextSubscriptionToken
+    subscribers[id] = Subscription(
+      token: token,
       minimumInterval: interval,
-      continuation: pair.continuation,
+      delivery: delivery,
       lastDeliveredAt: nil)
-
-    if !wasIdle,
-      ProcessSamplingCachePolicy.isFresh(
-        timestamp: cachedSnapshot.timestamp,
-        now: Date(),
-        minimumInterval: interval)
-    {
-      pair.continuation.yield(cachedSnapshot)
-      subscription.lastDeliveredAt = cachedSnapshot.timestamp
-    }
-    subscribers[id] = subscription
 
     if wasIdle {
       cachedSnapshot = .empty
       await resetProviderForNewSession()
-      guard !subscribers.isEmpty else { return pair.stream }
+      guard subscribers[id]?.token == token, !subscribers.isEmpty else { return }
       startSamplingLoop()
-    } else if cadenceChanged(from: previousMinimum, to: activeMinimumInterval()) {
+      return
+    }
+
+    if ProcessSamplingCachePolicy.isFresh(
+      timestamp: cachedSnapshot.timestamp,
+      now: Date(),
+      minimumInterval: interval)
+    {
+      await deliverCachedSnapshot(cachedSnapshot, to: id, token: token)
+    }
+    guard subscribers[id]?.token == token else { return }
+
+    if cadenceChanged(from: previousMinimum, to: activeMinimumInterval()) {
       restartSamplingLoop()
     } else if samplingTask == nil, resetTask == nil {
       startSamplingLoop()
     }
-
-    return pair.stream
   }
 
   func unsubscribe(_ id: UUID) {
     let previousMinimum = activeMinimumInterval()
-    guard let removed = subscribers.removeValue(forKey: id) else { return }
-    removed.continuation.finish()
+    guard subscribers.removeValue(forKey: id) != nil else { return }
 
     guard !subscribers.isEmpty else {
       stopSamplingLoop(clearCache: true)
@@ -173,7 +173,10 @@ actor ProcessMetricsSamplingCenter {
       }
 
       cachedSnapshot = snapshot
-      publish(snapshot)
+      await publish(snapshot, generation: generation)
+      guard !Task.isCancelled, generation == clockGeneration, !subscribers.isEmpty else {
+        return
+      }
 
       guard let interval = activeMinimumInterval() else { return }
       do {
@@ -184,9 +187,11 @@ actor ProcessMetricsSamplingCenter {
     }
   }
 
-  private func publish(_ snapshot: ProcessMetricsSnapshot) {
+  private func publish(_ snapshot: ProcessMetricsSnapshot, generation: UInt64) async {
     for id in Array(subscribers.keys) {
-      guard var subscription = subscribers[id] else { continue }
+      guard generation == clockGeneration else { return }
+      guard let subscription = subscribers[id] else { continue }
+
       let shouldDeliver: Bool
       if let previous = subscription.lastDeliveredAt {
         let elapsed = snapshot.timestamp.timeIntervalSince(previous)
@@ -194,12 +199,37 @@ actor ProcessMetricsSamplingCenter {
       } else {
         shouldDeliver = true
       }
-
       guard shouldDeliver else { continue }
-      subscription.continuation.yield(snapshot)
-      subscription.lastDeliveredAt = snapshot.timestamp
-      subscribers[id] = subscription
+
+      let token = subscription.token
+      await subscription.delivery(snapshot)
+      guard generation == clockGeneration else { return }
+      guard var current = subscribers[id], current.token == token else { continue }
+      if let deliveredAt = current.lastDeliveredAt,
+        deliveredAt > snapshot.timestamp
+      {
+        continue
+      }
+      current.lastDeliveredAt = snapshot.timestamp
+      subscribers[id] = current
     }
+  }
+
+  private func deliverCachedSnapshot(
+    _ snapshot: ProcessMetricsSnapshot,
+    to id: UUID,
+    token: UInt64
+  ) async {
+    guard let subscription = subscribers[id], subscription.token == token else { return }
+    await subscription.delivery(snapshot)
+    guard var current = subscribers[id], current.token == token else { return }
+    if let deliveredAt = current.lastDeliveredAt,
+      deliveredAt > snapshot.timestamp
+    {
+      return
+    }
+    current.lastDeliveredAt = snapshot.timestamp
+    subscribers[id] = current
   }
 
   private func activeMinimumInterval() -> TimeInterval? {
@@ -227,59 +257,74 @@ final class ProcessConsumersMonitor: ObservableObject {
 
   private let center = ProcessMetricsSamplingCenter.shared
   private var task: Task<Void, Never>?
+  private var lifetimeContinuation: AsyncStream<Void>.Continuation?
 
   func start(interval: TimeInterval) {
+    guard task == nil else { return }
+    start(interval: interval, waitingFor: nil)
+  }
+
+  func restart(interval: TimeInterval) {
+    let previous = stopCollection()
+    start(interval: interval, waitingFor: previous)
+  }
+
+  func stop() {
+    _ = stopCollection()
+  }
+
+  private func start(
+    interval: TimeInterval,
+    waitingFor previousTask: Task<Void, Never>?
+  ) {
     guard task == nil else { return }
     isRunning = true
     let refreshInterval = min(30, max(1, interval))
     let subscriberID = UUID()
-    task = Task { [weak self, center] in
-      let stream = await center.subscribe(
-        subscriberID,
-        minimumInterval: refreshInterval)
+    let lifetime = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    lifetimeContinuation = lifetime.continuation
 
-      for await next in stream {
-        if Task.isCancelled { break }
-        guard let self else { break }
-        self.snapshot = next
+    task = Task { [weak self, center] in
+      await previousTask?.value
+      guard !Task.isCancelled else { return }
+
+      await center.subscribe(
+        subscriberID,
+        minimumInterval: refreshInterval
+      ) { [weak self] next in
+        guard let self else { return }
+        await self.receive(next)
       }
 
+      guard !Task.isCancelled else {
+        await center.unsubscribe(subscriberID)
+        return
+      }
+
+      for await _ in lifetime.stream {
+        if Task.isCancelled { break }
+      }
       await center.unsubscribe(subscriberID)
     }
   }
 
-  func restart(interval: TimeInterval) {
+  private func receive(_ next: ProcessMetricsSnapshot) {
+    snapshot = next
+  }
+
+  @discardableResult
+  private func stopCollection() -> Task<Void, Never>? {
     let previous = task
+    lifetimeContinuation?.finish()
+    lifetimeContinuation = nil
     previous?.cancel()
     task = nil
     isRunning = false
-
-    isRunning = true
-    let refreshInterval = min(30, max(1, interval))
-    let subscriberID = UUID()
-    task = Task { [weak self, center] in
-      await previous?.value
-      guard !Task.isCancelled else { return }
-
-      let stream = await center.subscribe(
-        subscriberID,
-        minimumInterval: refreshInterval)
-      for await next in stream {
-        if Task.isCancelled { break }
-        guard let self else { break }
-        self.snapshot = next
-      }
-      await center.unsubscribe(subscriberID)
-    }
-  }
-
-  func stop() {
-    task?.cancel()
-    task = nil
-    isRunning = false
+    return previous
   }
 
   deinit {
+    lifetimeContinuation?.finish()
     task?.cancel()
   }
 }
