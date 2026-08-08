@@ -170,6 +170,7 @@ jobs:
             build-for-testing \
             > shared-sampling-ui-build.log 2>&1
           test -x "${UI_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+          test -x "${UI_DERIVED_DATA}/Build/Products/Debug/MacVitalsUITests-Runner.app/Contents/MacOS/MacVitalsUITests-Runner"
 
       - name: Run primary plus historical multi-consumer runtime evidence
         shell: bash
@@ -178,31 +179,126 @@ jobs:
           READY_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           COMPLETE_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-complete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           EXPECTED_EXECUTABLE="${UI_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+          UI_RUNNER_EXECUTABLE="${UI_DERIVED_DATA}/Build/Products/Debug/MacVitalsUITests-Runner.app/Contents/MacOS/MacVitalsUITests-Runner"
           TEST_LOG="shared-sampling-ui-test.log"
           TEST_PID=""
           OWNED_PID=""
+          UI_RUNNER_PID=""
+          CLEANUP_STATUS=0
+
+          command_for_pid() {
+            ps -p "$1" -o command= 2>/dev/null || true
+          }
+
+          exact_pid_is_owned() {
+            local pid="$1" executable="$2" command_line
+            [[ "${pid}" =~ ^[0-9]+$ && -n "${executable}" ]] || return 1
+            kill -0 "${pid}" 2>/dev/null || return 1
+            command_line="$(command_for_pid "${pid}")"
+            [[ "${command_line}" == "${executable}" || "${command_line}" == "${executable} "* ]]
+          }
+
+          terminate_exact_pid() {
+            local pid="$1" executable="$2" alive=0
+            [[ -n "${pid}" ]] || return 0
+            exact_pid_is_owned "${pid}" "${executable}" || return 0
+            kill -TERM "${pid}" 2>/dev/null || true
+            for _ in {1..40}; do
+              exact_pid_is_owned "${pid}" "${executable}" || return 0
+              sleep 0.25
+            done
+            if exact_pid_is_owned "${pid}" "${executable}"; then
+              kill -KILL "${pid}" 2>/dev/null || true
+            fi
+            for _ in {1..20}; do
+              if exact_pid_is_owned "${pid}" "${executable}"; then
+                alive=1
+                sleep 0.25
+              else
+                return 0
+              fi
+            done
+            [[ ${alive} -eq 0 ]]
+          }
+
+          active_validation_xcodebuild_for_derived_data() {
+            local derived_data="$1" pid command_line
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(command_for_pid "${pid}")"
+              [[ -n "${command_line}" ]] || continue
+              if [[ "${command_line}" == *"MacVitalsSharedSamplingValidation"* \
+                && "${command_line}" == *"-derivedDataPath ${derived_data}"* ]]; then
+                return 0
+              fi
+            done < <(pgrep -x xcodebuild 2>/dev/null || true)
+            return 1
+          }
+
+          recover_stale_validation_ui_runners() {
+            local pid command_line executable suffix derived_data
+            suffix="/Build/Products/Debug/MacVitalsUITests-Runner.app/Contents/MacOS/MacVitalsUITests-Runner"
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(command_for_pid "${pid}")"
+              [[ -n "${command_line}" ]] || continue
+              executable="${command_line%% *}"
+              if [[ "${executable}" != *"/GitHubActionsRunners/"* \
+                || "${executable}" != *"/_work/-MacVitals/-MacVitals/DerivedData-SharedSamplingUIValidation${suffix}" ]]; then
+                printf 'Foreign UI test runner detected and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+                return 1
+              fi
+              derived_data="${executable%${suffix}}"
+              if active_validation_xcodebuild_for_derived_data "${derived_data}"; then
+                printf 'Active shared-sampling UI test runner detected and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+                return 1
+              fi
+              printf 'Recovering stale validation-owned UI test runner: pid=%s\n' "${pid}"
+              terminate_exact_pid "${pid}" "${executable}" || return 1
+            done < <(pgrep -x MacVitalsUITests-Runner 2>/dev/null || true)
+            [[ -z "$(pgrep -x MacVitalsUITests-Runner 2>/dev/null || true)" ]]
+          }
+
+          capture_current_ui_runner() {
+            local pid command_line matched=0
+            UI_RUNNER_PID=""
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(command_for_pid "${pid}")"
+              [[ -n "${command_line}" ]] || continue
+              if [[ "${command_line}" == "${UI_RUNNER_EXECUTABLE}" || "${command_line}" == "${UI_RUNNER_EXECUTABLE} "* ]]; then
+                UI_RUNNER_PID="${pid}"
+                matched=$((matched + 1))
+              else
+                printf 'Foreign UI test runner appeared and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+                return 1
+              fi
+            done < <(pgrep -x MacVitalsUITests-Runner 2>/dev/null || true)
+            [[ ${matched} -le 1 ]]
+          }
 
           cleanup() {
             local original_status="$?"
             trap - EXIT HUP INT TERM
             set +e
+            terminate_exact_pid "${UI_RUNNER_PID}" "${UI_RUNNER_EXECUTABLE}" || CLEANUP_STATUS=1
             if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
               kill -TERM "${TEST_PID}" 2>/dev/null || true
-              wait "${TEST_PID}" 2>/dev/null || true
+              wait "${TEST_PID}" 2>/dev/null || CLEANUP_STATUS=1
             fi
-            if [[ -n "${OWNED_PID}" && -x "${EXPECTED_EXECUTABLE}" ]] && kill -0 "${OWNED_PID}" 2>/dev/null; then
-              command_line="$(ps -p "${OWNED_PID}" -o command= 2>/dev/null || true)"
-              if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
-                kill -TERM "${OWNED_PID}" 2>/dev/null || true
-              fi
-            fi
+            terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || CLEANUP_STATUS=1
             rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
-            exit "${original_status}"
+            if [[ ${original_status} -ne 0 ]]; then
+              exit "${original_status}"
+            fi
+            exit "${CLEANUP_STATUS}"
           }
           trap cleanup EXIT HUP INT TERM
 
           rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
           rm -rf -- shared-sampling-runtime
+
+          recover_stale_validation_ui_runners
 
           if pgrep -x MacVitals >/dev/null 2>&1; then
             printf '%s\n' 'Existing MacVitals process detected; shared-sampling UI validation fails closed and will not terminate it:' >&2
@@ -230,6 +326,7 @@ jobs:
 
           ready=0
           for _ in {1..180}; do
+            capture_current_ui_runner || exit 1
             if [[ -f "${READY_FILE}" ]]; then
               ready=1
               break
@@ -246,11 +343,13 @@ jobs:
           fi
           grep -Fxq 'ready' "${READY_FILE}"
           [[ -x "${EXPECTED_EXECUTABLE}" ]]
+          [[ -n "${UI_RUNNER_PID}" ]]
+          exact_pid_is_owned "${UI_RUNNER_PID}" "${UI_RUNNER_EXECUTABLE}"
 
           owned_count=0
           while IFS= read -r pid; do
             [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-            command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+            command_line="$(command_for_pid "${pid}")"
             [[ -n "${command_line}" ]] || continue
             if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
               OWNED_PID="${pid}"
