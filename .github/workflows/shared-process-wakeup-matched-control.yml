@@ -1,0 +1,285 @@
+name: Shared Process Wakeup Matched Control
+
+on:
+  pull_request:
+    branches:
+      - perf/shared-process-single-clock-9afc
+    paths:
+      - .github/workflows/shared-process-wakeup-matched-control.yml
+      - MacVitalsTests/ProcessWakeupMatchedControlTests.swift
+      - scripts/process_wakeup_probe.c
+      - scripts/run_matched_control_wakeup_ab.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matched-control:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      PRODUCT_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-WakeupMatchedControl
+      EVIDENCE_DIR: ${{ github.workspace }}/matched-control-wakeup-evidence
+      PROBE: /private/tmp/macvitals-matched-control-wakeup-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor 4d143aaa082b0fb15ce86d19ba72c40557939692 "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --name-only "${PRODUCT_SHA}" "${VALIDATION_SHA}" > matched-control-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/shared-process-wakeup-matched-control.yml",
+              "MacVitalsTests/ProcessWakeupMatchedControlTests.swift",
+              "scripts/process_wakeup_probe.c",
+              "scripts/run_matched_control_wakeup_ab.sh",
+          }
+          actual = {line.strip() for line in Path("matched-control-changes.txt").read_text().splitlines() if line.strip()}
+          if actual != expected:
+              raise SystemExit(f"matched-control scope mismatch: expected={sorted(expected)} actual={sorted(actual)}")
+          PY
+          grep -F 'for await next in stream' MacVitals/UI/Overview/ProcessConsumersView.swift
+          grep -F 'for await snapshot in stream' MacVitals/History/HistoricalConsumptionCenter.swift
+          grep -F 'private final class LegacyIndependentProcessConsumersMonitor' MacVitalsTests/ProcessWakeupMatchedControlTests.swift
+          {
+            printf 'product_sha=%s\n' "${PRODUCT_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+            printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
+            printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
+            printf 'window_seconds=60\n'
+            printf 'blocks=3\n'
+            printf 'control_windows=9\n'
+            printf 'model_windows=6\n'
+            printf 'adjustment=scenario-minus-mean-of-immediately-adjacent-controls\n'
+            printf 'block1=control,legacy,control,single-clock,control\n'
+            printf 'block2=control,single-clock,control,legacy,control\n'
+            printf 'block3=control,legacy,control,single-clock,control\n'
+          } > matched-control-source.txt
+
+      - name: Validate measurement tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/run_matched_control_wakeup_ab.sh
+          swift format lint MacVitalsTests/ProcessWakeupMatchedControlTests.swift
+          xcrun clang -std=c11 -Wall -Wextra -Werror scripts/process_wakeup_probe.c -o "${PROBE}"
+          test -x "${PROBE}"
+          "${PROBE}" "$$" 1 > wakeup-probe-self-test.json
+          python3 - <<'PY'
+          import json, math
+          from pathlib import Path
+          value = json.loads(Path("wakeup-probe-self-test.json").read_text())
+          if value.get("schemaVersion") != 1 or float(value.get("durationSeconds", 0)) < 0.9:
+              raise SystemExit("wakeup probe self-test invalid")
+          for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
+              number = value.get(key)
+              if not isinstance(number, (int, float)) or not math.isfinite(float(number)) or float(number) < 0:
+                  raise SystemExit(f"invalid wakeup probe metric: {key}")
+          PY
+          python3 scripts/report_runtime_resources.py --self-test
+          python3 scripts/validate_runtime_resource_policy.py scripts/run_matched_control_wakeup_ab.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run bracketed same-runner matched-control observations
+        shell: bash
+        env:
+          PRODUCT_SHA: ${{ env.PRODUCT_SHA }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/run_matched_control_wakeup_ab.sh \
+            "${GITHUB_WORKSPACE}" "${DERIVED_DATA}" "${EVIDENCE_DIR}" "${PROBE}"
+
+      - name: Build control-adjusted comparison
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, math, statistics
+
+          root = Path("matched-control-wakeup-evidence")
+
+          def load(label, key):
+              base = root / label / key
+              proc = json.loads((base / "proc-rusage-wakeups.json").read_text())
+              task = json.loads((base / "task-power-wakeups.json").read_text())
+              resource = json.loads((base / "resource-summary.json").read_text())["measurement"]
+              return {
+                  "procInterrupt": float(proc["interruptWakeupsPerSecond"]),
+                  "taskInterrupt": float(task["interruptWakeupsPerSecond"]),
+                  "taskPlatformIdle": float(task["platformIdleWakeupsPerSecond"]),
+                  "taskTimerTotal": float(task["totalTimerWakeupsPerSecond"]),
+                  "cpuMean": float(resource["cpuPercent"]["mean"]),
+                  "rssGrowthMiB": float(resource["residentMemoryMiB"]["growth"]),
+                  "threadsMax": float(resource["threads"]["max"]),
+                  "sampleCount": int(resource["sampleCount"]),
+                  "durationSeconds": float(resource["durationSeconds"]),
+              }
+
+          controls = {}
+          for block in (1, 2, 3):
+              for suffix in ("a", "b", "c"):
+                  controls[f"b{block}-{suffix}"] = load("control", f"b{block}-{suffix}")
+
+          mappings = {
+              "legacy": {
+                  1: ("b1", "b1-a", "b1-b"),
+                  2: ("b2", "b2-b", "b2-c"),
+                  3: ("b3", "b3-a", "b3-b"),
+              },
+              "single-clock": {
+                  1: ("b1", "b1-b", "b1-c"),
+                  2: ("b2", "b2-a", "b2-b"),
+                  3: ("b3", "b3-b", "b3-c"),
+              },
+          }
+
+          metrics = ("procInterrupt", "taskInterrupt", "cpuMean")
+          models = {}
+          for model, mapping in mappings.items():
+              rows = []
+              for iteration, (scenario_key, left_key, right_key) in mapping.items():
+                  scenario = load(model, scenario_key)
+                  left = controls[left_key]
+                  right = controls[right_key]
+                  row = {
+                      "iteration": iteration,
+                      "scenarioKey": scenario_key,
+                      "leftControl": left_key,
+                      "rightControl": right_key,
+                      "raw": scenario,
+                      "controlMean": {},
+                      "marginal": {},
+                  }
+                  for metric in metrics:
+                      control_mean = (left[metric] + right[metric]) / 2
+                      row["controlMean"][metric] = control_mean
+                      row["marginal"][metric] = scenario[metric] - control_mean
+                  rows.append(row)
+              models[model] = {
+                  "runs": rows,
+                  "medianMarginalProcInterrupt": statistics.median(row["marginal"]["procInterrupt"] for row in rows),
+                  "medianMarginalTaskInterrupt": statistics.median(row["marginal"]["taskInterrupt"] for row in rows),
+                  "medianMarginalCpuMean": statistics.median(row["marginal"]["cpuMean"] for row in rows),
+              }
+
+          legacy = models["legacy"]
+          current = models["single-clock"]
+          pair_rows = []
+          for index in range(3):
+              left = legacy["runs"][index]
+              right = current["runs"][index]
+              pair_rows.append({
+                  "iteration": index + 1,
+                  "singleMinusLegacyMarginalProcInterrupt": right["marginal"]["procInterrupt"] - left["marginal"]["procInterrupt"],
+                  "singleMinusLegacyMarginalTaskInterrupt": right["marginal"]["taskInterrupt"] - left["marginal"]["taskInterrupt"],
+                  "singleMinusLegacyMarginalCpuMean": right["marginal"]["cpuMean"] - left["marginal"]["cpuMean"],
+              })
+
+          result = {
+              "schemaVersion": 1,
+              "result": "collected-pending-independent-review",
+              "productSha": "1a008f6955cc628c2aac1acd50c1f6010ed896f9",
+              "method": "scenario-minus-mean-of-immediately-adjacent-no-consumer-controls",
+              "sameBinary": True,
+              "sameRunner": True,
+              "controlWindowCount": 9,
+              "modelWindowCount": 6,
+              "models": models,
+              "controls": controls,
+              "pairedMarginalDifferences": pair_rows,
+              "classification": {
+                  "marginalProcInterruptLower": current["medianMarginalProcInterrupt"] < legacy["medianMarginalProcInterrupt"],
+                  "marginalTaskInterruptLower": current["medianMarginalTaskInterrupt"] < legacy["medianMarginalTaskInterrupt"],
+                  "marginalCpuNoRegression": current["medianMarginalCpuMean"] <= legacy["medianMarginalCpuMean"],
+                  "taskInterruptLowerInAtLeastTwoOfThreePairs": sum(row["singleMinusLegacyMarginalTaskInterrupt"] < 0 for row in pair_rows) >= 2,
+                  "procInterruptLowerInAtLeastTwoOfThreePairs": sum(row["singleMinusLegacyMarginalProcInterrupt"] < 0 for row in pair_rows) >= 2,
+              },
+              "acceptanceNote": "CI records the predeclared matched-control calculation but does not enforce an invented numeric threshold. Independent review decides acceptance from direction, paired consistency, controls, and raw evidence.",
+          }
+
+          for model in models.values():
+              for run in model["runs"]:
+                  if run["raw"]["sampleCount"] < 30 or run["raw"]["durationSeconds"] < 55:
+                      raise SystemExit("model resource observation incomplete")
+          for value in controls.values():
+              if value["sampleCount"] < 30 or value["durationSeconds"] < 55:
+                  raise SystemExit("control resource observation incomplete")
+          for model in models.values():
+              for key, value in model.items():
+                  if key.startswith("medianMarginal") and not math.isfinite(float(value)):
+                      raise SystemExit(f"non-finite comparison metric: {key}")
+
+          (root / "matched-control-comparison.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp matched-control-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp matched-control-changes.txt "${EVIDENCE_DIR}/changes.txt" 2>/dev/null || true
+          cp wakeup-probe-self-test.json "${EVIDENCE_DIR}/probe-self-test.json" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          root = Path("matched-control-wakeup-evidence")
+          entries = []
+          if root.is_dir() and not root.is_symlink():
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                      continue
+                  data = path.read_bytes()
+                  entries.append({"path": str(path.relative_to(root)), "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+          manifest = {
+              "schemaVersion": 1,
+              "productSha": os.environ.get("PRODUCT_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "evidence-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Upload matched-control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-process-wakeup-matched-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: matched-control-wakeup-evidence
+          if-no-files-found: error
+          retention-days: 30
