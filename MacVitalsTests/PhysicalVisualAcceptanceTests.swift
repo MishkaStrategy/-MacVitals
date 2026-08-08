@@ -12,7 +12,9 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       let evidencePath = environment["MACVITALS_PHYSICAL_VISUAL_EVIDENCE_DIR"],
       !evidencePath.isEmpty,
       let diagnosticsPath = environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
-      !diagnosticsPath.isEmpty
+      !diagnosticsPath.isEmpty,
+      let readyPath = environment["MACVITALS_PHYSICAL_VISUAL_READY_FILE"],
+      !readyPath.isEmpty
     else {
       throw XCTSkip("Physical visual evidence paths are required")
     }
@@ -153,7 +155,13 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       to: evidenceDirectory.appendingPathComponent("fan-read-only.png"))
 
     let networkSnapshot = try XCTUnwrap(network.snapshot)
+    let downloadRate = try XCTUnwrap(networkSnapshot.downloadBytesPerSecond)
+    let uploadRate = try XCTUnwrap(networkSnapshot.uploadBytesPerSecond)
     let storageSnapshot = try XCTUnwrap(storage.snapshot)
+
+    try Data("surfaces-ready\n".utf8).write(
+      to: URL(fileURLWithPath: readyPath),
+      options: .atomic)
 
     // Keep the exact product host alive after all accepted surfaces are visible so the
     // external canonical collector can obtain a full 60-second CPU/RSS/thread window.
@@ -170,8 +178,8 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
         "historyCount": network.history.count,
         "receivedBytes": networkSnapshot.receivedBytes,
         "sentBytes": networkSnapshot.sentBytes,
-        "downloadBytesPerSecond": networkSnapshot.downloadBytesPerSecond as Any,
-        "uploadBytesPerSecond": networkSnapshot.uploadBytesPerSecond as Any,
+        "downloadBytesPerSecond": downloadRate,
+        "uploadBytesPerSecond": uploadRate,
       ],
       "storage": [
         "volume": storageSnapshot.volumeName,
