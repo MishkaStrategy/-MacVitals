@@ -48,6 +48,8 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let originalHUDConfiguration = settings.notchHUDConfiguration
     let originalSamplingInterval = settings.samplingInterval
     let preferredScreen = statusItem.button?.window?.screen ?? NSScreen.main
+    let history = HistoricalConsumptionCenter.shared
+    let historyWasCollecting = history.isCollecting
 
     defer {
       if popover.isShown { popover.performClose(nil) }
@@ -57,7 +59,10 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
         preferredScreen: preferredScreen,
         enabled: originalHUDEnabled,
         configuration: originalHUDConfiguration)
-      HistoricalConsumptionCenter.shared.restart(interval: originalSamplingInterval)
+      history.stop(flush: false)
+      if historyWasCollecting {
+        history.start(interval: originalSamplingInterval, initialDelay: 0)
+      }
     }
 
     notchHUD.update(
@@ -101,8 +106,8 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
 
     let network = NetworkTrafficMonitor.shared
     let storage = StorageUsageMonitor.shared
-    let history = HistoricalConsumptionCenter.shared
-    history.restart(interval: 1)
+    history.stop(flush: false)
+    history.start(interval: 1, initialDelay: 0)
 
     try await waitUntil(timeout: 12) {
       network.snapshot != nil && network.history.count >= 2
