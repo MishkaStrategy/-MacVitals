@@ -2,19 +2,15 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-[[ $# -eq 7 ]] || {
-  printf '%s\n' 'usage: run_shared_process_wakeup_ab.sh <baseline-root> <baseline-derived> <product-root> <product-derived> <evidence-dir> <probe> <validation-test>' >&2
+[[ $# -eq 4 ]] || {
+  printf '%s\n' 'usage: run_shared_process_wakeup_ab.sh <product-root> <product-derived> <evidence-dir> <probe>' >&2
   exit 64
 }
 
-BASELINE_ROOT="$1"
-BASELINE_DERIVED="$2"
-PRODUCT_ROOT="$3"
-PRODUCT_DERIVED="$4"
-EVIDENCE_DIR="$5"
-PROBE="$6"
-VALIDATION_TEST="$7"
-BASELINE_SHA="${BASELINE_SHA:?BASELINE_SHA is required}"
+PRODUCT_ROOT="$1"
+PRODUCT_DERIVED="$2"
+EVIDENCE_DIR="$3"
+PROBE="$4"
 PRODUCT_SHA="${PRODUCT_SHA:?PRODUCT_SHA is required}"
 
 TEST_PID=""
@@ -92,7 +88,6 @@ cleanup_all() {
   local status="$?"
   trap - EXIT HUP INT TERM
   cleanup_iteration
-  git -C "${PRODUCT_ROOT}" worktree remove --force "${BASELINE_ROOT}" >/dev/null 2>&1 || true
   exit "${status}"
 }
 trap cleanup_all EXIT HUP INT TERM
@@ -116,9 +111,9 @@ find_owned_pid() {
 }
 
 prepare_source() {
-  local source_root="$1" derived_data="$2" marker_root="$3"
+  local marker_root="${EVIDENCE_DIR}/markers"
   (
-    cd "${source_root}"
+    cd "${PRODUCT_ROOT}"
     python3 scripts/materialize_app_icon.py
     cp project.yml wakeup-ab-project.yml
     cat >> wakeup-ab-project.yml <<YAML
@@ -142,22 +137,22 @@ YAML
       -project MacVitals.xcodeproj \
       -scheme MacVitalsWakeupAB \
       -destination 'platform=macOS' \
-      -derivedDataPath "${derived_data}" \
+      -derivedDataPath "${PRODUCT_DERIVED}" \
       ARCHS=arm64 \
       ONLY_ACTIVE_ARCH=YES \
       CODE_SIGNING_ALLOWED=NO \
       build-for-testing \
-      > wakeup-ab-build.log 2>&1
-    test -x "${derived_data}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+      > "${EVIDENCE_DIR}/build.log" 2>&1
+    test -x "${PRODUCT_DERIVED}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
   )
 }
 
 run_iteration() {
-  local label="$1" source_root="$2" derived_data="$3" source_sha="$4" iteration="$5"
-  local marker_root="${EVIDENCE_DIR}/${label}"
+  local label="$1" test_method="$2" iteration="$3"
+  local marker_root="${EVIDENCE_DIR}/markers"
   local ready="${marker_root}/ready.txt"
   local complete="${marker_root}/complete.txt"
-  local run_root="${marker_root}/run-${iteration}"
+  local run_root="${EVIDENCE_DIR}/${label}/run-${iteration}"
   local runtime_root="${run_root}/runtime"
   local test_log="${run_root}/test.log"
   local resource_log="${run_root}/resource-collector.log"
@@ -167,22 +162,22 @@ run_iteration() {
   cleanup_iteration
   fail_on_existing_macvitals || fail "foreign MacVitals blocks ${label} run ${iteration}"
   rm -f -- "${ready}" "${complete}"
-  mkdir -p "${run_root}" "${runtime_root}"
-  EXPECTED_EXECUTABLE="${derived_data}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
-  test -x "${EXPECTED_EXECUTABLE}" || fail "missing ${label} executable"
+  mkdir -p "${run_root}" "${runtime_root}" "${marker_root}"
+  EXPECTED_EXECUTABLE="${PRODUCT_DERIVED}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+  test -x "${EXPECTED_EXECUTABLE}" || fail "missing product executable"
 
   (
-    cd "${source_root}"
+    cd "${PRODUCT_ROOT}"
     xcodebuild \
       -project MacVitals.xcodeproj \
       -scheme MacVitalsWakeupAB \
       -destination 'platform=macOS' \
-      -derivedDataPath "${derived_data}" \
+      -derivedDataPath "${PRODUCT_DERIVED}" \
       ARCHS=arm64 \
       ONLY_ACTIVE_ARCH=YES \
       CODE_SIGNING_ALLOWED=NO \
       test-without-building \
-      -only-testing:MacVitalsTests/ProcessWakeupABTests/testTwoConcurrentProcessConsumersForWakeupMeasurement
+      "-only-testing:MacVitalsTests/ProcessWakeupABTests/${test_method}"
   ) > "${test_log}" 2>&1 &
   TEST_PID=$!
 
@@ -251,11 +246,11 @@ run_iteration() {
   python3 "${PRODUCT_ROOT}/scripts/report_runtime_resources.py" \
     "${summary_path}" \
     --scenario "wakeup-ab-${label}-run-${iteration}" \
-    --source-sha "${source_sha}" \
+    --source-sha "${PRODUCT_SHA}" \
     --output "${run_root}/resource-summary.json" \
     > "${run_root}/resource-summary.txt"
 
-  python3 - "${wakeup_json}" "${run_root}/resource-summary.json" "${source_sha}" "${label}" "${iteration}" <<'PY'
+  python3 - "${wakeup_json}" "${run_root}/resource-summary.json" "${PRODUCT_SHA}" "${label}" "${iteration}" <<'PY'
 import json
 import math
 import sys
@@ -292,21 +287,18 @@ PY
 
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail "native Apple Silicon macOS is required"
 [[ -x "${PROBE}" ]] || fail "wakeup probe is missing"
-[[ -f "${VALIDATION_TEST}" && ! -L "${VALIDATION_TEST}" ]] || fail "validation test is missing or unsafe"
+[[ "$(git -C "${PRODUCT_ROOT}" rev-parse HEAD)" == "${PRODUCT_SHA}" || "$(git -C "${PRODUCT_ROOT}" merge-base "${PRODUCT_SHA}" HEAD)" == "${PRODUCT_SHA}" ]] || fail "validation head does not descend from product SHA"
 
-rm -rf -- "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${PRODUCT_DERIVED}" "${EVIDENCE_DIR}"
-mkdir -p "${EVIDENCE_DIR}/baseline" "${EVIDENCE_DIR}/product"
-git -C "${PRODUCT_ROOT}" worktree add --detach "${BASELINE_ROOT}" "${BASELINE_SHA}"
-cp "${VALIDATION_TEST}" "${BASELINE_ROOT}/MacVitalsTests/ProcessWakeupABTests.swift"
-prepare_source "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${EVIDENCE_DIR}/baseline"
-prepare_source "${PRODUCT_ROOT}" "${PRODUCT_DERIVED}" "${EVIDENCE_DIR}/product"
+rm -rf -- "${PRODUCT_DERIVED}" "${EVIDENCE_DIR}"
+mkdir -p "${EVIDENCE_DIR}/legacy" "${EVIDENCE_DIR}/shared" "${EVIDENCE_DIR}/markers"
+prepare_source
 
-# Alternate pair order so neither revision always gets the earlier/cooler slot.
-run_iteration baseline "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${BASELINE_SHA}" 1
-run_iteration product "${PRODUCT_ROOT}" "${PRODUCT_DERIVED}" "${PRODUCT_SHA}" 1
-run_iteration product "${PRODUCT_ROOT}" "${PRODUCT_DERIVED}" "${PRODUCT_SHA}" 2
-run_iteration baseline "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${BASELINE_SHA}" 2
-run_iteration baseline "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${BASELINE_SHA}" 3
-run_iteration product "${PRODUCT_ROOT}" "${PRODUCT_DERIVED}" "${PRODUCT_SHA}" 3
+# Alternate pair order so neither architecture model always gets the earlier/cooler slot.
+run_iteration legacy testLegacyIndependentProcessConsumersForWakeupMeasurement 1
+run_iteration shared testSharedProcessConsumersForWakeupMeasurement 1
+run_iteration shared testSharedProcessConsumersForWakeupMeasurement 2
+run_iteration legacy testLegacyIndependentProcessConsumersForWakeupMeasurement 2
+run_iteration legacy testLegacyIndependentProcessConsumersForWakeupMeasurement 3
+run_iteration shared testSharedProcessConsumersForWakeupMeasurement 3
 
 printf '%s\n' 'shared-process-wakeup-ab=collected'
