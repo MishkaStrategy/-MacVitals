@@ -21,7 +21,7 @@ concurrency:
 jobs:
   real-runtime-ab:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 45
+    timeout-minutes: 55
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
@@ -30,6 +30,7 @@ jobs:
       BASELINE_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
       CANDIDATE_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      OBSERVATION_SECONDS: 180
       EVIDENCE_DIR: ${{ github.workspace }}/real-runtime-wakeup-evidence
       PROBE: /private/tmp/macvitals-real-runtime-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -106,8 +107,9 @@ jobs:
             printf 'runner_arch=%s\n' "$(uname -m)"
             printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
             printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
-            printf 'method=ordinary-release-app-identical-one-shot-validation-hook\n'
-            printf 'pair_order=baseline-candidate,candidate-baseline,baseline-candidate\n'
+            printf 'method=balanced-ordinary-release-app-identical-one-shot-validation-hook\n'
+            printf 'pair_order=baseline-candidate,candidate-baseline,baseline-candidate,candidate-baseline\n'
+            printf 'observation_seconds=%s\n' "${OBSERVATION_SECONDS}"
             printf 'xcuitest=false\n'
           } > real-runtime-source.txt
 
