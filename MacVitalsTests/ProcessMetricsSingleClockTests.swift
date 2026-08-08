@@ -11,9 +11,8 @@ final class ProcessMetricsSingleClockTests: XCTestCase {
     let firstStream = await center.subscribe(firstID, minimumInterval: 1)
     let secondStream = await center.subscribe(secondID, minimumInterval: 1)
 
-    async let first = firstSnapshot(from: firstStream)
-    async let second = firstSnapshot(from: secondStream)
-    let (left, right) = try await (first, second)
+    let left = try await firstSnapshot(from: firstStream)
+    let right = try await firstSnapshot(from: secondStream)
 
     XCTAssertEqual(left, right)
     XCTAssertGreaterThan(left.sampledProcessCount, 0)
