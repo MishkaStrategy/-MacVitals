@@ -1,0 +1,300 @@
+name: Single-Clock Primary History Validation
+
+on:
+  pull_request:
+    branches:
+      - perf/shared-process-single-clock-9afc
+    paths:
+      - .github/workflows/single-clock-primary-history-validation.yml
+      - MacVitalsTests/SingleClockPrimaryHistoryValidationTests.swift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  primary-history:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 25
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      PRODUCT_SHA: 1a008f6955cc628c2aac1acd50c1f6010ed896f9
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData-SingleClockPrimaryHistory
+      EVIDENCE_DIR: ${{ github.workspace }}/single-clock-primary-history-evidence
+      READY_FILE: ${{ github.workspace }}/single-clock-primary-history-ready.txt
+      COMPLETE_FILE: ${{ github.workspace }}/single-clock-primary-history-complete.txt
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor 4d143aaa082b0fb15ce86d19ba72c40557939692 "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --name-only "${PRODUCT_SHA}" "${VALIDATION_SHA}" > primary-history-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/single-clock-primary-history-validation.yml",
+              "MacVitalsTests/SingleClockPrimaryHistoryValidationTests.swift",
+          }
+          actual = {line.strip() for line in Path("primary-history-changes.txt").read_text().splitlines() if line.strip()}
+          if actual != expected:
+              raise SystemExit(f"primary/history validation scope mismatch: expected={sorted(expected)} actual={sorted(actual)}")
+          PY
+          grep -F 'let stream = await center.subscribe(' MacVitals/UI/Overview/ProcessConsumersView.swift
+          grep -F 'let stream = await center.subscribe(' MacVitals/History/HistoricalConsumptionCenter.swift
+          grep -F 'for await next in stream' MacVitals/UI/Overview/ProcessConsumersView.swift
+          grep -F 'for await snapshot in stream' MacVitals/History/HistoricalConsumptionCenter.swift
+          if grep -F 'try? await Task.sleep' MacVitals/UI/Overview/ProcessConsumersView.swift; then
+            printf '%s\n' 'Primary process consumer still owns a recurring sleep loop' >&2
+            exit 1
+          fi
+          {
+            printf 'product_sha=%s\n' "${PRODUCT_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+          } > primary-history-source.txt
+
+      - name: Validate targeted source and runtime tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          swift format lint MacVitalsTests/SingleClockPrimaryHistoryValidationTests.swift
+          bash -n scripts/collect_runtime_metrics.sh
+          python3 -m py_compile scripts/collect_runtime_metrics.py scripts/report_runtime_resources.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/report_runtime_resources.py --self-test
+
+      - name: Materialize application icon
+        run: python3 scripts/materialize_app_icon.py
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare exact live-host test scheme
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf -- "${DERIVED_DATA}" "${EVIDENCE_DIR}"
+          rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
+          mkdir -p "${EVIDENCE_DIR}"
+          cp project.yml primary-history-project.yml
+          cat >> primary-history-project.yml <<YAML
+            MacVitalsSingleClockPrimaryHistory:
+              build:
+                targets:
+                  MacVitals: all
+                  MacVitalsTests: [test]
+              test:
+                gatherCoverageData: false
+                language: en
+                region: US
+                targets:
+                  - MacVitalsTests
+                environmentVariables:
+                  MACVITALS_SINGLE_CLOCK_HISTORY_READY_FILE: "${READY_FILE}"
+                  MACVITALS_SINGLE_CLOCK_HISTORY_COMPLETE_FILE: "${COMPLETE_FILE}"
+          YAML
+          xcodegen generate --spec primary-history-project.yml
+          if ! xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsSingleClockPrimaryHistory \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build-for-testing > "${EVIDENCE_DIR}/build.log" 2>&1; then
+            tail -n 300 "${EVIDENCE_DIR}/build.log" >&2 || true
+            exit 1
+          fi
+          test -x "${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+
+      - name: Run live primary plus history stream evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          EXPECTED_EXECUTABLE="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+          TEST_LOG="${EVIDENCE_DIR}/test.log"
+          TEST_PID=""
+          OWNED_PID=""
+          RESOURCE_PID=""
+
+          command_for_pid() { ps -p "$1" -o command= 2>/dev/null || true; }
+          exact_owned() {
+            local pid="$1" command_line
+            [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+            kill -0 "${pid}" 2>/dev/null || return 1
+            command_line="$(command_for_pid "${pid}")"
+            [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]
+          }
+          terminate_owned() {
+            local pid="$1"
+            [[ -n "${pid}" ]] || return 0
+            exact_owned "${pid}" || return 0
+            kill -TERM "${pid}" 2>/dev/null || true
+            for _ in {1..50}; do exact_owned "${pid}" || return 0; sleep 0.1; done
+            exact_owned "${pid}" && kill -KILL "${pid}" 2>/dev/null || true
+            for _ in {1..20}; do exact_owned "${pid}" || return 0; sleep 0.1; done
+            return 1
+          }
+          cleanup() {
+            local status="$?"
+            trap - EXIT HUP INT TERM
+            set +e
+            if [[ -n "${RESOURCE_PID}" ]] && kill -0 "${RESOURCE_PID}" 2>/dev/null; then
+              kill -TERM "${RESOURCE_PID}" 2>/dev/null || true
+              wait "${RESOURCE_PID}" 2>/dev/null || true
+            fi
+            if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
+              kill -TERM "${TEST_PID}" 2>/dev/null || true
+              wait "${TEST_PID}" 2>/dev/null || true
+            fi
+            terminate_owned "${OWNED_PID}" || true
+            rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
+            exit "${status}"
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          if pgrep -x MacVitals >/dev/null 2>&1; then
+            printf '%s\n' 'Existing MacVitals process detected; primary/history validation fails closed.' >&2
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              ps -p "${pid}" -o pid=,command= >&2 || true
+            done < <(pgrep -x MacVitals 2>/dev/null || true)
+            exit 1
+          fi
+
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsSingleClockPrimaryHistory \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            test-without-building \
+            -only-testing:MacVitalsTests/SingleClockPrimaryHistoryValidationTests/testLivePrimaryAndHistoryAdvanceThroughSingleClock \
+            > "${TEST_LOG}" 2>&1 &
+          TEST_PID=$!
+
+          for _ in {1..120}; do
+            [[ -f "${READY_FILE}" ]] && break
+            kill -0 "${TEST_PID}" 2>/dev/null || break
+            sleep 0.5
+          done
+          if [[ ! -f "${READY_FILE}" ]]; then
+            tail -n 300 "${TEST_LOG}" >&2 || true
+            exit 1
+          fi
+          grep -Fxq 'primary-and-history-active' "${READY_FILE}"
+
+          count=0
+          while IFS= read -r pid; do
+            [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+            command_line="$(command_for_pid "${pid}")"
+            if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
+              OWNED_PID="${pid}"
+              count=$((count + 1))
+            elif [[ -n "${command_line}" ]]; then
+              printf 'Foreign MacVitals process appeared: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+              exit 1
+            fi
+          done < <(pgrep -x MacVitals 2>/dev/null || true)
+          [[ ${count} -eq 1 && -n "${OWNED_PID}" ]]
+          exact_owned "${OWNED_PID}"
+
+          PROCESS_ID="${OWNED_PID}" EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
+          OUTPUT_ROOT="${EVIDENCE_DIR}/runtime" \
+            bash scripts/collect_runtime_metrics.sh 60 2 > "${EVIDENCE_DIR}/runtime-collector.log" 2>&1 &
+          RESOURCE_PID=$!
+          wait "${RESOURCE_PID}"
+          RESOURCE_PID=""
+
+          summaries="$(find "${EVIDENCE_DIR}/runtime" -mindepth 2 -maxdepth 2 -type f -name summary.json -print)"
+          summary_count="$(printf '%s\n' "${summaries}" | awk 'NF { count += 1 } END { print count + 0 }')"
+          [[ "${summary_count}" == "1" ]]
+          summary_path="$(printf '%s\n' "${summaries}" | awk 'NF { print; exit }')"
+          python3 scripts/report_runtime_resources.py \
+            "${summary_path}" --scenario single-clock-primary-history --source-sha "${PRODUCT_SHA}" \
+            --output "${EVIDENCE_DIR}/resource-summary.json" > "${EVIDENCE_DIR}/resource-summary.txt"
+
+          set +e
+          wait "${TEST_PID}"
+          test_status=$?
+          set -e
+          TEST_PID=""
+          tail -n 300 "${TEST_LOG}" > "${EVIDENCE_DIR}/test-diagnostics.txt" || true
+          cat "${EVIDENCE_DIR}/test-diagnostics.txt"
+          [[ ${test_status} -eq 0 ]]
+          grep -Eq '\*\* TEST( EXECUTE)? SUCCEEDED \*\*' "${TEST_LOG}"
+          test -f "${COMPLETE_FILE}"
+          grep -Fxq 'history-advanced-and-overlapped-live-snapshot' "${COMPLETE_FILE}"
+          exact_owned "${OWNED_PID}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, math
+          value = json.loads(Path("single-clock-primary-history-evidence/resource-summary.json").read_text())
+          if value.get("sourceSha") != "1a008f6955cc628c2aac1acd50c1f6010ed896f9":
+              raise SystemExit("primary/history resource provenance mismatch")
+          m = value.get("measurement") or {}
+          if int(m.get("sampleCount", 0)) < 30 or float(m.get("durationSeconds", 0)) < 55:
+              raise SystemExit("primary/history resource observation incomplete")
+          for number in ((m.get("residentMemoryMiB") or {}).get("growth"), (m.get("threads") or {}).get("max")):
+              if number is None or not math.isfinite(float(number)):
+                  raise SystemExit("primary/history resource evidence incomplete")
+          PY
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp primary-history-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp primary-history-changes.txt "${EVIDENCE_DIR}/changes.txt" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          root = Path("single-clock-primary-history-evidence")
+          entries = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                  continue
+              data = path.read_bytes()
+              entries.append({"path": str(path.relative_to(root)), "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+          manifest = {
+              "schemaVersion": 1,
+              "productSha": os.environ.get("PRODUCT_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          (root / "evidence-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Upload primary history evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: single-clock-primary-history-${{ github.run_id }}-${{ github.run_attempt }}
+          path: single-clock-primary-history-evidence
+          if-no-files-found: error
+          retention-days: 30
