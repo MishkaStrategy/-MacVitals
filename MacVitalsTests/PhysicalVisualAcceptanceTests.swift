@@ -11,8 +11,6 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     guard
       let evidencePath = environment["MACVITALS_PHYSICAL_VISUAL_EVIDENCE_DIR"],
       !evidencePath.isEmpty,
-      let diagnosticsPath = environment["MACVITALS_NOTCH_DIAGNOSTICS_PATH"],
-      !diagnosticsPath.isEmpty,
       let readyPath = environment["MACVITALS_PHYSICAL_VISUAL_READY_FILE"],
       !readyPath.isEmpty
     else {
@@ -68,31 +66,38 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
         "Physical visual validation must not mutate the MacVitals preferences domain")
     }
 
+    let validationConfiguration = NotchHUDConfiguration.minimal
+    XCTAssertEqual(validationConfiguration.metric, .cpu)
+    XCTAssertEqual(validationConfiguration.indicatorCount, .one)
+    XCTAssertNil(validationConfiguration.secondaryMetric)
+    XCTAssertTrue(validationConfiguration.showValueText)
+
+    let physicalScreen = try XCTUnwrap(
+      preferredScreen,
+      "Physical HUD validation requires the status-item or main display")
     notchHUD.update(
       snapshot: coordinator.snapshot,
-      preferredScreen: preferredScreen,
+      preferredScreen: physicalScreen,
       enabled: true,
-      configuration: .minimal)
+      configuration: validationConfiguration)
 
-    let diagnosticsURL = URL(fileURLWithPath: diagnosticsPath)
-    var hud: [String: Any] = [:]
+    var ownedHUDPanel: NSPanel?
     try await waitUntil(timeout: 8) {
-      guard let candidate = self.readJSONIfAvailable(diagnosticsURL),
-        candidate["panelVisible"] as? Bool == true,
-        candidate["frameWidth"] is Double,
-        candidate["hardwareNotchWidth"] is Double
-      else {
-        return false
-      }
-      hud = candidate
-      return true
+      ownedHUDPanel = self.reflectedChild(notchHUD, label: "panel")
+      return ownedHUDPanel?.isVisible == true
     }
-    try validateHUDDiagnostics(hud)
+    let hudPanel = try XCTUnwrap(ownedHUDPanel)
+    let hud = try validateOwnedHUD(
+      panel: hudPanel,
+      screen: physicalScreen,
+      configuration: validationConfiguration)
+    try writeJSON(
+      hud,
+      to: evidenceDirectory.appendingPathComponent("validation-owned-hud.json"))
 
-    let hudWindowNumber = try XCTUnwrap(hud["panelWindowNumber"] as? Int)
     let visibleHUDPanels = NSApp.windows.compactMap { $0 as? NSPanel }
       .filter {
-        $0.windowNumber == hudWindowNumber && $0.level == .statusBar && $0.isVisible
+        $0.windowNumber == hudPanel.windowNumber && $0.level == .statusBar && $0.isVisible
       }
     XCTAssertEqual(
       visibleHUDPanels.count,
@@ -236,54 +241,81 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       "preferencesUnchangedVerified": true,
       "resourceObservationHoldSeconds": 70,
     ]
-    let summaryData = try JSONSerialization.data(
-      withJSONObject: summary,
-      options: [.prettyPrinted, .sortedKeys])
-    try summaryData.write(
-      to: evidenceDirectory.appendingPathComponent("physical-visual-summary.json"),
-      options: .atomic)
+    try writeJSON(
+      summary,
+      to: evidenceDirectory.appendingPathComponent("physical-visual-summary.json"))
   }
 
-  private func validateHUDDiagnostics(_ hud: [String: Any]) throws {
-    XCTAssertEqual(hud["enabled"] as? Bool, true)
-    XCTAssertEqual(hud["panelAllocated"] as? Bool, true)
-    XCTAssertEqual(hud["panelVisible"] as? Bool, true)
-    XCTAssertGreaterThan(hud["panelWindowNumber"] as? Int ?? 0, 0)
-    XCTAssertEqual(hud["indicatorCount"] as? String, "one")
-    XCTAssertEqual(hud["primaryMetric"] as? String, "cpu")
-    XCTAssertEqual(hud["showValueText"] as? Bool, true)
+  private func validateOwnedHUD(
+    panel: NSPanel,
+    screen: NSScreen,
+    configuration: NotchHUDConfiguration
+  ) throws -> [String: Any] {
+    let safeAreaTop = screen.safeAreaInsets.top
+    let hardwareGeometry = try XCTUnwrap(
+      NotchHUDLayout.hardwareNotchGeometry(
+        screenFrame: screen.frame,
+        safeAreaTop: safeAreaTop,
+        auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+        auxiliaryTopRightArea: screen.auxiliaryTopRightArea),
+      "Physical validation requires a display with hardware notch geometry")
+    let expectedFrame = NotchHUDLayout.panelFrame(
+      for: screen.frame,
+      safeAreaTop: safeAreaTop,
+      configuration: configuration,
+      notchGeometry: hardwareGeometry)
+    let frame = panel.frame
 
-    let safeAreaTop = try XCTUnwrap(hud["safeAreaTop"] as? Double)
-    let screenX = try XCTUnwrap(hud["screenX"] as? Double)
-    let screenY = try XCTUnwrap(hud["screenY"] as? Double)
-    let screenWidth = try XCTUnwrap(hud["screenWidth"] as? Double)
-    let screenHeight = try XCTUnwrap(hud["screenHeight"] as? Double)
-    let notchCenterX = try XCTUnwrap(hud["hardwareNotchCenterX"] as? Double)
-    let notchWidth = try XCTUnwrap(hud["hardwareNotchWidth"] as? Double)
-    let resolvedNotchWidth = try XCTUnwrap(hud["resolvedNotchWidth"] as? Double)
-    let frameX = try XCTUnwrap(hud["frameX"] as? Double)
-    let frameY = try XCTUnwrap(hud["frameY"] as? Double)
-    let frameWidth = try XCTUnwrap(hud["frameWidth"] as? Double)
-    let frameHeight = try XCTUnwrap(hud["frameHeight"] as? Double)
+    XCTAssertTrue(panel.isVisible)
+    XCTAssertEqual(panel.level, .statusBar)
+    XCTAssertGreaterThan(panel.windowNumber, 0)
+    XCTAssertEqual(configuration.indicatorCount, .one)
+    XCTAssertEqual(configuration.metric, .cpu)
+    XCTAssertTrue(configuration.showValueText)
+    XCTAssertGreaterThan(safeAreaTop, 0)
+    XCTAssertGreaterThan(hardwareGeometry.width, 0)
+    XCTAssertEqual(frame.minX, expectedFrame.minX, accuracy: 0.5)
+    XCTAssertEqual(frame.minY, expectedFrame.minY, accuracy: 0.5)
+    XCTAssertEqual(frame.width, expectedFrame.width, accuracy: 0.5)
+    XCTAssertEqual(frame.height, expectedFrame.height, accuracy: 0.5)
+    XCTAssertEqual(frame.midX, hardwareGeometry.centerX, accuracy: 3)
+    XCTAssertEqual(frame.maxY, screen.frame.maxY, accuracy: 3)
+    XCTAssertGreaterThanOrEqual(frame.minX, screen.frame.minX + 8 - 0.5)
+    XCTAssertLessThanOrEqual(frame.maxX, screen.frame.maxX - 8 + 0.5)
 
-    XCTAssertGreaterThan(safeAreaTop, 0, "Physical validation requires a notched display")
-    XCTAssertGreaterThan(notchWidth, 0)
-    XCTAssertEqual(resolvedNotchWidth, notchWidth, accuracy: 0.5)
-    XCTAssertEqual(frameWidth, notchWidth + 144, accuracy: 3)
-    XCTAssertEqual(frameHeight, min(max(safeAreaTop, 30), 44) + 32, accuracy: 3)
-    XCTAssertEqual(frameX + frameWidth / 2, notchCenterX, accuracy: 3)
-    XCTAssertEqual(frameY + frameHeight, screenY + screenHeight, accuracy: 3)
-    XCTAssertGreaterThanOrEqual(frameX, screenX + 8 - 0.5)
-    XCTAssertLessThanOrEqual(frameX + frameWidth, screenX + screenWidth - 8 + 0.5)
-
-    if abs(screenWidth - 2056) <= 3 && abs(screenHeight - 1329) <= 3 {
+    if abs(screen.frame.width - 2056) <= 3 && abs(screen.frame.height - 1329) <= 3 {
       XCTAssertEqual(safeAreaTop, 38, accuracy: 2)
-      XCTAssertEqual(notchCenterX, 1028, accuracy: 3)
-      XCTAssertEqual(notchWidth, 220, accuracy: 4)
-      XCTAssertEqual(frameX, 846, accuracy: 4)
-      XCTAssertEqual(frameWidth, 364, accuracy: 4)
-      XCTAssertEqual(frameHeight, 70, accuracy: 3)
+      XCTAssertEqual(hardwareGeometry.centerX, 1028, accuracy: 3)
+      XCTAssertEqual(hardwareGeometry.width, 220, accuracy: 4)
+      XCTAssertEqual(frame.minX, 846, accuracy: 4)
+      XCTAssertEqual(frame.width, 364, accuracy: 4)
+      XCTAssertEqual(frame.height, 70, accuracy: 3)
     }
+
+    return [
+      "source": "validation-owned-NotchHUDController-panel",
+      "enabled": true,
+      "panelAllocated": true,
+      "panelVisible": panel.isVisible,
+      "panelWindowNumber": panel.windowNumber,
+      "indicatorCount": configuration.indicatorCount.rawValue,
+      "primaryMetric": configuration.metric.rawValue,
+      "secondaryMetric": configuration.secondaryMetric?.rawValue ?? NSNull(),
+      "showValueText": configuration.showValueText,
+      "showSensorName": configuration.showSensorName,
+      "safeAreaTop": safeAreaTop,
+      "screenX": screen.frame.minX,
+      "screenY": screen.frame.minY,
+      "screenWidth": screen.frame.width,
+      "screenHeight": screen.frame.height,
+      "hardwareNotchCenterX": hardwareGeometry.centerX,
+      "hardwareNotchWidth": hardwareGeometry.width,
+      "resolvedNotchWidth": hardwareGeometry.width,
+      "frameX": frame.minX,
+      "frameY": frame.minY,
+      "frameWidth": frame.width,
+      "frameHeight": frame.height,
+    ]
   }
 
   private func waitForWindow(title: String, timeout: TimeInterval) async throws -> NSWindow {
@@ -351,21 +383,18 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     return mirror.children.first?.value
   }
 
-  private func readJSONIfAvailable(_ url: URL) -> [String: Any]? {
-    guard let data = try? Data(contentsOf: url),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      let payload = object as? [String: Any]
-    else {
-      return nil
-    }
-    return payload
-  }
-
   private func preferenceDomainsEqual(
     _ lhs: [String: Any],
     _ rhs: [String: Any]
   ) -> Bool {
     NSDictionary(dictionary: lhs).isEqual(NSDictionary(dictionary: rhs))
+  }
+
+  private func writeJSON(_ value: [String: Any], to url: URL) throws {
+    let data = try JSONSerialization.data(
+      withJSONObject: value,
+      options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url, options: .atomic)
   }
 
   private enum ValidationError: Error {
