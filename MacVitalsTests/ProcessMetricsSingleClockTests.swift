@@ -92,6 +92,37 @@ final class ProcessMetricsSingleClockTests: XCTestCase {
     await center.unsubscribe(fastID)
   }
 
+  func testCadenceChangeDoesNotPublishCancelledInFlightSample() async throws {
+    let probe = BlockingSamplingProbe()
+    let center = ProcessMetricsSamplingCenter(
+      resetProvider: {},
+      sampleProvider: { applications in await probe.sample(applications: applications) },
+      runningApplicationsProvider: { [] })
+    let slowID = UUID()
+    let fastID = UUID()
+
+    let slowStream = await center.subscribe(slowID, minimumInterval: 2)
+    await probe.waitUntilFirstSampleStarts()
+
+    let fastStream = await center.subscribe(fastID, minimumInterval: 0.25)
+    let fastSnapshot = try await firstSnapshot(from: fastStream)
+    XCTAssertEqual(
+      fastSnapshot.sampledProcessCount,
+      2,
+      "Replacement clock must publish its own sample while the cancelled sample is still blocked")
+
+    await probe.releaseFirstSample()
+    try await Task.sleep(for: .milliseconds(50))
+    let slowSnapshot = try await firstSnapshot(from: slowStream)
+    XCTAssertEqual(
+      slowSnapshot.sampledProcessCount,
+      2,
+      "Cancelled in-flight completion must not replace the current shared snapshot")
+
+    await center.unsubscribe(slowID)
+    await center.unsubscribe(fastID)
+  }
+
   private func makeCenter(probe: SamplingProbe) -> ProcessMetricsSamplingCenter {
     ProcessMetricsSamplingCenter(
       resetProvider: { await probe.reset() },
@@ -134,5 +165,51 @@ private actor SamplingProbe {
 
   func counts() -> (resets: Int, samples: Int) {
     (resetCount, sampleCount)
+  }
+}
+
+private actor BlockingSamplingProbe {
+  private var sampleCount = 0
+  private var firstSampleStarted = false
+  private var firstSampleReleased = false
+  private var firstStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var firstReleaseContinuation: CheckedContinuation<Void, Never>?
+
+  func waitUntilFirstSampleStarts() async {
+    if firstSampleStarted { return }
+    await withCheckedContinuation { continuation in
+      firstStartWaiters.append(continuation)
+    }
+  }
+
+  func releaseFirstSample() {
+    firstSampleReleased = true
+    firstReleaseContinuation?.resume()
+    firstReleaseContinuation = nil
+  }
+
+  func sample(applications: [RunningApplicationDescriptor]) async -> ProcessMetricsSnapshot {
+    sampleCount += 1
+    let ordinal = sampleCount
+
+    if ordinal == 1 {
+      firstSampleStarted = true
+      let waiters = firstStartWaiters
+      firstStartWaiters.removeAll()
+      for waiter in waiters {
+        waiter.resume()
+      }
+      if !firstSampleReleased {
+        await withCheckedContinuation { continuation in
+          firstReleaseContinuation = continuation
+        }
+      }
+    }
+
+    return ProcessMetricsSnapshot(
+      timestamp: Date(),
+      applications: [],
+      sampledProcessCount: ordinal,
+      energyCountersAvailable: false)
   }
 }
