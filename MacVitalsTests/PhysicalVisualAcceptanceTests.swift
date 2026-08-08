@@ -154,6 +154,11 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
 
     let networkSnapshot = try XCTUnwrap(network.snapshot)
     let storageSnapshot = try XCTUnwrap(storage.snapshot)
+
+    // Keep the exact product host alive after all accepted surfaces are visible so the
+    // external canonical collector can obtain a full 60-second CPU/RSS/thread window.
+    try await Task.sleep(for: .seconds(70))
+
     let summary: [String: Any] = [
       "schemaVersion": 1,
       "result": "passed",
@@ -190,6 +195,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       ],
       "captureScope": "MacVitals-owned window content only; no desktop capture",
       "preferencesWrittenByValidation": false,
+      "resourceObservationHoldSeconds": 70,
     ]
     let summaryData = try JSONSerialization.data(
       withJSONObject: summary,
