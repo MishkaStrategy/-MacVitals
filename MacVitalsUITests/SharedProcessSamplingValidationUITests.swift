@@ -44,10 +44,14 @@ final class SharedProcessSamplingValidationUITests: XCTestCase {
       processConsumers.waitForExistence(timeout: 8),
       "Primary CPU process consumer did not appear")
 
-    try writeMarker(environmentKey: "MACVITALS_SHARED_SAMPLING_READY_FILE", value: "ready\n")
+    try writeMarker(
+      environmentKey: "MACVITALS_SHARED_SAMPLING_READY_FILE",
+      value: "ready\n")
 
     Thread.sleep(forTimeInterval: 70)
-    XCTAssertTrue(processConsumers.exists, "Primary CPU process consumer disappeared during validation")
+    XCTAssertTrue(
+      processConsumers.exists,
+      "Primary CPU process consumer disappeared during validation")
 
     let historyLabel = "Consumption leaders"
     let historyPredicate = NSPredicate(format: "label == %@", historyLabel)
