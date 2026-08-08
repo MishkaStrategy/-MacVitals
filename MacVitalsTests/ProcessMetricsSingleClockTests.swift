@@ -8,8 +8,8 @@ final class ProcessMetricsSingleClockTests: XCTestCase {
     let firstID = UUID()
     let secondID = UUID()
 
-    let firstStream = await center.subscribe(firstID, minimumInterval: 0.25)
-    let secondStream = await center.subscribe(secondID, minimumInterval: 0.25)
+    let firstStream = await center.subscribe(firstID, minimumInterval: 1)
+    let secondStream = await center.subscribe(secondID, minimumInterval: 1)
 
     async let first = firstSnapshot(from: firstStream)
     async let second = firstSnapshot(from: secondStream)
@@ -33,20 +33,21 @@ final class ProcessMetricsSingleClockTests: XCTestCase {
     _ = await center.subscribe(firstID, minimumInterval: 0.25)
     _ = await center.subscribe(secondID, minimumInterval: 0.25)
     try await Task.sleep(for: .milliseconds(650))
-    let withTwo = await probe.counts().samples
+    let withTwo = (await probe.counts()).samples
     XCTAssertGreaterThanOrEqual(withTwo, 2)
 
     await center.unsubscribe(firstID)
     try await Task.sleep(for: .milliseconds(350))
-    let withOne = await probe.counts().samples
+    let withOne = (await probe.counts()).samples
     XCTAssertGreaterThan(withOne, withTwo, "Remaining subscriber must keep the shared clock alive")
 
     await center.unsubscribe(secondID)
     try await Task.sleep(for: .milliseconds(100))
-    let stopped = await probe.counts().samples
+    let stopped = (await probe.counts()).samples
     try await Task.sleep(for: .milliseconds(400))
+    let afterStop = (await probe.counts()).samples
     XCTAssertEqual(
-      await probe.counts().samples,
+      afterStop,
       stopped,
       "Last-subscriber removal must stop recurring process sampling")
   }
@@ -126,7 +127,7 @@ private actor SamplingProbe {
   func sample(applications: [RunningApplicationDescriptor]) -> ProcessMetricsSnapshot {
     sampleCount += 1
     return ProcessMetricsSnapshot(
-      timestamp: Date(timeIntervalSince1970: TimeInterval(sampleCount)),
+      timestamp: Date(),
       applications: [],
       sampledProcessCount: max(1, applications.count),
       energyCountersAvailable: false)
