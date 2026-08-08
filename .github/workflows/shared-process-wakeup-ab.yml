@@ -1,0 +1,534 @@
+name: Shared Process Wakeup A/B
+
+on:
+  pull_request:
+    branches:
+      - fix/history-final-flush-a9d
+    paths:
+      - .github/workflows/shared-process-wakeup-ab.yml
+      - MacVitalsTests/ProcessWakeupABTests.swift
+      - scripts/process_wakeup_probe.c
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wakeup-ab:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 35
+    concurrency:
+      group: macvitals-physical-runtime
+      cancel-in-progress: false
+      queue: max
+    env:
+      BASELINE_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
+      PRODUCT_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
+      VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASELINE_ROOT: ${{ github.workspace }}/.wakeup-ab-baseline
+      BASELINE_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Baseline
+      PRODUCT_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Product
+      EVIDENCE_DIR: ${{ github.workspace }}/shared-process-wakeup-evidence
+      PROBE: ${{ runner.temp }}/macvitals-process-wakeup-probe
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact product ancestry and validation-only scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
+          launchctl print "gui/$(id -u)" >/dev/null
+          [[ "${BASELINE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PRODUCT_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
+          git merge-base --is-ancestor "${BASELINE_SHA}" "${PRODUCT_SHA}"
+          git merge-base --is-ancestor "${PRODUCT_SHA}" "${VALIDATION_SHA}"
+          git diff --quiet "${PRODUCT_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
+          git diff --name-only "${PRODUCT_SHA}" "${VALIDATION_SHA}" > wakeup-ab-changes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              ".github/workflows/shared-process-wakeup-ab.yml",
+              "MacVitalsTests/ProcessWakeupABTests.swift",
+              "scripts/process_wakeup_probe.c",
+          }
+          actual = {
+              line.strip()
+              for line in Path("wakeup-ab-changes.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          if actual != expected:
+              raise SystemExit(f"wakeup A/B scope mismatch: expected={sorted(expected)} actual={sorted(actual)}")
+          PY
+          grep -F 'private let provider = ProcessMetricsProvider()' \
+            <(git show "${BASELINE_SHA}:MacVitals/UI/Overview/ProcessConsumersView.swift")
+          grep -F 'private let center = ProcessMetricsSamplingCenter.shared' \
+            MacVitals/UI/Overview/ProcessConsumersView.swift
+          {
+            printf 'baseline_sha=%s\n' "${BASELINE_SHA}"
+            printf 'product_sha=%s\n' "${PRODUCT_SHA}"
+            printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
+            printf 'runner_os=%s\n' "$(uname -s)"
+            printf 'runner_arch=%s\n' "$(uname -m)"
+            printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
+            printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
+          } > wakeup-ab-source.txt
+
+      - name: Validate wakeup probe and resource tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f scripts/process_wakeup_probe.c
+          test -f scripts/collect_runtime_metrics.sh
+          test -f scripts/report_runtime_resources.py
+          xcrun clang \
+            -std=c11 \
+            -Wall -Wextra -Werror \
+            scripts/process_wakeup_probe.c \
+            -o "${PROBE}"
+          test -x "${PROBE}"
+          "${PROBE}" "$$" 1 > wakeup-probe-self-test.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path("wakeup-probe-self-test.json").read_text(encoding="utf-8"))
+          if value.get("schemaVersion") != 1 or value.get("durationSeconds", 0) < 0.9:
+              raise SystemExit("wakeup probe self-test is invalid")
+          for key in (
+              "packageIdleWakeupsDelta",
+              "interruptWakeupsDelta",
+              "packageIdleWakeupsPerSecond",
+              "interruptWakeupsPerSecond",
+          ):
+              if key not in value:
+                  raise SystemExit(f"wakeup probe self-test missing {key}")
+          PY
+          python3 scripts/report_runtime_resources.py --self-test
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare baseline and product test sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf -- "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${PRODUCT_DERIVED}" "${EVIDENCE_DIR}"
+          mkdir -p "${EVIDENCE_DIR}/baseline" "${EVIDENCE_DIR}/product"
+          git worktree add --detach "${BASELINE_ROOT}" "${BASELINE_SHA}"
+          cp MacVitalsTests/ProcessWakeupABTests.swift "${BASELINE_ROOT}/MacVitalsTests/ProcessWakeupABTests.swift"
+
+          prepare_source() {
+            local source_root="$1" derived_data="$2" marker_root="$3"
+            (
+              cd "${source_root}"
+              python3 scripts/materialize_app_icon.py
+              cp project.yml wakeup-ab-project.yml
+              cat >> wakeup-ab-project.yml <<YAML
+            MacVitalsWakeupAB:
+              build:
+                targets:
+                  MacVitals: all
+                  MacVitalsTests: [test]
+              test:
+                gatherCoverageData: false
+                language: en
+                region: US
+                targets:
+                  - MacVitalsTests
+                environmentVariables:
+                  MACVITALS_WAKEUP_AB_READY_FILE: "${marker_root}/ready.txt"
+                  MACVITALS_WAKEUP_AB_COMPLETE_FILE: "${marker_root}/complete.txt"
+          YAML
+              xcodegen generate --spec wakeup-ab-project.yml
+              xcodebuild \
+                -project MacVitals.xcodeproj \
+                -scheme MacVitalsWakeupAB \
+                -destination 'platform=macOS' \
+                -derivedDataPath "${derived_data}" \
+                ARCHS=arm64 \
+                ONLY_ACTIVE_ARCH=YES \
+                CODE_SIGNING_ALLOWED=NO \
+                build-for-testing \
+                > wakeup-ab-build.log 2>&1
+              test -x "${derived_data}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+            )
+          }
+
+          prepare_source "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${EVIDENCE_DIR}/baseline"
+          prepare_source "${GITHUB_WORKSPACE}" "${PRODUCT_DERIVED}" "${EVIDENCE_DIR}/product"
+
+      - name: Run same-runner baseline and shared-center wakeup measurements
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          TEST_PID=""
+          OWNED_PID=""
+          EXPECTED_EXECUTABLE=""
+          RESOURCE_PID=""
+
+          command_for_pid() {
+            ps -p "$1" -o command= 2>/dev/null || true
+          }
+
+          exact_pid_is_owned() {
+            local pid="$1" executable="$2" command_line
+            [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+            [[ -n "${executable}" ]] || return 1
+            kill -0 "${pid}" 2>/dev/null || return 1
+            command_line="$(command_for_pid "${pid}")"
+            [[ "${command_line}" == "${executable}" || "${command_line}" == "${executable} "* ]]
+          }
+
+          terminate_exact_pid() {
+            local pid="$1" executable="$2"
+            [[ -n "${pid}" ]] || return 0
+            exact_pid_is_owned "${pid}" "${executable}" || return 0
+            kill -TERM "${pid}" 2>/dev/null || true
+            local attempt
+            for attempt in {1..50}; do
+              exact_pid_is_owned "${pid}" "${executable}" || return 0
+              sleep 0.1
+            done
+            if exact_pid_is_owned "${pid}" "${executable}"; then
+              kill -KILL "${pid}" 2>/dev/null || true
+            fi
+            for attempt in {1..20}; do
+              exact_pid_is_owned "${pid}" "${executable}" || return 0
+              sleep 0.1
+            done
+            return 1
+          }
+
+          fail_on_existing_macvitals() {
+            if pgrep -x MacVitals >/dev/null 2>&1; then
+              printf '%s\n' 'Existing MacVitals process detected; wakeup A/B fails closed and will not terminate it:' >&2
+              while IFS= read -r pid; do
+                [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+                ps -p "${pid}" -o pid=,command= >&2 || true
+              done < <(pgrep -x MacVitals 2>/dev/null || true)
+              return 1
+            fi
+          }
+
+          cleanup_iteration() {
+            set +e
+            if [[ -n "${RESOURCE_PID}" ]] && kill -0 "${RESOURCE_PID}" 2>/dev/null; then
+              kill -TERM "${RESOURCE_PID}" 2>/dev/null || true
+              wait "${RESOURCE_PID}" 2>/dev/null || true
+            fi
+            RESOURCE_PID=""
+            if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
+              kill -TERM "${TEST_PID}" 2>/dev/null || true
+              wait "${TEST_PID}" 2>/dev/null || true
+            fi
+            TEST_PID=""
+            terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || true
+            OWNED_PID=""
+            EXPECTED_EXECUTABLE=""
+            set -e
+          }
+
+          cleanup_all() {
+            local status="$?"
+            trap - EXIT HUP INT TERM
+            cleanup_iteration
+            git worktree remove --force "${BASELINE_ROOT}" >/dev/null 2>&1 || true
+            exit "${status}"
+          }
+          trap cleanup_all EXIT HUP INT TERM
+
+          find_owned_pid() {
+            local executable="$1" found="" count=0 pid command_line
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              command_line="$(command_for_pid "${pid}")"
+              if [[ "${command_line}" == "${executable}" || "${command_line}" == "${executable} "* ]]; then
+                found="${pid}"
+                count=$((count + 1))
+              elif [[ -n "${command_line}" ]]; then
+                printf 'Foreign MacVitals process appeared and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+                return 2
+              fi
+            done < <(pgrep -x MacVitals 2>/dev/null || true)
+            [[ ${count} -le 1 ]] || return 3
+            [[ ${count} -eq 1 ]] || return 1
+            printf '%s\n' "${found}"
+          }
+
+          run_iteration() {
+            local label="$1" source_root="$2" derived_data="$3" source_sha="$4" iteration="$5"
+            local marker_root="${EVIDENCE_DIR}/${label}"
+            local ready="${marker_root}/ready.txt"
+            local complete="${marker_root}/complete.txt"
+            local run_root="${marker_root}/run-${iteration}"
+            local runtime_root="${run_root}/runtime"
+            local test_log="${run_root}/test.log"
+            local resource_log="${run_root}/resource-collector.log"
+            local wakeup_json="${run_root}/wakeups.json"
+            local summary_path summary_count status probe_status resource_status
+
+            cleanup_iteration
+            fail_on_existing_macvitals
+            rm -f -- "${ready}" "${complete}"
+            mkdir -p "${run_root}" "${runtime_root}"
+            EXPECTED_EXECUTABLE="${derived_data}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+            test -x "${EXPECTED_EXECUTABLE}"
+
+            (
+              cd "${source_root}"
+              xcodebuild \
+                -project MacVitals.xcodeproj \
+                -scheme MacVitalsWakeupAB \
+                -destination 'platform=macOS' \
+                -derivedDataPath "${derived_data}" \
+                ARCHS=arm64 \
+                ONLY_ACTIVE_ARCH=YES \
+                CODE_SIGNING_ALLOWED=NO \
+                test-without-building \
+                -only-testing:MacVitalsTests/ProcessWakeupABTests/testTwoConcurrentProcessConsumersForWakeupMeasurement
+            ) > "${test_log}" 2>&1 &
+            TEST_PID=$!
+
+            local attempt candidate
+            for attempt in {1..240}; do
+              if [[ -f "${ready}" ]]; then
+                set +e
+                candidate="$(find_owned_pid "${EXPECTED_EXECUTABLE}")"
+                status=$?
+                set -e
+                if [[ ${status} -eq 0 && -n "${candidate}" ]]; then
+                  OWNED_PID="${candidate}"
+                  break
+                elif [[ ${status} -eq 2 || ${status} -eq 3 ]]; then
+                  return 1
+                fi
+              fi
+              if ! kill -0 "${TEST_PID}" 2>/dev/null; then
+                break
+              fi
+              sleep 0.25
+            done
+            [[ -f "${ready}" && -n "${OWNED_PID}" ]] || {
+              tail -n 250 "${test_log}" >&2 || true
+              return 1
+            }
+            exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}"
+
+            PROCESS_ID="${OWNED_PID}" \
+            EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
+            OUTPUT_ROOT="${runtime_root}" \
+              bash "${GITHUB_WORKSPACE}/scripts/collect_runtime_metrics.sh" 60 2 \
+              > "${resource_log}" 2>&1 &
+            RESOURCE_PID=$!
+
+            set +e
+            "${PROBE}" "${OWNED_PID}" 60 > "${wakeup_json}"
+            probe_status=$?
+            wait "${RESOURCE_PID}"
+            resource_status=$?
+            set -e
+            RESOURCE_PID=""
+            [[ ${probe_status} -eq 0 ]] || return 1
+            [[ ${resource_status} -eq 0 ]] || {
+              cat "${resource_log}" >&2 || true
+              return 1
+            }
+            exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}"
+
+            set +e
+            wait "${TEST_PID}"
+            status=$?
+            set -e
+            TEST_PID=""
+            [[ ${status} -eq 0 ]] || {
+              tail -n 300 "${test_log}" >&2 || true
+              return 1
+            }
+            test -f "${complete}"
+            grep -Eq '\*\* TEST( EXECUTE)? SUCCEEDED \*\*' "${test_log}"
+
+            summaries="$(find "${runtime_root}" -mindepth 2 -maxdepth 2 -type f -name summary.json -print)"
+            summary_count="$(printf '%s\n' "${summaries}" | awk 'NF { count += 1 } END { print count + 0 }')"
+            [[ "${summary_count}" == "1" ]] || return 1
+            summary_path="$(printf '%s\n' "${summaries}" | awk 'NF { print; exit }')"
+            python3 "${GITHUB_WORKSPACE}/scripts/report_runtime_resources.py" \
+              "${summary_path}" \
+              --scenario "wakeup-ab-${label}-run-${iteration}" \
+              --source-sha "${source_sha}" \
+              --output "${run_root}/resource-summary.json" \
+              > "${run_root}/resource-summary.txt"
+
+            python3 - "${wakeup_json}" "${run_root}/resource-summary.json" "${source_sha}" "${label}" "${iteration}" <<'PY'
+          import json, math, sys
+          from pathlib import Path
+          wakeups = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          resources = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          expected_sha, label, iteration = sys.argv[3], sys.argv[4], int(sys.argv[5])
+          if wakeups.get("schemaVersion") != 1 or float(wakeups.get("durationSeconds", 0)) < 59:
+              raise SystemExit("wakeup observation is too short")
+          for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
+              value = wakeups.get(key)
+              if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
+                  raise SystemExit(f"invalid wakeup metric: {key}")
+          if resources.get("sourceSha") != expected_sha:
+              raise SystemExit("resource source SHA mismatch")
+          measurement = resources.get("measurement") or {}
+          if int(measurement.get("sampleCount", 0)) < 30 or float(measurement.get("durationSeconds", 0)) < 55:
+              raise SystemExit("resource observation is incomplete")
+          print(json.dumps({
+              "label": label,
+              "iteration": iteration,
+              "sourceSha": expected_sha,
+              "packageIdleWakeupsPerSecond": wakeups["packageIdleWakeupsPerSecond"],
+              "interruptWakeupsPerSecond": wakeups["interruptWakeupsPerSecond"],
+              "cpuMeanPercent": (measurement.get("cpuPercent") or {}).get("mean"),
+          }, sort_keys=True))
+          PY
+
+            terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || return 1
+            OWNED_PID=""
+            EXPECTED_EXECUTABLE=""
+            fail_on_existing_macvitals
+          }
+
+          for iteration in 1 2 3; do
+            run_iteration baseline "${BASELINE_ROOT}" "${BASELINE_DERIVED}" "${BASELINE_SHA}" "${iteration}"
+          done
+          for iteration in 1 2 3; do
+            run_iteration product "${GITHUB_WORKSPACE}" "${PRODUCT_DERIVED}" "${PRODUCT_SHA}" "${iteration}"
+          done
+
+      - name: Build quantitative A/B comparison
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import math
+          import statistics
+
+          root = Path("shared-process-wakeup-evidence")
+          groups = {}
+          for label in ("baseline", "product"):
+              rows = []
+              for index in (1, 2, 3):
+                  run = root / label / f"run-{index}"
+                  wakeups = json.loads((run / "wakeups.json").read_text(encoding="utf-8"))
+                  resources = json.loads((run / "resource-summary.json").read_text(encoding="utf-8"))
+                  measurement = resources["measurement"]
+                  rows.append({
+                      "iteration": index,
+                      "packageIdleWakeupsPerSecond": float(wakeups["packageIdleWakeupsPerSecond"]),
+                      "interruptWakeupsPerSecond": float(wakeups["interruptWakeupsPerSecond"]),
+                      "cpuMeanPercent": float(measurement["cpuPercent"]["mean"]),
+                      "rssGrowthMiB": float(measurement["residentMemoryMiB"]["growth"]),
+                      "threadsMax": float(measurement["threads"]["max"]),
+                  })
+              for row in rows:
+                  if not all(math.isfinite(float(value)) for key, value in row.items() if key != "iteration"):
+                      raise SystemExit(f"non-finite {label} measurement")
+              groups[label] = {
+                  "runs": rows,
+                  "medianPackageIdleWakeupsPerSecond": statistics.median(
+                      row["packageIdleWakeupsPerSecond"] for row in rows),
+                  "medianInterruptWakeupsPerSecond": statistics.median(
+                      row["interruptWakeupsPerSecond"] for row in rows),
+                  "medianCpuMeanPercent": statistics.median(row["cpuMeanPercent"] for row in rows),
+              }
+
+          baseline = groups["baseline"]
+          product = groups["product"]
+          def ratio(current, old):
+              return None if old == 0 else current / old
+
+          result = {
+              "schemaVersion": 1,
+              "result": "collected-pending-independent-review",
+              "baselineSha": "4d143aaa082b0fb15ce86d19ba72c40557939692",
+              "productSha": "9afc7d9ed904bdb394ea0d0a95c1995e265c472e",
+              "scenario": "two-concurrent-ProcessConsumersMonitor-instances",
+              "sameRunner": True,
+              "repetitionsPerRevision": 3,
+              "metrics": groups,
+              "ratiosProductOverBaseline": {
+                  "packageIdleWakeups": ratio(
+                      product["medianPackageIdleWakeupsPerSecond"],
+                      baseline["medianPackageIdleWakeupsPerSecond"]),
+                  "interruptWakeups": ratio(
+                      product["medianInterruptWakeupsPerSecond"],
+                      baseline["medianInterruptWakeupsPerSecond"]),
+                  "cpuMean": ratio(product["medianCpuMeanPercent"], baseline["medianCpuMeanPercent"]),
+              },
+              "classification": {
+                  "packageIdleWakeupsNoRegressionObserved": (
+                      product["medianPackageIdleWakeupsPerSecond"]
+                      <= baseline["medianPackageIdleWakeupsPerSecond"]),
+                  "interruptWakeupsNoRegressionObserved": (
+                      product["medianInterruptWakeupsPerSecond"]
+                      <= baseline["medianInterruptWakeupsPerSecond"]),
+                  "cpuNoRegressionObserved": (
+                      product["medianCpuMeanPercent"] <= baseline["medianCpuMeanPercent"]),
+              },
+          }
+          (root / "wakeup-ab-comparison.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Build evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${EVIDENCE_DIR}"
+          cp wakeup-ab-source.txt "${EVIDENCE_DIR}/source.txt" 2>/dev/null || true
+          cp wakeup-ab-changes.txt "${EVIDENCE_DIR}/changes.txt" 2>/dev/null || true
+          cp wakeup-probe-self-test.json "${EVIDENCE_DIR}/probe-self-test.json" 2>/dev/null || true
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          root = Path("shared-process-wakeup-evidence")
+          entries = []
+          if root.is_dir() and not root.is_symlink():
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file() or path.is_symlink() or path.name == "evidence-manifest.json":
+                      continue
+                  data = path.read_bytes()
+                  entries.append({
+                      "path": str(path.relative_to(root)),
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          manifest = {
+              "schemaVersion": 1,
+              "baselineSha": os.environ.get("BASELINE_SHA"),
+              "productSha": os.environ.get("PRODUCT_SHA"),
+              "validationSha": os.environ.get("VALIDATION_SHA"),
+              "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
+              "workflowRunAttempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "files": entries,
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "evidence-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload wakeup A/B evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-process-wakeup-ab-${{ github.run_id }}-${{ github.run_attempt }}
+          path: shared-process-wakeup-evidence
+          if-no-files-found: error
+          retention-days: 30
