@@ -53,14 +53,24 @@ external_power_available() {
   pmset -g batt 2>/dev/null | head -n 1 | grep -Eq "AC Power|Adapter"
 }
 
-crash_report_paths() {
+crash_report_manifest() {
   local destination="$1"
   local root="${HOME}/Library/Logs/DiagnosticReports"
+  local path size digest
   : > "${destination}"
   [[ -d "${root}" && ! -L "${root}" ]] || return 0
-  find "${root}" -maxdepth 1 -type f \
-    \( -name 'MacVitals*.ips' -o -name 'MacVitals*.crash' \) \
-    -print | LC_ALL=C sort > "${destination}"
+  while IFS= read -r path; do
+    [[ -f "${path}" && ! -L "${path}" ]] || continue
+    size="$(stat -f '%z' "${path}")"
+    digest="$(shasum -a 256 "${path}" | awk '{print $1}')"
+    [[ "${size}" =~ ^[0-9]+$ && "${digest}" =~ ^[0-9a-f]{64}$ ]] \
+      || fail "could not fingerprint crash report safely"
+    printf '%s\t%s\t%s\n' "$(basename "${path}")" "${size}" "${digest}"
+  done < <(
+    find "${root}" -maxdepth 1 -type f \
+      \( -name 'MacVitals*.ips' -o -name 'MacVitals*.crash' \) \
+      -print | LC_ALL=C sort
+  )
 }
 
 cleanup() {
@@ -90,6 +100,8 @@ required = (
     "external_power_available",
     "POWER_LOST",
     "SAMPLE_INTERVAL_SECONDS",
+    "crash_report_manifest",
+    "shasum -a 256",
 )
 for marker in required:
     if marker not in text:
@@ -141,7 +153,7 @@ external_power_available || fail "six-hour stability requires external power"
 
 CRASH_BEFORE="${OUTPUT_ROOT}/crash-before.txt"
 CRASH_AFTER="${OUTPUT_ROOT}/crash-after.txt"
-crash_report_paths "${CRASH_BEFORE}"
+crash_report_manifest "${CRASH_BEFORE}"
 
 /usr/bin/open -na "${APP}" --args -notificationsEnabled NO -showInDock NO
 for _ in {1..120}; do
@@ -218,10 +230,10 @@ python3 "${REPORTER}" \
   --output "${OUTPUT_ROOT}/resource-summary.json" \
   | tee "${OUTPUT_ROOT}/resource-summary.txt"
 
-crash_report_paths "${CRASH_AFTER}"
+crash_report_manifest "${CRASH_AFTER}"
 comm -13 "${CRASH_BEFORE}" "${CRASH_AFTER}" > "${OUTPUT_ROOT}/new-crash-reports.txt"
 if [[ -s "${OUTPUT_ROOT}/new-crash-reports.txt" ]]; then
-  fail "new MacVitals crash report appeared during long stability"
+  fail "new or changed MacVitals crash report appeared during long stability"
 fi
 
 python3 - \
@@ -276,7 +288,7 @@ result = {
     "residentMemoryMiB": rss,
     "threads": threads,
     "externalPowerMaintained": True,
-    "newCrashReportCount": 0,
+    "newOrChangedCrashReportCount": 0,
 }
 target.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
