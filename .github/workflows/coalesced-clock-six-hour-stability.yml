@@ -79,6 +79,7 @@ jobs:
           set -Eeuo pipefail
           bash -n scripts/run_post_single_clock_long_stability.sh
           bash scripts/run_post_single_clock_long_stability.sh --self-test
+          grep -F '"newOrChangedCrashReportCount": 0' scripts/run_post_single_clock_long_stability.sh
           bash -n scripts/collect_runtime_metrics.sh
           python3 -m py_compile scripts/collect_runtime_metrics.py scripts/report_runtime_resources.py
           python3 scripts/collect_runtime_metrics.py --self-test
@@ -141,7 +142,7 @@ jobs:
               raise SystemExit("six-hour requested observation mismatch")
           if float(value.get("measuredDurationSeconds", 0)) < 21400 or int(value.get("sampleCount", 0)) < 698:
               raise SystemExit("six-hour duration/sample coverage insufficient")
-          if value.get("externalPowerMaintained") is not True or int(value.get("newCrashReportCount", -1)) != 0:
+          if value.get("externalPowerMaintained") is not True or int(value.get("newOrChangedCrashReportCount", -1)) != 0:
               raise SystemExit("six-hour power/crash gate failed")
           for section, keys in {"cpu": ("mean", "p95", "max"), "residentMemoryMiB": ("growth", "peak"), "threads": ("max",)}.items():
               payload = value.get(section) or {}
