@@ -83,7 +83,9 @@ final class ProcessWakeupSingleClockValidationTests: XCTestCase {
     let elapsed = Date().timeIntervalSince(startedAt)
     let after = try readTaskPowerInfo()
     let taskPower = try TaskPowerWakeupEvidence(before: before, after: after, duration: elapsed)
-    let data = try JSONEncoder.sortedPretty.encode(taskPower)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let data = try encoder.encode(taskPower)
     try data.write(to: URL(fileURLWithPath: taskPowerPath), options: .atomic)
 
     // External exact-PID proc/rusage + canonical resource collectors begin after the ready marker.
@@ -187,14 +189,6 @@ private struct TaskPowerWakeupEvidence: Codable {
   }
 }
 
-private extension JSONEncoder {
-  static var sortedPretty: JSONEncoder {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    return encoder
-  }
-}
-
 @MainActor
 private final class LegacyIndependentProcessConsumersMonitor {
   private(set) var snapshot: ProcessMetricsSnapshot = .empty
@@ -237,7 +231,11 @@ private final class LegacyIndependentProcessConsumersMonitor {
 
   private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
     NSWorkspace.shared.runningApplications.compactMap { application in
-      guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
+      guard !application.isTerminated,
+        application.processIdentifier > 0
+      else {
+        return nil
+      }
       let name = application.localizedName
         ?? application.bundleIdentifier
         ?? L10n.string("Unknown process")
