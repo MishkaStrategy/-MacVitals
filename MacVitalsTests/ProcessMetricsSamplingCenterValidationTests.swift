@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import MacVitals
@@ -72,5 +73,71 @@ final class ProcessMetricsSamplingCenterValidationTests: XCTestCase {
 
     await center.unsubscribe(firstSubscriber)
     await center.unsubscribe(secondSubscriber)
+  }
+
+  @MainActor
+  func testLivePrimaryConsumerAndAutonomousHistoryShareSamplingHost() async throws {
+    let history = HistoricalConsumptionCenter.shared
+    let monitor = ProcessConsumersMonitor()
+    let initialRevision = history.revision
+
+    history.start(interval: 1, initialDelay: 0)
+    monitor.start(interval: 1)
+    defer { monitor.stop() }
+
+    try await waitUntil(timeout: 20) {
+      history.isCollecting
+        && monitor.isRunning
+        && monitor.snapshot.sampledProcessCount > 0
+        && !monitor.snapshot.applications.isEmpty
+    }
+
+    let firstLiveTimestamp = monitor.snapshot.timestamp
+    try writeMarker(
+      environmentKey: "MACVITALS_SHARED_SAMPLING_READY_FILE",
+      value: "primary-and-history-active\n")
+
+    try await Task.sleep(for: .seconds(70))
+
+    XCTAssertTrue(history.isCollecting)
+    XCTAssertTrue(monitor.isRunning)
+    XCTAssertGreaterThan(monitor.snapshot.timestamp, firstLiveTimestamp)
+    XCTAssertGreaterThan(monitor.snapshot.sampledProcessCount, 0)
+    XCTAssertFalse(monitor.snapshot.applications.isEmpty)
+    XCTAssertGreaterThan(history.revision, initialRevision)
+    XCTAssertNotNil(history.historyStartedAt)
+
+    let memoryLeaders = await history.leaders(metric: .memory, range: .oneHour)
+    XCTAssertFalse(memoryLeaders.isEmpty)
+    let liveIDs = Set(monitor.snapshot.applications.map(\.id))
+    let historicalIDs = Set(memoryLeaders.map(\.id))
+    XCTAssertFalse(
+      liveIDs.isDisjoint(with: historicalIDs),
+      "Live process snapshot and autonomous history have no shared application identity")
+
+    try writeMarker(
+      environmentKey: "MACVITALS_SHARED_SAMPLING_COMPLETE_FILE",
+      value: "history-advanced-and-overlapped-live-snapshot\n")
+  }
+
+  @MainActor
+  private func waitUntil(
+    timeout: TimeInterval,
+    condition: @escaping @MainActor () -> Bool
+  ) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if condition() { return }
+      try await Task.sleep(for: .milliseconds(200))
+    }
+    XCTFail("Timed out waiting for live primary/history multi-consumer state")
+  }
+
+  private func writeMarker(environmentKey: String, value: String) throws {
+    guard let path = ProcessInfo.processInfo.environment[environmentKey], !path.isEmpty else {
+      XCTFail("Missing validation marker environment: \(environmentKey)")
+      return
+    }
+    try Data(value.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
   }
 }
