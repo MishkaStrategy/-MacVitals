@@ -74,7 +74,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let diagnosticsURL = URL(fileURLWithPath: diagnosticsPath)
     var hud: [String: Any] = [:]
     try await waitUntil(timeout: 8) {
-      guard let candidate = readJSONIfAvailable(diagnosticsURL),
+      guard let candidate = self.readJSONIfAvailable(diagnosticsURL),
         candidate["panelVisible"] as? Bool == true,
         candidate["frameWidth"] is Double,
         candidate["hardwareNotchWidth"] is Double
