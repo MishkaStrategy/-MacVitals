@@ -34,9 +34,10 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       return
     }
     guard let statusItem: NSStatusItem = reflectedChild(statusController, label: "statusItem"),
-      let popover: NSPopover = reflectedChild(statusController, label: "popover")
+      let popover: NSPopover = reflectedChild(statusController, label: "popover"),
+      let notchHUD: NotchHUDController = reflectedChild(statusController, label: "notchHUD")
     else {
-      XCTFail("Product status item or popover could not be resolved")
+      XCTFail("Product status item, popover or notch HUD controller could not be resolved")
       return
     }
 
@@ -44,17 +45,24 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let originalHUDEnabled = settings.showAroundStatusBar
     let originalHUDConfiguration = settings.notchHUDConfiguration
     let originalSamplingInterval = settings.samplingInterval
+    let preferredScreen = statusItem.button?.window?.screen ?? NSScreen.main
 
     defer {
       if popover.isShown { popover.performClose(nil) }
       MetricDetailWindowPresenter.shared.close()
-      settings.notchHUDConfiguration = originalHUDConfiguration
-      settings.showAroundStatusBar = originalHUDEnabled
+      notchHUD.update(
+        snapshot: appDelegate.coordinator.snapshot,
+        preferredScreen: preferredScreen,
+        enabled: originalHUDEnabled,
+        configuration: originalHUDConfiguration)
       HistoricalConsumptionCenter.shared.restart(interval: originalSamplingInterval)
     }
 
-    settings.notchHUDConfiguration = .minimal
-    settings.showAroundStatusBar = true
+    notchHUD.update(
+      snapshot: appDelegate.coordinator.snapshot,
+      preferredScreen: preferredScreen,
+      enabled: true,
+      configuration: .minimal)
 
     try await waitUntil(timeout: 8) {
       FileManager.default.fileExists(atPath: diagnosticsPath)
@@ -181,6 +189,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
         "fan-read-only.png",
       ],
       "captureScope": "MacVitals-owned window content only; no desktop capture",
+      "preferencesWrittenByValidation": false,
     ]
     let summaryData = try JSONSerialization.data(
       withJSONObject: summary,
