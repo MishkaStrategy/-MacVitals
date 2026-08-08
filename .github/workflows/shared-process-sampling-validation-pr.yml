@@ -30,6 +30,7 @@ jobs:
       PRODUCT_BASE_SHA: a9d46f02e0f9b624845acd302cb2fd32946667cf
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-SharedSamplingValidation
+      UI_DERIVED_DATA: ${{ github.workspace }}/DerivedData-SharedSamplingUIValidation
     steps:
       - name: Checkout exact validation head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -82,9 +83,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/validate_shared_process_sampling_contract.py
+          python3 -m py_compile \
+            scripts/validate_shared_process_sampling_contract.py \
+            scripts/collect_runtime_metrics.py \
+            scripts/report_runtime_resources.py
           python3 scripts/validate_shared_process_sampling_contract.py --self-test
           python3 scripts/validate_shared_process_sampling_contract.py
+          python3 scripts/collect_runtime_metrics.py --self-test
+          python3 scripts/report_runtime_resources.py --self-test
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -128,6 +134,145 @@ jobs:
           fi
           exit ${status}
 
+      - name: Prepare validation-only UI test scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp project.yml shared-sampling-validation-project.yml
+          cat >> shared-sampling-validation-project.yml <<'YAML'
+            MacVitalsSharedSamplingValidation:
+              build:
+                targets:
+                  MacVitals: all
+                  MacVitalsUITests: [test]
+              test:
+                gatherCoverageData: false
+                language: en
+                region: US
+                targets:
+                  - MacVitalsUITests
+          YAML
+          xcodegen generate --spec shared-sampling-validation-project.yml
+
+      - name: Run primary plus historical multi-consumer runtime evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          READY_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          COMPLETE_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-complete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          EXPECTED_EXECUTABLE="${UI_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+          TEST_LOG="shared-sampling-ui-test.log"
+          TEST_PID=""
+          OWNED_PID=""
+
+          cleanup() {
+            local original_status="$?"
+            trap - EXIT HUP INT TERM
+            set +e
+            if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
+              kill -TERM "${TEST_PID}" 2>/dev/null || true
+              wait "${TEST_PID}" 2>/dev/null || true
+            fi
+            if [[ -n "${OWNED_PID}" && -x "${EXPECTED_EXECUTABLE}" ]] && kill -0 "${OWNED_PID}" 2>/dev/null; then
+              command_line="$(ps -p "${OWNED_PID}" -o command= 2>/dev/null || true)"
+              if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
+                kill -TERM "${OWNED_PID}" 2>/dev/null || true
+              fi
+            fi
+            rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
+            exit "${original_status}"
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
+          rm -rf -- "${UI_DERIVED_DATA}" shared-sampling-runtime
+
+          if pgrep -x MacVitals >/dev/null 2>&1; then
+            printf '%s\n' 'Existing MacVitals process detected; shared-sampling UI validation fails closed and will not terminate it:' >&2
+            while IFS= read -r pid; do
+              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+              ps -p "${pid}" -o pid=,command= >&2 || true
+            done < <(pgrep -x MacVitals 2>/dev/null || true)
+            exit 1
+          fi
+
+          MACVITALS_SHARED_SAMPLING_READY_FILE="${READY_FILE}" \
+          MACVITALS_SHARED_SAMPLING_COMPLETE_FILE="${COMPLETE_FILE}" \
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsSharedSamplingValidation \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${UI_DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            test \
+            -only-testing:MacVitalsUITests/SharedProcessSamplingValidationUITests/testPrimaryCPUConsumerAndHistoricalCenterRunTogether \
+            > "${TEST_LOG}" 2>&1 &
+          TEST_PID=$!
+
+          ready=0
+          for _ in {1..180}; do
+            if [[ -f "${READY_FILE}" ]]; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "${TEST_PID}" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ ${ready} -ne 1 ]]; then
+            tail -n 300 "${TEST_LOG}" || true
+            printf '%s\n' 'Shared-sampling UI validation never reached the primary-consumer ready marker' >&2
+            exit 1
+          fi
+          grep -Fxq 'ready' "${READY_FILE}"
+          [[ -x "${EXPECTED_EXECUTABLE}" ]]
+
+          owned_count=0
+          while IFS= read -r pid; do
+            [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+            command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+            [[ -n "${command_line}" ]] || continue
+            if [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]; then
+              OWNED_PID="${pid}"
+              owned_count=$((owned_count + 1))
+            else
+              printf 'Foreign MacVitals process appeared and will not be terminated: pid=%s command=%s\n' "${pid}" "${command_line}" >&2
+              exit 1
+            fi
+          done < <(pgrep -x MacVitals 2>/dev/null || true)
+          [[ ${owned_count} -eq 1 && -n "${OWNED_PID}" ]]
+
+          PROCESS_ID="${OWNED_PID}" \
+          EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
+          OUTPUT_ROOT="${GITHUB_WORKSPACE}/shared-sampling-runtime" \
+            bash scripts/collect_runtime_metrics.sh 60 2 \
+            > shared-sampling-runtime-collector.log 2>&1
+          cat shared-sampling-runtime-collector.log
+
+          mapfile -t summaries < <(find shared-sampling-runtime -mindepth 2 -maxdepth 2 -type f -name summary.json -print)
+          [[ ${#summaries[@]} -eq 1 ]]
+          python3 scripts/report_runtime_resources.py \
+            "${summaries[0]}" \
+            --scenario shared-process-multi-consumer \
+            --source-sha "${PRODUCT_BASE_SHA}" \
+            --output shared-sampling-resource-summary.json \
+            | tee shared-sampling-resource-summary.txt
+
+          set +e
+          wait "${TEST_PID}"
+          test_status=$?
+          set -e
+          TEST_PID=""
+          tail -n 300 "${TEST_LOG}" > shared-sampling-ui-test-diagnostics.txt || true
+          cat shared-sampling-ui-test-diagnostics.txt
+          [[ ${test_status} -eq 0 ]]
+          grep -Fq '** TEST SUCCEEDED **' "${TEST_LOG}"
+          [[ -f "${COMPLETE_FILE}" ]]
+          grep -Fxq 'history-visible' "${COMPLETE_FILE}"
+
       - name: Upload shared sampling validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -138,5 +283,11 @@ jobs:
             shared-sampling-validation-changes.txt
             shared-sampling-validation-tests.log
             shared-sampling-validation-test-diagnostics.txt
+            shared-sampling-ui-test.log
+            shared-sampling-ui-test-diagnostics.txt
+            shared-sampling-runtime-collector.log
+            shared-sampling-runtime/
+            shared-sampling-resource-summary.json
+            shared-sampling-resource-summary.txt
           if-no-files-found: warn
           retention-days: 30
