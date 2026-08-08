@@ -252,10 +252,13 @@ jobs:
             > shared-sampling-runtime-collector.log 2>&1
           cat shared-sampling-runtime-collector.log
 
-          mapfile -t summaries < <(find shared-sampling-runtime -mindepth 2 -maxdepth 2 -type f -name summary.json -print)
-          [[ ${#summaries[@]} -eq 1 ]]
+          summaries="$(find shared-sampling-runtime -mindepth 2 -maxdepth 2 -type f -name summary.json -print)"
+          summary_count="$(printf '%s\n' "${summaries}" | awk 'NF { count += 1 } END { print count + 0 }')"
+          [[ "${summary_count}" == "1" ]]
+          summary_path="$(printf '%s\n' "${summaries}" | awk 'NF { print; exit }')"
+          [[ -n "${summary_path}" && -f "${summary_path}" ]]
           python3 scripts/report_runtime_resources.py \
-            "${summaries[0]}" \
+            "${summary_path}" \
             --scenario shared-process-multi-consumer \
             --source-sha "${PRODUCT_BASE_SHA}" \
             --output shared-sampling-resource-summary.json \
