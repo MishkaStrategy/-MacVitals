@@ -87,6 +87,9 @@ jobs:
           python3 scripts/collect_runtime_metrics.py --self-test
           python3 scripts/report_runtime_resources.py --self-test
           bash -n scripts/collect_runtime_metrics.sh
+          python3 scripts/validate_runtime_resource_policy.py \
+            scripts/run_post_flush_long_stability.sh \
+            .github/workflows/post-flush-six-hour-stability.yml
 
       - name: Materialize application icon
         run: python3 scripts/materialize_app_icon.py
@@ -122,6 +125,31 @@ jobs:
           printf 'appExecutableSha256=%s\n' "$(shasum -a 256 "${EXECUTABLE}" | awk '{print $1}')" \
             > "${EVIDENCE_DIR}/build-identity.txt"
 
+      - name: Capture crash-report baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          root = Path.home() / "Library/Logs/DiagnosticReports"
+          rows = []
+          if root.is_dir() and not root.is_symlink():
+              candidates = sorted(set(root.glob("MacVitals*.ips")) | set(root.glob("MacVitals*.crash")))
+              for path in candidates:
+                  if not path.is_file() or path.is_symlink():
+                      continue
+                  data = path.read_bytes()
+                  rows.append({
+                      "name": path.name,
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          Path("post-flush-six-hour-evidence/crash-before.json").write_text(
+              json.dumps({"reports": rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Run exact 6-hour stability observation
         shell: bash
         env:
@@ -146,9 +174,12 @@ jobs:
           test ! -s "${EVIDENCE_DIR}/observation/new-crash-reports.txt"
           python3 - <<'PY'
           from pathlib import Path
+          import hashlib
           import json
           import math
-          root = Path("post-flush-six-hour-evidence/observation")
+
+          evidence = Path("post-flush-six-hour-evidence")
+          root = evidence / "observation"
           value = json.loads((root / "long-stability-summary.json").read_text(encoding="utf-8"))
           if value.get("schemaVersion") != 1 or value.get("result") != "passed":
               raise SystemExit("long-stability result is not passed")
@@ -174,13 +205,81 @@ jobs:
                   number = payload.get(key)
                   if not isinstance(number, (int, float)) or not math.isfinite(float(number)):
                       raise SystemExit(f"invalid {section}.{key}")
+
+          crash_root = Path.home() / "Library/Logs/DiagnosticReports"
+          after_rows = []
+          if crash_root.is_dir() and not crash_root.is_symlink():
+              candidates = sorted(
+                  set(crash_root.glob("MacVitals*.ips")) | set(crash_root.glob("MacVitals*.crash")))
+              for path in candidates:
+                  if not path.is_file() or path.is_symlink():
+                      continue
+                  data = path.read_bytes()
+                  after_rows.append({
+                      "name": path.name,
+                      "size": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  })
+          (evidence / "crash-after.json").write_text(
+              json.dumps({"reports": after_rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          before = json.loads((evidence / "crash-before.json").read_text(encoding="utf-8"))["reports"]
+          before_keys = {(row["name"], row["size"], row["sha256"]) for row in before}
+          delta = [row for row in after_rows if (row["name"], row["size"], row["sha256"]) not in before_keys]
+          (evidence / "new-crash-report-manifest.json").write_text(
+              json.dumps({"newReportCount": len(delta), "reports": delta}, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8")
+          if delta:
+              raise SystemExit("new or changed MacVitals crash report appeared during long stability")
           PY
-          if pgrep -x MacVitals >/dev/null 2>&1; then
-            printf '%s\n' 'MacVitals remained running after six-hour harness cleanup:' >&2
-            while IFS= read -r pid; do
-              [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-              ps -p "${pid}" -o pid=,command= >&2 || true
-            done < <(pgrep -x MacVitals 2>/dev/null || true)
+
+      - name: Enforce exact validation-owned process cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          EXPECTED_EXECUTABLE="${DERIVED_DATA}/Build/Products/Release/MacVitals.app/Contents/MacOS/MacVitals"
+          cleanup_failed=0
+          foreign_found=0
+          command_for_pid() {
+            ps -p "$1" -o command= 2>/dev/null || true
+          }
+          exact_owned() {
+            local pid="$1" command_line
+            [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+            kill -0 "${pid}" 2>/dev/null || return 1
+            command_line="$(command_for_pid "${pid}")"
+            [[ "${command_line}" == "${EXPECTED_EXECUTABLE}" || "${command_line}" == "${EXPECTED_EXECUTABLE} "* ]]
+          }
+          while IFS= read -r pid; do
+            [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+            command_line="$(command_for_pid "${pid}")"
+            [[ -n "${command_line}" ]] || continue
+            if exact_owned "${pid}"; then
+              kill -TERM "${pid}" 2>/dev/null || true
+              for _ in {1..50}; do
+                exact_owned "${pid}" || break
+                sleep 0.1
+              done
+              if exact_owned "${pid}"; then
+                kill -KILL "${pid}" 2>/dev/null || true
+              fi
+              for _ in {1..20}; do
+                exact_owned "${pid}" || break
+                sleep 0.1
+              done
+              exact_owned "${pid}" && cleanup_failed=1
+            else
+              printf 'Foreign MacVitals process was not terminated: pid=%s command=%s\n' \
+                "${pid}" "${command_line}" >&2
+              foreign_found=1
+            fi
+          done < <(pgrep -x MacVitals 2>/dev/null || true)
+          if [[ ${cleanup_failed} -ne 0 ]]; then
+            printf '%s\n' 'Validation-owned MacVitals could not be cleaned up safely' >&2
+            exit 1
+          fi
+          if [[ ${foreign_found} -ne 0 ]]; then
+            printf '%s\n' 'Foreign MacVitals remained present; cleanup stayed fail-closed' >&2
             exit 1
           fi
 
