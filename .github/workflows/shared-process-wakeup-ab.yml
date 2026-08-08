@@ -26,11 +26,11 @@ jobs:
       BASELINE_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
       PRODUCT_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      BASELINE_ROOT: ${{ runner.temp }}/macvitals-wakeup-ab-${{ github.run_id }}-${{ github.run_attempt }}
+      BASELINE_ROOT: /private/tmp/macvitals-wakeup-ab-${{ github.run_id }}-${{ github.run_attempt }}
       BASELINE_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Baseline
       PRODUCT_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Product
       EVIDENCE_DIR: ${{ github.workspace }}/shared-process-wakeup-evidence
-      PROBE: ${{ runner.temp }}/macvitals-process-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
+      PROBE: /private/tmp/macvitals-process-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout exact validation head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
