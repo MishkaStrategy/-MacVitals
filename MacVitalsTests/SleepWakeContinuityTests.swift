@@ -4,41 +4,15 @@ import XCTest
 @testable import MacVitals
 
 final class SleepWakeContinuityTests: XCTestCase {
-  func testProcessCounterDeltaRejectsLongSamplingGap() {
-    let previous = processSample(
-      cpu: 1_000_000_000,
-      energy: 2_000_000_000,
-      read: 100,
-      write: 200)
-    let current = processSample(
-      cpu: 2_000_000_000,
-      energy: 3_000_000_000,
-      read: 1_100,
-      write: 1_200)
-
-    let delta = ProcessCounterCalculator.delta(
-      previous: previous,
-      current: current,
-      elapsedSeconds: 61)
-
-    XCTAssertEqual(delta.cpuPercent, 0)
-    XCTAssertNil(delta.energyWatts)
-    XCTAssertEqual(delta.diskBytesPerSecond, 0)
-  }
-
-  func testHistoricalArchiveSkipsLongSamplingGap() async throws {
+  func testHistoricalContinuousRecordingSkipsLongSamplingGap() async throws {
     let archiveURL = temporaryArchiveURL()
     defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
 
     let now = Date(timeIntervalSince1970: 1_900_000_000)
     let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
-    await store.record(
-      snapshot: ProcessMetricsSnapshot(
-        timestamp: now,
-        applications: [historicalApplication()],
-        sampledProcessCount: 1,
-        energyCountersAvailable: false),
-      elapsed: 61)
+    await store.recordContinuous(
+      snapshot: snapshot(at: now),
+      elapsed: HistoricalConsumptionContinuityPolicy.maximumContinuousElapsed + 1)
 
     let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: now)
     let firstRecordedAt = await store.firstRecordedAt()
@@ -50,22 +24,38 @@ final class SleepWakeContinuityTests: XCTestCase {
     XCTAssertEqual(diagnostics.dirtySegmentCount, 0)
   }
 
-  private func processSample(
-    cpu: UInt64,
-    energy: UInt64?,
-    read: UInt64?,
-    write: UInt64?
-  ) -> ProcessCounterSample {
-    ProcessCounterSample(
-      pid: 42,
-      parentPID: 1,
-      startTime: 1,
-      name: "Continuity Test",
-      cpuTimeNanoseconds: cpu,
-      physicalFootprintBytes: 128 * 1_048_576,
-      energyNanojoules: energy,
-      diskReadBytes: read,
-      diskWriteBytes: write)
+  func testHistoricalContinuousRecordingAcceptsMaximumSamplingGap() async throws {
+    let archiveURL = temporaryArchiveURL()
+    defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
+
+    let now = Date(timeIntervalSince1970: 1_900_000_100)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+    await store.recordContinuous(
+      snapshot: snapshot(at: now),
+      elapsed: HistoricalConsumptionContinuityPolicy.maximumContinuousElapsed)
+
+    let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertEqual(leaders.map(\.id), ["continuity-test"])
+    XCTAssertEqual(leaders.first?.cpuCoreSeconds ?? 0, 60, accuracy: 0.0001)
+  }
+
+  func testHistoricalContinuityPolicyRejectsInvalidOrTooShortElapsed() {
+    XCTAssertNil(HistoricalConsumptionContinuityPolicy.recordingElapsed(.nan))
+    XCTAssertNil(HistoricalConsumptionContinuityPolicy.recordingElapsed(.infinity))
+    XCTAssertNil(HistoricalConsumptionContinuityPolicy.recordingElapsed(0.25))
+    XCTAssertNil(HistoricalConsumptionContinuityPolicy.recordingElapsed(-1))
+    XCTAssertEqual(
+      HistoricalConsumptionContinuityPolicy.recordingElapsed(0.251) ?? -1,
+      0.251,
+      accuracy: 0.000_001)
+  }
+
+  private func snapshot(at timestamp: Date) -> ProcessMetricsSnapshot {
+    ProcessMetricsSnapshot(
+      timestamp: timestamp,
+      applications: [historicalApplication()],
+      sampledProcessCount: 1,
+      energyCountersAvailable: false)
   }
 
   private func historicalApplication() -> ApplicationProcessUsage {

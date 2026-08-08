@@ -108,7 +108,7 @@ final class HistoricalConsumptionCenter: ObservableObject {
         self.lastSnapshotAt = snapshot.timestamp
         if let previous {
           let elapsed = snapshot.timestamp.timeIntervalSince(previous)
-          await store.record(snapshot: snapshot, elapsed: elapsed)
+          await store.recordContinuous(snapshot: snapshot, elapsed: elapsed)
           guard !Task.isCancelled, self.generation == activeGeneration else { break }
           self.revision &+= 1
           self.historyStartedAt = await store.firstRecordedAt()
