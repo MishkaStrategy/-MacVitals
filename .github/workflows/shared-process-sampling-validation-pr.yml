@@ -154,6 +154,23 @@ jobs:
           YAML
           xcodegen generate --spec shared-sampling-validation-project.yml
 
+      - name: Build validation-only UI test bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "${UI_DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsSharedSamplingValidation \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${UI_DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing \
+            > shared-sampling-ui-build.log 2>&1
+          test -x "${UI_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+
       - name: Run primary plus historical multi-consumer runtime evidence
         shell: bash
         run: |
@@ -185,7 +202,7 @@ jobs:
           trap cleanup EXIT HUP INT TERM
 
           rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
-          rm -rf -- "${UI_DERIVED_DATA}" shared-sampling-runtime
+          rm -rf -- shared-sampling-runtime
 
           if pgrep -x MacVitals >/dev/null 2>&1; then
             printf '%s\n' 'Existing MacVitals process detected; shared-sampling UI validation fails closed and will not terminate it:' >&2
@@ -206,7 +223,7 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
-            test \
+            test-without-building \
             -only-testing:MacVitalsUITests/SharedProcessSamplingValidationUITests/testPrimaryCPUConsumerAndHistoricalCenterRunTogether \
             > "${TEST_LOG}" 2>&1 &
           TEST_PID=$!
@@ -286,6 +303,7 @@ jobs:
             shared-sampling-validation-changes.txt
             shared-sampling-validation-tests.log
             shared-sampling-validation-test-diagnostics.txt
+            shared-sampling-ui-build.log
             shared-sampling-ui-test.log
             shared-sampling-ui-test-diagnostics.txt
             shared-sampling-runtime-collector.log
