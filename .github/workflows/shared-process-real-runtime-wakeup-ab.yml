@@ -6,7 +6,7 @@ on:
       - perf/shared-process-single-clock-9afc
     paths:
       - .github/workflows/shared-process-real-runtime-wakeup-ab.yml
-      - MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift
+      - scripts/apply_real_runtime_cpu_detail_patch.py
       - scripts/process_wakeup_probe.c
       - scripts/run_real_runtime_wakeup_ab.sh
   workflow_dispatch:
@@ -77,13 +77,13 @@ jobs:
               )
           PY
 
-          git diff --quiet "${CANDIDATE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml
+          git diff --quiet "${CANDIDATE_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsTests MacVitalsUITests
           git diff --name-only "${CANDIDATE_SHA}" "${VALIDATION_SHA}" > real-runtime-validation-changes.txt
           python3 - <<'PY'
           from pathlib import Path
           expected = {
               ".github/workflows/shared-process-real-runtime-wakeup-ab.yml",
-              "MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift",
+              "scripts/apply_real_runtime_cpu_detail_patch.py",
               "scripts/process_wakeup_probe.c",
               "scripts/run_real_runtime_wakeup_ab.sh",
           }
@@ -106,8 +106,9 @@ jobs:
             printf 'runner_arch=%s\n' "$(uname -m)"
             printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
             printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
-            printf 'method=ordinary-app-direct-launch-plus-external-xcuitest-driver\n'
+            printf 'method=ordinary-release-app-identical-one-shot-validation-hook\n'
             printf 'pair_order=baseline-candidate,candidate-baseline,baseline-candidate\n'
+            printf 'xcuitest=false\n'
           } > real-runtime-source.txt
 
       - name: Validate measurement tooling
@@ -115,7 +116,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash -n scripts/run_real_runtime_wakeup_ab.sh
-          swift format lint MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift
+          python3 -m py_compile scripts/apply_real_runtime_cpu_detail_patch.py
+          python3 scripts/apply_real_runtime_cpu_detail_patch.py --self-test
           xcrun clang \
             -std=c11 \
             -Wall -Wextra -Werror \
