@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 import Foundation
 
@@ -20,81 +19,35 @@ final class HistoricalConsumptionCenter: ObservableObject {
   private init() {}
 
   func start(interval: TimeInterval, initialDelay: TimeInterval = 1) {
-    currentInterval = normalizedInterval(interval)
-    guard samplingTask == nil else { return }
-
-    generation &+= 1
-    let activeGeneration = generation
-    let subscriberID = UUID()
-    let delay = normalizedDelay(initialDelay)
-    isCollecting = true
-
-    samplingTask = Task { [weak self, center, store] in
-      if delay > 0 {
-        do {
-          try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-        } catch {
-          return
-        }
-      }
-      guard let self, self.generation == activeGeneration, !Task.isCancelled else { return }
-
-      await center.subscribe(subscriberID)
-      defer {
-        Task { await center.unsubscribe(subscriberID) }
-      }
-
-      if let first = await store.firstRecordedAt(),
-        self.generation == activeGeneration,
-        !Task.isCancelled
-      {
-        self.historyStartedAt = first
-      }
-
-      while !Task.isCancelled {
-        guard self.generation == activeGeneration else { return }
-        let descriptors = self.runningApplicationDescriptors()
-        let snapshot = await center.sample(
-          runningApplications: descriptors,
-          minimumInterval: self.currentInterval)
-        guard !Task.isCancelled, self.generation == activeGeneration else { return }
-
-        let previous = self.lastSnapshotAt
-        self.lastSnapshotAt = snapshot.timestamp
-        if let previous {
-          let elapsed = snapshot.timestamp.timeIntervalSince(previous)
-          await store.record(snapshot: snapshot, elapsed: elapsed)
-          guard !Task.isCancelled, self.generation == activeGeneration else { return }
-          self.revision &+= 1
-          self.historyStartedAt = await store.firstRecordedAt()
-        }
-
-        let nanoseconds = UInt64(self.currentInterval * 1_000_000_000)
-        do {
-          try await Task.sleep(nanoseconds: nanoseconds)
-        } catch {
-          return
-        }
-      }
-    }
+    start(
+      interval: interval,
+      initialDelay: initialDelay,
+      waitingFor: nil)
   }
 
   func restart(interval: TimeInterval) {
     let normalized = normalizedInterval(interval)
     guard normalized != currentInterval else { return }
-    stop(flush: false)
-    start(interval: normalized, initialDelay: 0)
+    let previousTask = stopCollection()
+    start(
+      interval: normalized,
+      initialDelay: 0,
+      waitingFor: previousTask)
   }
 
   func stop(flush: Bool = true) {
-    stopCollection()
+    let previousTask = stopCollection()
     if flush {
-      Task { [store] in await store.flush() }
+      Task { [store] in
+        await previousTask?.value
+        await store.flush()
+      }
     }
   }
 
   func stopAndFlush() async {
-    stopCollection()
+    let previousTask = stopCollection()
+    await previousTask?.value
     await store.flush()
   }
 
@@ -109,12 +62,72 @@ final class HistoricalConsumptionCenter: ObservableObject {
     await store.coverageDuration(range: range)
   }
 
-  private func stopCollection() {
+  private func start(
+    interval: TimeInterval,
+    initialDelay: TimeInterval,
+    waitingFor previousTask: Task<Void, Never>?
+  ) {
+    currentInterval = normalizedInterval(interval)
+    guard samplingTask == nil else { return }
+
     generation &+= 1
-    samplingTask?.cancel()
+    let activeGeneration = generation
+    let subscriberID = UUID()
+    let delay = normalizedDelay(initialDelay)
+    let refreshInterval = currentInterval
+    isCollecting = true
+
+    samplingTask = Task { [weak self, center, store] in
+      await previousTask?.value
+      guard !Task.isCancelled else { return }
+
+      if delay > 0 {
+        do {
+          try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        } catch {
+          return
+        }
+      }
+      guard let self, self.generation == activeGeneration, !Task.isCancelled else { return }
+
+      let stream = await center.subscribe(
+        subscriberID,
+        minimumInterval: refreshInterval)
+
+      if let first = await store.firstRecordedAt(),
+        self.generation == activeGeneration,
+        !Task.isCancelled
+      {
+        self.historyStartedAt = first
+      }
+
+      for await snapshot in stream {
+        if Task.isCancelled || self.generation != activeGeneration { break }
+
+        let previous = self.lastSnapshotAt
+        self.lastSnapshotAt = snapshot.timestamp
+        if let previous {
+          let elapsed = snapshot.timestamp.timeIntervalSince(previous)
+          await store.record(snapshot: snapshot, elapsed: elapsed)
+          guard !Task.isCancelled, self.generation == activeGeneration else { break }
+          self.revision &+= 1
+          self.historyStartedAt = await store.firstRecordedAt()
+        }
+      }
+
+      await center.unsubscribe(subscriberID)
+    }
+  }
+
+  @discardableResult
+  private func stopCollection() -> Task<Void, Never>? {
+    generation &+= 1
+    let previousTask = samplingTask
+    previousTask?.cancel()
     samplingTask = nil
     isCollecting = false
     lastSnapshotAt = nil
+    return previousTask
   }
 
   private func normalizedInterval(_ interval: TimeInterval) -> TimeInterval {
@@ -123,19 +136,6 @@ final class HistoricalConsumptionCenter: ObservableObject {
 
   private func normalizedDelay(_ delay: TimeInterval) -> TimeInterval {
     min(10, max(0, delay.isFinite ? delay : 1))
-  }
-
-  private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
-    NSWorkspace.shared.runningApplications.compactMap { application in
-      guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
-      let name = application.localizedName
-        ?? application.bundleIdentifier
-        ?? L10n.string("Unknown process")
-      return RunningApplicationDescriptor(
-        pid: application.processIdentifier,
-        name: name,
-        bundleIdentifier: application.bundleIdentifier)
-    }
   }
 
   deinit {
