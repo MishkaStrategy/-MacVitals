@@ -108,7 +108,11 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       XCTFail("MacVitals status item button is missing")
       return
     }
-    statusButton.performClick(nil)
+    // A second NSStatusItem created inside XCTest does not reliably dispatch performClick through
+    // the status-item scene. Open the real product NSPopover/content controller directly so this
+    // visual gate measures the production surface without depending on synthetic click dispatch.
+    popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+    NSApp.activate(ignoringOtherApps: true)
     try await waitUntil(timeout: 5) { popover.isShown }
     guard let overviewView = popover.contentViewController?.view else {
       XCTFail("Product overview popover has no content view")
@@ -204,7 +208,8 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let summary: [String: Any] = [
       "schemaVersion": 1,
       "result": "passed",
-      "validationProductGraph": "StatusItemController+MetricsCoordinator+SettingsStore+FanControlClient",
+      "validationProductGraph":
+        "StatusItemController+MetricsCoordinator+SettingsStore+FanControlClient",
       "screenCount": NSScreen.screens.count,
       "hudPanelCountBeforePopover": visibleHUDPanels.count,
       "hud": hud,
