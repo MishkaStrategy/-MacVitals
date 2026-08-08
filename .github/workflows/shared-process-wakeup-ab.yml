@@ -17,17 +17,15 @@ permissions:
 jobs:
   wakeup-ab:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 35
+    timeout-minutes: 30
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
       queue: max
     env:
-      BASELINE_SHA: c10831e3717ca0bbf50ca0a8f784c8cca3da5411
+      LEGACY_REFERENCE_SHA: c10831e3717ca0bbf50ca0a8f784c8cca3da5411
       PRODUCT_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      BASELINE_ROOT: /private/tmp/macvitals-wakeup-ab-${{ github.run_id }}-${{ github.run_attempt }}
-      BASELINE_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Baseline
       PRODUCT_DERIVED: ${{ github.workspace }}/DerivedData-WakeupAB-Product
       EVIDENCE_DIR: ${{ github.workspace }}/shared-process-wakeup-evidence
       PROBE: /private/tmp/macvitals-process-wakeup-probe-${{ github.run_id }}-${{ github.run_attempt }}
@@ -48,11 +46,11 @@ jobs:
           test "$(uname -m)" = arm64
           test "$(stat -f '%Su' /dev/console)" = "$(id -un)"
           launchctl print "gui/$(id -u)" >/dev/null
-          [[ "${BASELINE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LEGACY_REFERENCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${PRODUCT_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${VALIDATION_SHA}" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "${VALIDATION_SHA}"
-          git merge-base --is-ancestor "${BASELINE_SHA}" "${PRODUCT_SHA}"
+          git merge-base --is-ancestor "${LEGACY_REFERENCE_SHA}" "${PRODUCT_SHA}"
           git merge-base --is-ancestor "${PRODUCT_SHA}" "${VALIDATION_SHA}"
           git diff --quiet "${PRODUCT_SHA}" "${VALIDATION_SHA}" -- MacVitals project.yml MacVitalsUITests
           git diff --name-only "${PRODUCT_SHA}" "${VALIDATION_SHA}" > wakeup-ab-changes.txt
@@ -75,18 +73,23 @@ jobs:
               )
           PY
           grep -F 'private let provider = ProcessMetricsProvider()' \
-            <(git show "${BASELINE_SHA}:MacVitals/UI/Overview/ProcessConsumersView.swift")
+            <(git show "${LEGACY_REFERENCE_SHA}:MacVitals/UI/Overview/ProcessConsumersView.swift")
           grep -F 'private let center = ProcessMetricsSamplingCenter.shared' \
             MacVitals/UI/Overview/ProcessConsumersView.swift
+          grep -F 'private final class LegacyIndependentProcessConsumersMonitor' \
+            MacVitalsTests/ProcessWakeupABTests.swift
+          grep -F 'private let provider = ProcessMetricsProvider()' \
+            MacVitalsTests/ProcessWakeupABTests.swift
           {
-            printf 'baseline_sha=%s\n' "${BASELINE_SHA}"
+            printf 'legacy_reference_sha=%s\n' "${LEGACY_REFERENCE_SHA}"
             printf 'product_sha=%s\n' "${PRODUCT_SHA}"
             printf 'validation_sha=%s\n' "${VALIDATION_SHA}"
             printf 'runner_os=%s\n' "$(uname -s)"
             printf 'runner_arch=%s\n' "$(uname -m)"
             printf 'hardware_model=%s\n' "$(sysctl -n hw.model)"
             printf 'macos=%s (%s)\n' "$(sw_vers -productVersion)" "$(sw_vers -buildVersion)"
-            printf 'pair_order=baseline-product,product-baseline,baseline-product\n'
+            printf 'comparison=controlled-current-source-architecture-models\n'
+            printf 'pair_order=legacy-shared,shared-legacy,legacy-shared\n'
           } > wakeup-ab-source.txt
 
       - name: Validate measurement tooling
@@ -131,18 +134,14 @@ jobs:
       - name: Run paired same-runner wakeup A/B
         shell: bash
         env:
-          BASELINE_SHA: ${{ env.BASELINE_SHA }}
           PRODUCT_SHA: ${{ env.PRODUCT_SHA }}
         run: |
           set -Eeuo pipefail
           bash scripts/run_shared_process_wakeup_ab.sh \
-            "${BASELINE_ROOT}" \
-            "${BASELINE_DERIVED}" \
             "${GITHUB_WORKSPACE}" \
             "${PRODUCT_DERIVED}" \
             "${EVIDENCE_DIR}" \
-            "${PROBE}" \
-            "${GITHUB_WORKSPACE}/MacVitalsTests/ProcessWakeupABTests.swift"
+            "${PROBE}"
 
       - name: Build quantitative A/B comparison
         shell: bash
@@ -156,7 +155,7 @@ jobs:
 
           root = Path("shared-process-wakeup-evidence")
           groups = {}
-          for label in ("baseline", "product"):
+          for label in ("legacy", "shared"):
               rows = []
               for index in (1, 2, 3):
                   run = root / label / f"run-{index}"
@@ -184,46 +183,51 @@ jobs:
                   "medianCpuMeanPercent": statistics.median(row["cpuMeanPercent"] for row in rows),
               }
 
-          baseline = groups["baseline"]
-          product = groups["product"]
+          legacy = groups["legacy"]
+          shared = groups["shared"]
           def ratio(current, old):
               return None if old == 0 else current / old
 
           result = {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
               "result": "collected-pending-independent-review",
-              "baselineSha": "c10831e3717ca0bbf50ca0a8f784c8cca3da5411",
               "productSha": "9afc7d9ed904bdb394ea0d0a95c1995e265c472e",
-              "scenario": "two-concurrent-ProcessConsumersMonitor-instances",
+              "legacyReferenceSha": "c10831e3717ca0bbf50ca0a8f784c8cca3da5411",
+              "scenario": "two-concurrent-process-consumers-current-source-controlled-models",
+              "sameBinary": True,
               "sameRunner": True,
-              "repetitionsPerRevision": 3,
-              "pairOrder": ["baseline-product", "product-baseline", "baseline-product"],
+              "repetitionsPerModel": 3,
+              "pairOrder": ["legacy-shared", "shared-legacy", "legacy-shared"],
+              "models": {
+                  "legacy": "two validation-only monitors with independent current ProcessMetricsProvider actors",
+                  "shared": "two real current ProcessConsumersMonitor instances using ProcessMetricsSamplingCenter.shared",
+              },
               "metrics": groups,
-              "ratiosProductOverBaseline": {
+              "ratiosSharedOverLegacy": {
                   "packageIdleWakeups": ratio(
-                      product["medianPackageIdleWakeupsPerSecond"],
-                      baseline["medianPackageIdleWakeupsPerSecond"]),
+                      shared["medianPackageIdleWakeupsPerSecond"],
+                      legacy["medianPackageIdleWakeupsPerSecond"]),
                   "interruptWakeups": ratio(
-                      product["medianInterruptWakeupsPerSecond"],
-                      baseline["medianInterruptWakeupsPerSecond"]),
+                      shared["medianInterruptWakeupsPerSecond"],
+                      legacy["medianInterruptWakeupsPerSecond"]),
                   "cpuMean": ratio(
-                      product["medianCpuMeanPercent"],
-                      baseline["medianCpuMeanPercent"]),
+                      shared["medianCpuMeanPercent"],
+                      legacy["medianCpuMeanPercent"]),
               },
               "classification": {
                   "packageIdleWakeupsNoRegressionObserved": (
-                      product["medianPackageIdleWakeupsPerSecond"]
-                      <= baseline["medianPackageIdleWakeupsPerSecond"]),
+                      shared["medianPackageIdleWakeupsPerSecond"]
+                      <= legacy["medianPackageIdleWakeupsPerSecond"]),
                   "interruptWakeupsNoRegressionObserved": (
-                      product["medianInterruptWakeupsPerSecond"]
-                      <= baseline["medianInterruptWakeupsPerSecond"]),
+                      shared["medianInterruptWakeupsPerSecond"]
+                      <= legacy["medianInterruptWakeupsPerSecond"]),
                   "cpuNoRegressionObserved": (
-                      product["medianCpuMeanPercent"] <= baseline["medianCpuMeanPercent"]),
+                      shared["medianCpuMeanPercent"] <= legacy["medianCpuMeanPercent"]),
               },
               "causalityNote": (
-                  "Baseline c10831e... is the exact pre-centralization base of PR #71. "
-                  "The end-to-end product still contains later changes beyond shared sampling, so provider "
-                  "coalescing causality is also established independently by PR #150 topology/concurrency evidence."
+                  "Both models use the exact current product provider and process host, so later provider fixes are controlled. "
+                  "The legacy model reproduces PR #71 base ownership (one provider per monitor); the shared model uses the real current center. "
+                  "Accepted PR #150 independently proves the production primary+historical topology coalesces through that center."
               ),
           }
           (root / "wakeup-ab-comparison.json").write_text(
@@ -258,8 +262,8 @@ jobs:
                       "sha256": hashlib.sha256(data).hexdigest(),
                   })
           manifest = {
-              "schemaVersion": 1,
-              "baselineSha": os.environ.get("BASELINE_SHA"),
+              "schemaVersion": 2,
+              "legacyReferenceSha": os.environ.get("LEGACY_REFERENCE_SHA"),
               "productSha": os.environ.get("PRODUCT_SHA"),
               "validationSha": os.environ.get("VALIDATION_SHA"),
               "workflowRunID": os.environ.get("GITHUB_RUN_ID"),
