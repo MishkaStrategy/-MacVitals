@@ -20,7 +20,7 @@ concurrency:
 jobs:
   exact-shared-sampling:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 30
+    timeout-minutes: 35
     concurrency:
       group: macvitals-physical-runtime
       cancel-in-progress: false
@@ -29,6 +29,7 @@ jobs:
       PRODUCT_BASE_SHA: a9d46f02e0f9b624845acd302cb2fd32946667cf
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DERIVED_DATA: ${{ github.workspace }}/DerivedData-SharedSamplingValidation
+      LIVE_DERIVED_DATA: ${{ github.workspace }}/DerivedData-SharedSamplingLiveHost
     steps:
       - name: Checkout exact validation head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -130,13 +131,51 @@ jobs:
           fi
           exit ${status}
 
+      - name: Prepare live-host validation scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          READY_FILE="${GITHUB_WORKSPACE}/shared-sampling-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+          COMPLETE_FILE="${GITHUB_WORKSPACE}/shared-sampling-complete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+          rm -f -- "${READY_FILE}" "${COMPLETE_FILE}"
+          cp project.yml shared-sampling-validation-project.yml
+          cat >> shared-sampling-validation-project.yml <<YAML
+            MacVitalsSharedSamplingValidation:
+              build:
+                targets:
+                  MacVitals: all
+                  MacVitalsTests: [test]
+              test:
+                gatherCoverageData: false
+                language: en
+                region: US
+                targets:
+                  - MacVitalsTests
+                environmentVariables:
+                  MACVITALS_SHARED_SAMPLING_READY_FILE: "${READY_FILE}"
+                  MACVITALS_SHARED_SAMPLING_COMPLETE_FILE: "${COMPLETE_FILE}"
+          YAML
+          xcodegen generate --spec shared-sampling-validation-project.yml
+          rm -rf -- "${LIVE_DERIVED_DATA}"
+          xcodebuild \
+            -project MacVitals.xcodeproj \
+            -scheme MacVitalsSharedSamplingValidation \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${LIVE_DERIVED_DATA}" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing \
+            > shared-sampling-live-host-build.log 2>&1
+          test -x "${LIVE_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+
       - name: Run live primary plus autonomous-history host evidence
         shell: bash
         run: |
           set -Eeuo pipefail
-          READY_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          COMPLETE_FILE="${RUNNER_TEMP}/macvitals-shared-sampling-complete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          EXPECTED_EXECUTABLE="${DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+          READY_FILE="${GITHUB_WORKSPACE}/shared-sampling-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+          COMPLETE_FILE="${GITHUB_WORKSPACE}/shared-sampling-complete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+          EXPECTED_EXECUTABLE="${LIVE_DERIVED_DATA}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
           TEST_LOG="shared-sampling-live-host-test.log"
           TEST_PID=""
           OWNED_PID=""
@@ -203,13 +242,11 @@ jobs:
             exit 1
           fi
 
-          MACVITALS_SHARED_SAMPLING_READY_FILE="${READY_FILE}" \
-          MACVITALS_SHARED_SAMPLING_COMPLETE_FILE="${COMPLETE_FILE}" \
           xcodebuild \
             -project MacVitals.xcodeproj \
-            -scheme MacVitals \
+            -scheme MacVitalsSharedSamplingValidation \
             -destination 'platform=macOS' \
-            -derivedDataPath "${DERIVED_DATA}" \
+            -derivedDataPath "${LIVE_DERIVED_DATA}" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
@@ -293,6 +330,7 @@ jobs:
             shared-sampling-validation-changes.txt
             shared-sampling-validation-tests.log
             shared-sampling-validation-test-diagnostics.txt
+            shared-sampling-live-host-build.log
             shared-sampling-live-host-test.log
             shared-sampling-live-host-test-diagnostics.txt
             shared-sampling-runtime-collector.log
