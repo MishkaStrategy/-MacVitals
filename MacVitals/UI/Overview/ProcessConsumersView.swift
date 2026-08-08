@@ -5,89 +5,218 @@ import SwiftUI
 actor ProcessMetricsSamplingCenter {
   static let shared = ProcessMetricsSamplingCenter()
 
-  private struct InFlightSample {
-    let sessionGeneration: UInt64
-    let requestID: UInt64
-    let task: Task<ProcessMetricsSnapshot, Never>
+  typealias ResetProvider = @Sendable () async -> Void
+  typealias SampleProvider =
+    @Sendable ([RunningApplicationDescriptor]) async -> ProcessMetricsSnapshot
+  typealias RunningApplicationsProvider =
+    @Sendable () async -> [RunningApplicationDescriptor]
+
+  private struct Subscription {
+    let minimumInterval: TimeInterval
+    let continuation: AsyncStream<ProcessMetricsSnapshot>.Continuation
+    var lastDeliveredAt: Date?
   }
 
-  private let provider = ProcessMetricsProvider()
-  private var subscribers: Set<UUID> = []
+  private let resetProvider: ResetProvider
+  private let sampleProvider: SampleProvider
+  private let runningApplicationsProvider: RunningApplicationsProvider
+  private var subscribers: [UUID: Subscription] = [:]
   private var cachedSnapshot: ProcessMetricsSnapshot = .empty
-  private var inFlight: InFlightSample?
-  private var sessionGeneration: UInt64 = 0
-  private var nextRequestID: UInt64 = 0
+  private var samplingTask: Task<Void, Never>?
+  private var resetTask: Task<Void, Never>?
+  private var clockGeneration: UInt64 = 0
 
-  func subscribe(_ id: UUID) async {
-    let wasIdle = subscribers.isEmpty
-    subscribers.insert(id)
-    if wasIdle {
-      sessionGeneration &+= 1
-      cachedSnapshot = .empty
-      inFlight?.task.cancel()
-      inFlight = nil
-      await provider.reset()
+  init() {
+    let provider = ProcessMetricsProvider()
+    resetProvider = { await provider.reset() }
+    sampleProvider = { applications in
+      await provider.sample(runningApplications: applications)
     }
+    runningApplicationsProvider = {
+      await MainActor.run {
+        NSWorkspace.shared.runningApplications.compactMap { application in
+          guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
+          let name = application.localizedName
+            ?? application.bundleIdentifier
+            ?? L10n.string("Unknown process")
+          return RunningApplicationDescriptor(
+            pid: application.processIdentifier,
+            name: name,
+            bundleIdentifier: application.bundleIdentifier)
+        }
+      }
+    }
+  }
+
+  init(
+    resetProvider: @escaping ResetProvider,
+    sampleProvider: @escaping SampleProvider,
+    runningApplicationsProvider: @escaping RunningApplicationsProvider
+  ) {
+    self.resetProvider = resetProvider
+    self.sampleProvider = sampleProvider
+    self.runningApplicationsProvider = runningApplicationsProvider
+  }
+
+  func subscribe(_ id: UUID, minimumInterval: TimeInterval) async
+    -> AsyncStream<ProcessMetricsSnapshot>
+  {
+    let interval = normalizedInterval(minimumInterval)
+    let previousMinimum = activeMinimumInterval()
+    let wasIdle = subscribers.isEmpty
+
+    if let replaced = subscribers.removeValue(forKey: id) {
+      replaced.continuation.finish()
+    }
+
+    let pair = AsyncStream<ProcessMetricsSnapshot>.makeStream(
+      bufferingPolicy: .bufferingNewest(1))
+    var subscription = Subscription(
+      minimumInterval: interval,
+      continuation: pair.continuation,
+      lastDeliveredAt: nil)
+
+    if !wasIdle,
+      ProcessSamplingCachePolicy.isFresh(
+        timestamp: cachedSnapshot.timestamp,
+        now: Date(),
+        minimumInterval: interval)
+    {
+      pair.continuation.yield(cachedSnapshot)
+      subscription.lastDeliveredAt = cachedSnapshot.timestamp
+    }
+    subscribers[id] = subscription
+
+    if wasIdle {
+      cachedSnapshot = .empty
+      await resetProviderForNewSession()
+      guard !subscribers.isEmpty else { return pair.stream }
+      startSamplingLoop()
+    } else if cadenceChanged(from: previousMinimum, to: activeMinimumInterval()) {
+      restartSamplingLoop()
+    } else if samplingTask == nil, resetTask == nil {
+      startSamplingLoop()
+    }
+
+    return pair.stream
   }
 
   func unsubscribe(_ id: UUID) {
-    subscribers.remove(id)
-    if subscribers.isEmpty {
-      sessionGeneration &+= 1
-      cachedSnapshot = .empty
-      inFlight?.task.cancel()
-      inFlight = nil
-    }
-  }
+    let previousMinimum = activeMinimumInterval()
+    guard let removed = subscribers.removeValue(forKey: id) else { return }
+    removed.continuation.finish()
 
-  func sample(
-    runningApplications: [RunningApplicationDescriptor],
-    minimumInterval: TimeInterval
-  ) async -> ProcessMetricsSnapshot {
-    if ProcessSamplingCachePolicy.isFresh(
-      timestamp: cachedSnapshot.timestamp,
-      now: Date(),
-      minimumInterval: minimumInterval)
-    {
-      return cachedSnapshot
-    }
-
-    if let activeSample = inFlight {
-      let snapshot = await activeSample.task.value
-      publishIfCurrent(snapshot, from: activeSample)
-      return snapshot
-    }
-
-    let provider = self.provider
-    nextRequestID &+= 1
-    let activeSample = InFlightSample(
-      sessionGeneration: sessionGeneration,
-      requestID: nextRequestID,
-      task: Task {
-        await provider.sample(runningApplications: runningApplications)
-      })
-    inFlight = activeSample
-
-    let snapshot = await activeSample.task.value
-    publishIfCurrent(snapshot, from: activeSample)
-    return snapshot
-  }
-
-  private func publishIfCurrent(
-    _ snapshot: ProcessMetricsSnapshot,
-    from completedSample: InFlightSample
-  ) {
-    guard
-      ProcessSamplingCachePolicy.shouldPublishCompletedSample(
-        completedSession: completedSample.sessionGeneration,
-        currentSession: sessionGeneration,
-        completedRequest: completedSample.requestID,
-        currentRequest: inFlight?.requestID)
-    else {
+    guard !subscribers.isEmpty else {
+      stopSamplingLoop(clearCache: true)
       return
     }
-    cachedSnapshot = snapshot
-    inFlight = nil
+
+    if cadenceChanged(from: previousMinimum, to: activeMinimumInterval()) {
+      restartSamplingLoop()
+    }
+  }
+
+  private func resetProviderForNewSession() async {
+    if let activeReset = resetTask {
+      await activeReset.value
+      return
+    }
+
+    let resetProvider = self.resetProvider
+    let operation = Task { await resetProvider() }
+    resetTask = operation
+    await operation.value
+    resetTask = nil
+  }
+
+  private func startSamplingLoop() {
+    guard samplingTask == nil, !subscribers.isEmpty else { return }
+    clockGeneration &+= 1
+    let generation = clockGeneration
+    samplingTask = Task { [weak self] in
+      await self?.runSamplingLoop(generation: generation)
+    }
+  }
+
+  private func restartSamplingLoop() {
+    clockGeneration &+= 1
+    samplingTask?.cancel()
+    samplingTask = nil
+    guard !subscribers.isEmpty else { return }
+    let generation = clockGeneration
+    samplingTask = Task { [weak self] in
+      await self?.runSamplingLoop(generation: generation)
+    }
+  }
+
+  private func stopSamplingLoop(clearCache: Bool) {
+    clockGeneration &+= 1
+    samplingTask?.cancel()
+    samplingTask = nil
+    if clearCache {
+      cachedSnapshot = .empty
+    }
+  }
+
+  private func runSamplingLoop(generation: UInt64) async {
+    while !Task.isCancelled {
+      guard generation == clockGeneration, !subscribers.isEmpty else { return }
+
+      let applications = await runningApplicationsProvider()
+      guard !Task.isCancelled, generation == clockGeneration, !subscribers.isEmpty else {
+        return
+      }
+
+      let snapshot = await sampleProvider(applications)
+      guard !Task.isCancelled, generation == clockGeneration, !subscribers.isEmpty else {
+        return
+      }
+
+      cachedSnapshot = snapshot
+      publish(snapshot)
+
+      guard let interval = activeMinimumInterval() else { return }
+      do {
+        try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+      } catch {
+        return
+      }
+    }
+  }
+
+  private func publish(_ snapshot: ProcessMetricsSnapshot) {
+    for id in Array(subscribers.keys) {
+      guard var subscription = subscribers[id] else { continue }
+      let shouldDeliver: Bool
+      if let previous = subscription.lastDeliveredAt {
+        let elapsed = snapshot.timestamp.timeIntervalSince(previous)
+        shouldDeliver = elapsed < 0 || elapsed >= subscription.minimumInterval
+      } else {
+        shouldDeliver = true
+      }
+
+      guard shouldDeliver else { continue }
+      subscription.continuation.yield(snapshot)
+      subscription.lastDeliveredAt = snapshot.timestamp
+      subscribers[id] = subscription
+    }
+  }
+
+  private func activeMinimumInterval() -> TimeInterval? {
+    subscribers.values.map(\.minimumInterval).min()
+  }
+
+  private func cadenceChanged(from previous: TimeInterval?, to current: TimeInterval?) -> Bool {
+    switch (previous, current) {
+    case (nil, nil): return false
+    case let (left?, right?): return abs(left - right) > 0.000_1
+    default: return true
+    }
+  }
+
+  private func normalizedInterval(_ interval: TimeInterval) -> TimeInterval {
+    guard interval.isFinite else { return 1 }
+    return min(30, max(0.25, interval))
   }
 }
 
@@ -105,28 +234,43 @@ final class ProcessConsumersMonitor: ObservableObject {
     let refreshInterval = min(30, max(1, interval))
     let subscriberID = UUID()
     task = Task { [weak self, center] in
-      await center.subscribe(subscriberID)
-      defer {
-        Task { await center.unsubscribe(subscriberID) }
+      let stream = await center.subscribe(
+        subscriberID,
+        minimumInterval: refreshInterval)
+
+      for await next in stream {
+        if Task.isCancelled { break }
+        guard let self else { break }
+        self.snapshot = next
       }
 
-      while !Task.isCancelled {
-        guard let self else { break }
-        let applications = self.runningApplicationDescriptors()
-        let next = await center.sample(
-          runningApplications: applications,
-          minimumInterval: refreshInterval)
-        guard !Task.isCancelled else { break }
-        self.snapshot = next
-        let nanoseconds = UInt64(refreshInterval * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanoseconds)
-      }
+      await center.unsubscribe(subscriberID)
     }
   }
 
   func restart(interval: TimeInterval) {
-    stop()
-    start(interval: interval)
+    let previous = task
+    previous?.cancel()
+    task = nil
+    isRunning = false
+
+    isRunning = true
+    let refreshInterval = min(30, max(1, interval))
+    let subscriberID = UUID()
+    task = Task { [weak self, center] in
+      await previous?.value
+      guard !Task.isCancelled else { return }
+
+      let stream = await center.subscribe(
+        subscriberID,
+        minimumInterval: refreshInterval)
+      for await next in stream {
+        if Task.isCancelled { break }
+        guard let self else { break }
+        self.snapshot = next
+      }
+      await center.unsubscribe(subscriberID)
+    }
   }
 
   func stop() {
@@ -137,19 +281,6 @@ final class ProcessConsumersMonitor: ObservableObject {
 
   deinit {
     task?.cancel()
-  }
-
-  private func runningApplicationDescriptors() -> [RunningApplicationDescriptor] {
-    NSWorkspace.shared.runningApplications.compactMap { application in
-      guard !application.isTerminated, application.processIdentifier > 0 else { return nil }
-      let name = application.localizedName
-        ?? application.bundleIdentifier
-        ?? L10n.string("Unknown process")
-      return RunningApplicationDescriptor(
-        pid: application.processIdentifier,
-        name: name,
-        bundleIdentifier: application.bundleIdentifier)
-    }
   }
 }
 
