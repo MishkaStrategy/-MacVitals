@@ -13,6 +13,7 @@ PROBE="$3"
 BASELINE_SHA="${BASELINE_SHA:?BASELINE_SHA is required}"
 CANDIDATE_SHA="${CANDIDATE_SHA:?CANDIDATE_SHA is required}"
 VALIDATION_SHA="${VALIDATION_SHA:?VALIDATION_SHA is required}"
+OBSERVATION_SECONDS="${OBSERVATION_SECONDS:-180}"
 WORK_ROOT="${RUNNER_TEMP:-/tmp}/macvitals-real-runtime-ab-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 PATCHER="${VALIDATION_ROOT}/scripts/apply_real_runtime_cpu_detail_patch.py"
 
@@ -261,12 +262,12 @@ run_iteration() {
   PROCESS_ID="${OWNED_PID}" \
   EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
   OUTPUT_ROOT="${runtime_root}" \
-    bash "${VALIDATION_ROOT}/scripts/collect_runtime_metrics.sh" 60 2 \
+    bash "${VALIDATION_ROOT}/scripts/collect_runtime_metrics.sh" "${OBSERVATION_SECONDS}" 2 \
     > "${resource_log}" 2>&1 &
   RESOURCE_PID=$!
 
   set +e
-  "${PROBE}" "${OWNED_PID}" 60 > "${probe_json}"
+  "${PROBE}" "${OWNED_PID}" "${OBSERVATION_SECONDS}" > "${probe_json}"
   probe_status=$?
   wait "${RESOURCE_PID}"
   resource_status=$?
@@ -292,7 +293,7 @@ run_iteration() {
     --output "${run_root}/resource-summary.json" \
     > "${run_root}/resource-summary.txt"
 
-  python3 - "${probe_json}" "${run_root}/resource-summary.json" "${sha}" <<'PY'
+  python3 - "${probe_json}" "${run_root}/resource-summary.json" "${sha}" "${OBSERVATION_SECONDS}" <<'PY'
 import json
 import math
 import sys
@@ -300,7 +301,8 @@ from pathlib import Path
 probe = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 resource = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 expected_sha = sys.argv[3]
-if probe.get("schemaVersion") != 1 or float(probe.get("durationSeconds", 0)) < 59:
+expected_duration = int(sys.argv[4])
+if probe.get("schemaVersion") != 1 or float(probe.get("durationSeconds", 0)) < expected_duration - 1:
     raise SystemExit("wakeup observation is incomplete")
 for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
     value = probe.get(key)
@@ -309,8 +311,11 @@ for key in ("packageIdleWakeupsPerSecond", "interruptWakeupsPerSecond"):
 if resource.get("sourceSha") != expected_sha:
     raise SystemExit("resource source SHA mismatch")
 measurement = resource.get("measurement") or {}
-if int(measurement.get("sampleCount", 0)) < 30 or float(measurement.get("durationSeconds", 0)) < 55:
-    raise SystemExit("resource observation is incomplete")
+minimum_samples = max(2, int((expected_duration / 2) * 0.95))
+if int(measurement.get("sampleCount", 0)) < minimum_samples:
+    raise SystemExit("resource sample count is incomplete")
+if float(measurement.get("durationSeconds", 0)) < expected_duration - 5:
+    raise SystemExit("resource observation duration is incomplete")
 PY
 
   terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
@@ -321,7 +326,7 @@ PY
 }
 
 build_comparison() {
-  python3 - "${EVIDENCE_DIR}" "${BASELINE_SHA}" "${CANDIDATE_SHA}" <<'PY'
+  python3 - "${EVIDENCE_DIR}" "${BASELINE_SHA}" "${CANDIDATE_SHA}" "${OBSERVATION_SECONDS}" <<'PY'
 import json
 import statistics
 import sys
@@ -329,6 +334,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 baseline_sha = sys.argv[2]
 candidate_sha = sys.argv[3]
+observation_seconds = int(sys.argv[4])
 
 def load(label, iteration):
     run = root / label / f"run-{iteration}"
@@ -347,19 +353,25 @@ def load(label, iteration):
         "durationSeconds": float(measurement.get("durationSeconds", 0)),
     }
 
-baseline = [load("baseline", i) for i in (1, 2, 3)]
-candidate = [load("candidate", i) for i in (1, 2, 3)]
+baseline = [load("baseline", i) for i in (1, 2, 3, 4)]
+candidate = [load("candidate", i) for i in (1, 2, 3, 4)]
 
 def median(rows, key):
     return statistics.median(row[key] for row in rows)
 
 paired = []
+wakeup_differences = []
+cpu_differences = []
 for left, right in zip(baseline, candidate):
+    wakeup_difference = right["interruptWakeupsPerSecond"] - left["interruptWakeupsPerSecond"]
+    cpu_difference = right["cpuMean"] - left["cpuMean"]
+    wakeup_differences.append(wakeup_difference)
+    cpu_differences.append(cpu_difference)
     paired.append({
         "iteration": left["iteration"],
-        "candidateMinusBaselineInterruptWakeupsPerSecond":
-            right["interruptWakeupsPerSecond"] - left["interruptWakeupsPerSecond"],
-        "candidateMinusBaselineCpuMean": right["cpuMean"] - left["cpuMean"],
+        "order": "baseline-candidate" if left["iteration"] in (1, 3) else "candidate-baseline",
+        "candidateMinusBaselineInterruptWakeupsPerSecond": wakeup_difference,
+        "candidateMinusBaselineCpuMean": cpu_difference,
     })
 
 baseline_wakeup = median(baseline, "interruptWakeupsPerSecond")
@@ -372,16 +384,20 @@ wakeup_lower_pairs = sum(
 cpu_lower_pairs = sum(
     1 for left, right in zip(baseline, candidate)
     if right["cpuMean"] < left["cpuMean"])
+median_wakeup_difference = statistics.median(wakeup_differences)
+median_cpu_difference = statistics.median(cpu_differences)
 
 result = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "result": "collected-pending-independent-review",
-    "method": "ordinary-release-MacVitals-with-identical-one-shot-validation-launch-hook",
+    "method": "balanced-ordinary-release-MacVitals-identical-one-shot-validation-hook",
     "baselineSha": baseline_sha,
     "candidateSha": candidate_sha,
     "sameRunner": True,
     "inProcessXCTest": False,
     "recurringValidationTimer": False,
+    "observationSeconds": observation_seconds,
+    "pairOrder": ["baseline-candidate", "candidate-baseline", "baseline-candidate", "candidate-baseline"],
     "baseline": {
         "runs": baseline,
         "medianInterruptWakeupsPerSecond": baseline_wakeup,
@@ -393,11 +409,15 @@ result = {
         "medianCpuMean": candidate_cpu,
     },
     "pairedDifferences": paired,
+    "medianPairedCandidateMinusBaselineInterruptWakeupsPerSecond": median_wakeup_difference,
+    "medianPairedCandidateMinusBaselineCpuMean": median_cpu_difference,
     "classification": {
         "candidateWakeupsLowerMedian": candidate_wakeup < baseline_wakeup,
-        "candidateWakeupsLowerInAtLeastTwoOfThreePairs": wakeup_lower_pairs >= 2,
+        "candidateWakeupsLowerPairedMedian": median_wakeup_difference < 0,
+        "candidateWakeupsLowerInAtLeastThreeOfFourPairs": wakeup_lower_pairs >= 3,
         "candidateCpuLowerMedian": candidate_cpu < baseline_cpu,
-        "candidateCpuLowerInAtLeastTwoOfThreePairs": cpu_lower_pairs >= 2,
+        "candidateCpuLowerPairedMedian": median_cpu_difference < 0,
+        "candidateCpuLowerInAtLeastThreeOfFourPairs": cpu_lower_pairs >= 3,
     },
 }
 (root / "real-runtime-comparison.json").write_text(
@@ -410,6 +430,8 @@ PY
   || fail "native Apple Silicon macOS is required"
 [[ -x "${PROBE}" ]] || fail "wakeup probe is missing"
 [[ -f "${PATCHER}" && ! -L "${PATCHER}" ]] || fail "validation patcher is missing or unsafe"
+[[ "${OBSERVATION_SECONDS}" =~ ^[0-9]+$ && "${OBSERVATION_SECONDS}" -ge 60 ]] \
+  || fail "observation duration must be at least 60 seconds"
 [[ "$(git -C "${VALIDATION_ROOT}" rev-parse HEAD)" == "${VALIDATION_SHA}" ]] \
   || fail "checkout does not match exact validation SHA"
 
@@ -427,6 +449,8 @@ run_iteration candidate candidate 2
 run_iteration baseline baseline 2
 run_iteration baseline baseline 3
 run_iteration candidate candidate 3
+run_iteration candidate candidate 4
+run_iteration baseline baseline 4
 
 build_comparison
 printf '%s\n' 'real-runtime-wakeup-ab=collected'
