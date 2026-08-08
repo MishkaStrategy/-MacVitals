@@ -24,6 +24,10 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       at: evidenceDirectory,
       withIntermediateDirectories: true)
 
+    let preferencesDomain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+    let initialPreferences =
+      UserDefaults.standard.persistentDomain(forName: preferencesDomain) ?? [:]
+
     let settings = SettingsStore()
     let coordinator = MetricsCoordinator()
     let fanControl = FanControlClient()
@@ -57,6 +61,11 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       }
       coordinator.stop()
       fanControl.invalidateConnection()
+      let finalPreferences =
+        UserDefaults.standard.persistentDomain(forName: preferencesDomain) ?? [:]
+      XCTAssertTrue(
+        preferenceDomainsEqual(initialPreferences, finalPreferences),
+        "Physical visual validation must not mutate the MacVitals preferences domain")
     }
 
     notchHUD.update(
@@ -180,6 +189,13 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
 
     try await Task.sleep(for: .seconds(70))
 
+    let preferencesAfterObservation =
+      UserDefaults.standard.persistentDomain(forName: preferencesDomain) ?? [:]
+    guard preferenceDomainsEqual(initialPreferences, preferencesAfterObservation) else {
+      XCTFail("Physical visual validation changed the MacVitals preferences domain")
+      throw ValidationError.preferencesChanged
+    }
+
     let summary: [String: Any] = [
       "schemaVersion": 1,
       "result": "passed",
@@ -217,6 +233,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       ],
       "captureScope": "MacVitals-owned window content only; no desktop capture",
       "preferencesWrittenByValidation": false,
+      "preferencesUnchangedVerified": true,
       "resourceObservationHoldSeconds": 70,
     ]
     let summaryData = try JSONSerialization.data(
@@ -344,9 +361,17 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     return payload
   }
 
+  private func preferenceDomainsEqual(
+    _ lhs: [String: Any],
+    _ rhs: [String: Any]
+  ) -> Bool {
+    NSDictionary(dictionary: lhs).isEqual(NSDictionary(dictionary: rhs))
+  }
+
   private enum ValidationError: Error {
     case timedOut
     case invalidCaptureBounds
     case invalidPNG
+    case preferencesChanged
   }
 }
