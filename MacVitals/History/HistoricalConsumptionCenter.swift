@@ -87,14 +87,15 @@ final class HistoricalConsumptionCenter: ObservableObject {
   }
 
   func stop(flush: Bool = true) {
-    generation &+= 1
-    samplingTask?.cancel()
-    samplingTask = nil
-    isCollecting = false
-    lastSnapshotAt = nil
+    stopCollection()
     if flush {
       Task { [store] in await store.flush() }
     }
+  }
+
+  func stopAndFlush() async {
+    stopCollection()
+    await store.flush()
   }
 
   func leaders(
@@ -106,6 +107,14 @@ final class HistoricalConsumptionCenter: ObservableObject {
 
   func coverageDuration(range: HistoricalConsumptionRange) async -> TimeInterval {
     await store.coverageDuration(range: range)
+  }
+
+  private func stopCollection() {
+    generation &+= 1
+    samplingTask?.cancel()
+    samplingTask = nil
+    isCollecting = false
+    lastSnapshotAt = nil
   }
 
   private func normalizedInterval(_ interval: TimeInterval) -> TimeInterval {
