@@ -2,6 +2,13 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum ProcessSamplingClockPolicy {
+  static func toleranceSeconds(for interval: TimeInterval) -> TimeInterval {
+    guard interval.isFinite, interval > 0 else { return 0 }
+    return min(0.1, interval * 0.1)
+  }
+}
+
 actor ProcessMetricsSamplingCenter {
   static let shared = ProcessMetricsSamplingCenter()
 
@@ -176,8 +183,12 @@ actor ProcessMetricsSamplingCenter {
       publish(snapshot)
 
       guard let interval = activeMinimumInterval() else { return }
+      let tolerance = ProcessSamplingClockPolicy.toleranceSeconds(for: interval)
       do {
-        try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        try await Task.sleep(
+          for: .seconds(interval),
+          tolerance: .seconds(tolerance),
+          clock: .continuous)
       } catch {
         return
       }
