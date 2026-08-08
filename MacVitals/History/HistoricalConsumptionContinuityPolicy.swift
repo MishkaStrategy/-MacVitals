@@ -15,10 +15,12 @@ nonisolated enum HistoricalConsumptionContinuityPolicy {
 }
 
 extension HistoricalConsumptionArchiveStore {
-  func recordContinuous(snapshot: ProcessMetricsSnapshot, elapsed: TimeInterval) {
+  @discardableResult
+  func recordContinuous(snapshot: ProcessMetricsSnapshot, elapsed: TimeInterval) -> Bool {
     guard let elapsed = HistoricalConsumptionContinuityPolicy.recordingElapsed(elapsed) else {
-      return
+      return false
     }
     record(snapshot: snapshot, elapsed: elapsed)
+    return true
   }
 }

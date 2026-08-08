@@ -10,7 +10,7 @@ final class SleepWakeContinuityTests: XCTestCase {
 
     let now = Date(timeIntervalSince1970: 1_900_000_000)
     let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
-    await store.recordContinuous(
+    let recorded = await store.recordContinuous(
       snapshot: snapshot(at: now),
       elapsed: HistoricalConsumptionContinuityPolicy.maximumContinuousElapsed + 1)
 
@@ -18,6 +18,7 @@ final class SleepWakeContinuityTests: XCTestCase {
     let firstRecordedAt = await store.firstRecordedAt()
     let diagnostics = await store.persistenceDiagnostics()
 
+    XCTAssertFalse(recorded)
     XCTAssertTrue(leaders.isEmpty)
     XCTAssertNil(firstRecordedAt)
     XCTAssertEqual(diagnostics.fileWriteCount, 0)
@@ -30,11 +31,12 @@ final class SleepWakeContinuityTests: XCTestCase {
 
     let now = Date(timeIntervalSince1970: 1_900_000_100)
     let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
-    await store.recordContinuous(
+    let recorded = await store.recordContinuous(
       snapshot: snapshot(at: now),
       elapsed: HistoricalConsumptionContinuityPolicy.maximumContinuousElapsed)
 
     let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: now)
+    XCTAssertTrue(recorded)
     XCTAssertEqual(leaders.map(\.id), ["continuity-test"])
     XCTAssertEqual(leaders.first?.cpuCoreSeconds ?? 0, 60, accuracy: 0.0001)
   }
