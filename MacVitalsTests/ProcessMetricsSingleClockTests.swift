@@ -171,8 +171,9 @@ final class ProcessMetricsSingleClockTests: XCTestCase {
     let replacement = await deliveries.firstReplacementSnapshot()
     XCTAssertGreaterThan(replacement.sampledProcessCount, 0)
     try await Task.sleep(for: .milliseconds(350))
+    let replacementCount = await deliveries.replacementCount()
     XCTAssertGreaterThanOrEqual(
-      await deliveries.replacementCount(),
+      replacementCount,
       1,
       "Replacing a subscriber while an old async handler is suspended must keep the new handler registered")
 
@@ -226,7 +227,7 @@ private actor SamplingProbe {
     return ProcessMetricsSnapshot(
       timestamp: Date(),
       applications: [],
-      sampledProcessCount: max(1, applications.count, sampleCount),
+      sampledProcessCount: max(1, max(applications.count, sampleCount)),
       energyCountersAvailable: false)
   }
 
