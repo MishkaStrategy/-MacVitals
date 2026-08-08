@@ -102,7 +102,9 @@ final class ProcessWakeupSingleClockValidationTests: XCTestCase {
 
   private func readTaskPowerInfo() throws -> TaskPowerSnapshot {
     var info = task_power_info_data_t()
-    var count = mach_msg_type_number_t(TASK_POWER_INFO_COUNT)
+    let integerCount =
+      MemoryLayout<task_power_info_data_t>.size / MemoryLayout<integer_t>.size
+    var count = mach_msg_type_number_t(integerCount)
     let result = withUnsafeMutablePointer(to: &info) { pointer in
       pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
         task_info(mach_task_self_, task_flavor_t(TASK_POWER_INFO), rebound, &count)
@@ -147,7 +149,7 @@ private struct TaskPowerSnapshot {
 }
 
 private struct TaskPowerWakeupEvidence: Codable {
-  let schemaVersion = 1
+  let schemaVersion: Int
   let durationSeconds: Double
   let interruptWakeupsDelta: UInt64
   let platformIdleWakeupsDelta: UInt64
@@ -166,6 +168,7 @@ private struct TaskPowerWakeupEvidence: Codable {
     let bin1 = try Self.delta(before.timerWakeupsBin1, after.timerWakeupsBin1)
     let bin2 = try Self.delta(before.timerWakeupsBin2, after.timerWakeupsBin2)
 
+    schemaVersion = 1
     durationSeconds = duration
     interruptWakeupsDelta = interrupt
     platformIdleWakeupsDelta = platformIdle
