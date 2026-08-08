@@ -21,6 +21,12 @@ final class HistoricalConsumptionTerminationCoordinatorTests: XCTestCase {
 
     try await waitUntil { outcomes == [.flushed] }
     XCTAssertFalse(coordinator.isPending)
+    XCTAssertFalse(
+      coordinator.begin(
+        timeoutNanoseconds: 10_000_000,
+        flush: {},
+        completion: { outcomes.append($0) }),
+      "A completed termination sequence must remain one-shot")
 
     try await Task.sleep(nanoseconds: 600_000_000)
     XCTAssertEqual(outcomes, [.flushed])
@@ -46,6 +52,12 @@ final class HistoricalConsumptionTerminationCoordinatorTests: XCTestCase {
     try await waitUntil { outcomes == [.timedOut] }
     try await waitUntil { flushObservedCancellation }
     XCTAssertFalse(coordinator.isPending)
+    XCTAssertFalse(
+      coordinator.begin(
+        timeoutNanoseconds: 10_000_000,
+        flush: {},
+        completion: { outcomes.append($0) }),
+      "A timed-out termination sequence must remain one-shot")
 
     try await Task.sleep(nanoseconds: 50_000_000)
     XCTAssertEqual(outcomes, [.timedOut])
