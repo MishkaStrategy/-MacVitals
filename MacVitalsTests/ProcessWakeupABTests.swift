@@ -19,17 +19,21 @@ final class ProcessWakeupABTests: XCTestCase {
     let first = ProcessConsumersMonitor()
     let second = ProcessConsumersMonitor()
     first.start(interval: 1)
-    second.start(interval: 1)
     defer {
       first.stop()
       second.stop()
     }
 
-    try await waitUntil(timeout: 20) {
-      first.isRunning && second.isRunning
+    try await waitUntil(timeout: 20, description: "first process consumer") {
+      first.isRunning
         && first.snapshot.timestamp != .distantPast
-        && second.snapshot.timestamp != .distantPast
         && first.snapshot.sampledProcessCount > 0
+    }
+
+    second.start(interval: 1)
+    try await waitUntil(timeout: 20, description: "second process consumer") {
+      second.isRunning
+        && second.snapshot.timestamp != .distantPast
         && second.snapshot.sampledProcessCount > 0
     }
 
@@ -53,6 +57,7 @@ final class ProcessWakeupABTests: XCTestCase {
 
   private func waitUntil(
     timeout: TimeInterval,
+    description: String,
     condition: @escaping @MainActor () -> Bool
   ) async throws {
     let deadline = Date().addingTimeInterval(timeout)
@@ -60,7 +65,7 @@ final class ProcessWakeupABTests: XCTestCase {
       if condition() { return }
       try await Task.sleep(for: .milliseconds(100))
     }
-    XCTFail("Timed out waiting for two process consumers to become active")
+    XCTFail("Timed out waiting for \(description) to become active")
     throw ValidationError.timedOut
   }
 
