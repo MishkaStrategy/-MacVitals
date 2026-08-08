@@ -316,9 +316,17 @@ jobs:
           tail -n 300 "${TEST_LOG}" > shared-sampling-live-host-test-diagnostics.txt || true
           cat shared-sampling-live-host-test-diagnostics.txt
           [[ ${test_status} -eq 0 ]]
-          grep -Fq '** TEST SUCCEEDED **' "${TEST_LOG}"
+          grep -Eq '\*\* TEST( EXECUTE)? SUCCEEDED \*\*' "${TEST_LOG}"
           [[ -f "${COMPLETE_FILE}" ]]
           grep -Fxq 'history-advanced-and-overlapped-live-snapshot' "${COMPLETE_FILE}"
+          {
+            printf 'schemaVersion=1\n'
+            printf 'productBaseSHA=%s\n' "${PRODUCT_BASE_SHA}"
+            printf 'validationSHA=%s\n' "${VALIDATION_SHA}"
+            printf 'ready=%s\n' "$(cat "${READY_FILE}")"
+            printf 'complete=%s\n' "$(cat "${COMPLETE_FILE}")"
+            printf 'testStatus=%s\n' "${test_status}"
+          } > shared-sampling-live-contract.txt
 
       - name: Upload shared sampling validation evidence
         if: always()
@@ -333,6 +341,7 @@ jobs:
             shared-sampling-live-host-build.log
             shared-sampling-live-host-test.log
             shared-sampling-live-host-test-diagnostics.txt
+            shared-sampling-live-contract.txt
             shared-sampling-runtime-collector.log
             shared-sampling-runtime/
             shared-sampling-resource-summary.json
