@@ -25,6 +25,31 @@ final class SleepWakeContinuityTests: XCTestCase {
     XCTAssertEqual(diagnostics.dirtySegmentCount, 0)
   }
 
+  func testHistoricalContinuousRecordingResumesAfterSkippedLongGap() async throws {
+    let archiveURL = temporaryArchiveURL()
+    defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
+
+    let gapTimestamp = Date(timeIntervalSince1970: 1_900_000_050)
+    let resumedTimestamp = gapTimestamp.addingTimeInterval(1)
+    let store = HistoricalConsumptionArchiveStore(archiveURL: archiveURL)
+
+    let skipped = await store.recordContinuous(
+      snapshot: snapshot(at: gapTimestamp),
+      elapsed: HistoricalConsumptionContinuityPolicy.maximumContinuousElapsed + 1)
+    let resumed = await store.recordContinuous(
+      snapshot: snapshot(at: resumedTimestamp),
+      elapsed: 1)
+
+    let leaders = await store.leaders(metric: .cpu, range: .oneHour, now: resumedTimestamp)
+    let diagnostics = await store.persistenceDiagnostics()
+
+    XCTAssertFalse(skipped)
+    XCTAssertTrue(resumed)
+    XCTAssertEqual(leaders.map(\.id), ["continuity-test"])
+    XCTAssertEqual(leaders.first?.cpuCoreSeconds ?? 0, 1, accuracy: 0.0001)
+    XCTAssertEqual(diagnostics.dirtySegmentCount, 1)
+  }
+
   func testHistoricalContinuousRecordingAcceptsMaximumSamplingGap() async throws {
     let archiveURL = temporaryArchiveURL()
     defer { try? FileManager.default.removeItem(at: archiveURL.deletingLastPathComponent()) }
