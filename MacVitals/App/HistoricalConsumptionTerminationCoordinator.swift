@@ -12,6 +12,7 @@ final class HistoricalConsumptionTerminationCoordinator {
   }
 
   private(set) var isPending = false
+  private var hasBegun = false
   private var flushTask: Task<Void, Never>?
   private var timeoutTask: Task<Void, Never>?
 
@@ -21,7 +22,8 @@ final class HistoricalConsumptionTerminationCoordinator {
     flush: @escaping @MainActor () async -> Void,
     completion: @escaping @MainActor (Outcome) -> Void
   ) -> Bool {
-    guard !isPending else { return false }
+    guard !hasBegun else { return false }
+    hasBegun = true
     isPending = true
 
     flushTask = Task { [weak self] in
