@@ -23,7 +23,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     env:
-      BASELINE_SHA: 4d143aaa082b0fb15ce86d19ba72c40557939692
+      BASELINE_SHA: c10831e3717ca0bbf50ca0a8f784c8cca3da5411
       PRODUCT_SHA: 9afc7d9ed904bdb394ea0d0a95c1995e265c472e
       VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       BASELINE_ROOT: /private/tmp/macvitals-wakeup-ab-${{ github.run_id }}-${{ github.run_attempt }}
@@ -192,7 +192,7 @@ jobs:
           result = {
               "schemaVersion": 1,
               "result": "collected-pending-independent-review",
-              "baselineSha": "4d143aaa082b0fb15ce86d19ba72c40557939692",
+              "baselineSha": "c10831e3717ca0bbf50ca0a8f784c8cca3da5411",
               "productSha": "9afc7d9ed904bdb394ea0d0a95c1995e265c472e",
               "scenario": "two-concurrent-ProcessConsumersMonitor-instances",
               "sameRunner": True,
@@ -221,8 +221,9 @@ jobs:
                       product["medianCpuMeanPercent"] <= baseline["medianCpuMeanPercent"]),
               },
               "causalityNote": (
-                  "The end-to-end revisions contain changes beyond shared sampling. "
-                  "Provider coalescing causality is established separately by PR #150 topology/concurrency evidence."
+                  "Baseline c10831e... is the exact pre-centralization base of PR #71. "
+                  "The end-to-end product still contains later changes beyond shared sampling, so provider "
+                  "coalescing causality is also established independently by PR #150 topology/concurrency evidence."
               ),
           }
           (root / "wakeup-ab-comparison.json").write_text(
