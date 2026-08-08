@@ -14,9 +14,8 @@ BASELINE_SHA="${BASELINE_SHA:?BASELINE_SHA is required}"
 CANDIDATE_SHA="${CANDIDATE_SHA:?CANDIDATE_SHA is required}"
 VALIDATION_SHA="${VALIDATION_SHA:?VALIDATION_SHA is required}"
 WORK_ROOT="${RUNNER_TEMP:-/tmp}/macvitals-real-runtime-ab-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-UI_SOURCE="${VALIDATION_ROOT}/MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift"
+PATCHER="${VALIDATION_ROOT}/scripts/apply_real_runtime_cpu_detail_patch.py"
 
-TEST_PID=""
 OWNED_PID=""
 EXPECTED_EXECUTABLE=""
 RESOURCE_PID=""
@@ -80,11 +79,6 @@ cleanup_iteration() {
     wait "${RESOURCE_PID}" 2>/dev/null || true
   fi
   RESOURCE_PID=""
-  if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then
-    kill -TERM "${TEST_PID}" 2>/dev/null || true
-    wait "${TEST_PID}" 2>/dev/null || true
-  fi
-  TEST_PID=""
   terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || true
   OWNED_PID=""
   EXPECTED_EXECUTABLE=""
@@ -106,47 +100,32 @@ prepare_revision() {
   local label="$1" sha="$2"
   local root="${WORK_ROOT}/${label}"
   local derived="${WORK_ROOT}/DerivedData-${label}"
-  local markers="${WORK_ROOT}/markers-${label}"
-  mkdir -p "${markers}"
+  local patch_report="${EVIDENCE_DIR}/${label}-validation-patch.json"
 
   git -C "${VALIDATION_ROOT}" worktree add --detach "${root}" "${sha}" \
     > "${EVIDENCE_DIR}/${label}-worktree.log" 2>&1
-  cp "${UI_SOURCE}" "${root}/MacVitalsUITests/ProcessWakeupRealRuntimeABUITests.swift"
+
+  python3 "${PATCHER}" --root "${root}" --report "${patch_report}"
+  git -C "${root}" diff -- MacVitals/App/AppDelegate.swift \
+    > "${EVIDENCE_DIR}/${label}-validation-patch.diff"
+  test -s "${EVIDENCE_DIR}/${label}-validation-patch.diff"
 
   (
     cd "${root}"
     python3 scripts/materialize_app_icon.py
-    cp project.yml real-runtime-ab-project.yml
-    cat >> real-runtime-ab-project.yml <<YAML
-  MacVitalsRealRuntimeWakeupAB:
-    build:
-      targets:
-        MacVitals: all
-        MacVitalsUITests: [test]
-    test:
-      gatherCoverageData: false
-      language: en
-      region: US
-      targets:
-        - MacVitalsUITests
-      environmentVariables:
-        MACVITALS_REAL_AB_READY_FILE: "${markers}/ready.txt"
-        MACVITALS_REAL_AB_STOP_FILE: "${markers}/stop.txt"
-        MACVITALS_REAL_AB_COMPLETE_FILE: "${markers}/complete.txt"
-YAML
-    xcodegen generate --spec real-runtime-ab-project.yml
+    xcodegen generate
     rm -rf -- "${derived}"
     set +e
     xcodebuild \
       -project MacVitals.xcodeproj \
-      -scheme MacVitalsRealRuntimeWakeupAB \
-      -configuration Debug \
+      -scheme MacVitals \
+      -configuration Release \
       -destination 'platform=macOS' \
       -derivedDataPath "${derived}" \
       ARCHS=arm64 \
       ONLY_ACTIVE_ARCH=YES \
       CODE_SIGNING_ALLOWED=NO \
-      build-for-testing \
+      build \
       > "${EVIDENCE_DIR}/${label}-build.log" 2>&1
     build_status=$?
     set -e
@@ -154,28 +133,50 @@ YAML
       tail -n 300 "${EVIDENCE_DIR}/${label}-build.log" >&2 || true
       exit "${build_status}"
     fi
-    test -x "${derived}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+    test -x "${derived}/Build/Products/Release/MacVitals.app/Contents/MacOS/MacVitals"
   )
+}
+
+verify_identical_validation_patch() {
+  python3 - \
+    "${EVIDENCE_DIR}/baseline-validation-patch.json" \
+    "${EVIDENCE_DIR}/candidate-validation-patch.json" \
+    "${EVIDENCE_DIR}/baseline-validation-patch.diff" \
+    "${EVIDENCE_DIR}/candidate-validation-patch.diff" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+left = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+right = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+for key in ("expectedOriginalGitBlob", "originalSha256", "patchedSha256", "hook", "preMeasurementSleepsSeconds", "recurringValidationTimer"):
+    if left.get(key) != right.get(key):
+        raise SystemExit(f"baseline/candidate validation patch differs: {key}")
+if left.get("recurringValidationTimer") is not False:
+    raise SystemExit("validation patch must not leave a recurring timer")
+left_diff = Path(sys.argv[3]).read_bytes()
+right_diff = Path(sys.argv[4]).read_bytes()
+if left_diff != right_diff:
+    raise SystemExit("baseline/candidate validation source diffs are not byte-identical")
+print("validation_patch_sha256=" + hashlib.sha256(left_diff).hexdigest())
+PY
 }
 
 run_iteration() {
   local label="$1" revision="$2" iteration="$3"
   local root="${WORK_ROOT}/${revision}"
   local derived="${WORK_ROOT}/DerivedData-${revision}"
-  local markers="${WORK_ROOT}/markers-${revision}"
-  local ready="${markers}/ready.txt"
-  local stop="${markers}/stop.txt"
-  local complete="${markers}/complete.txt"
   local run_root="${EVIDENCE_DIR}/${label}/run-${iteration}"
   local runtime_root="${run_root}/runtime"
   local isolated_home="${run_root}/home"
-  local test_log="${run_root}/ui-test.log"
+  local ready="${run_root}/cpu-detail-ready.txt"
   local app_log="${run_root}/app.log"
   local env_log="${run_root}/app-environment.txt"
+  local history_log="${run_root}/history-state.txt"
   local probe_json="${run_root}/proc-rusage-wakeups.json"
   local resource_log="${run_root}/resource-collector.log"
-  local summary_path summaries summary_count probe_status resource_status test_status
-  local sha
+  local summary_path summaries summary_count probe_status resource_status
+  local sha history_root segment_count
 
   case "${label}" in
     baseline) sha="${BASELINE_SHA}" ;;
@@ -185,18 +186,19 @@ run_iteration() {
 
   cleanup_iteration
   OWNED_PID=""
-  EXPECTED_EXECUTABLE="${derived}/Build/Products/Debug/MacVitals.app/Contents/MacOS/MacVitals"
+  EXPECTED_EXECUTABLE="${derived}/Build/Products/Release/MacVitals.app/Contents/MacOS/MacVitals"
   fail_on_foreign_macvitals || fail "foreign MacVitals blocks ${label} run ${iteration}"
   test -x "${EXPECTED_EXECUTABLE}" || fail "missing ${label} executable"
 
   rm -rf -- "${run_root}"
   mkdir -p "${run_root}" "${runtime_root}" "${isolated_home}/Library/Application Support" \
     "${isolated_home}/Library/Preferences" "${isolated_home}/tmp"
-  rm -f -- "${ready}" "${stop}" "${complete}"
 
   CFFIXED_USER_HOME="${isolated_home}" \
   HOME="${isolated_home}" \
   TMPDIR="${isolated_home}/tmp" \
+  MACVITALS_VALIDATION_OPEN_CPU_DETAIL=1 \
+  MACVITALS_VALIDATION_READY_FILE="${ready}" \
   "${EXPECTED_EXECUTABLE}" \
     -AppleLanguages '(en)' \
     -AppleLocale en_US \
@@ -211,7 +213,7 @@ run_iteration() {
     sleep 0.25
   done
   exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
-    || fail "externally launched ${label} MacVitals did not stay alive"
+    || fail "${label} MacVitals did not stay alive after launch"
   fail_on_foreign_macvitals || fail "foreign MacVitals appeared after ${label} launch"
 
   ps eww -p "${OWNED_PID}" -o command= > "${env_log}" 2>/dev/null || true
@@ -220,40 +222,41 @@ run_iteration() {
   fi
   grep -Fq "CFFIXED_USER_HOME=${isolated_home}" "${env_log}" \
     || fail "isolated application home was not applied"
+  grep -Fq 'MACVITALS_VALIDATION_OPEN_CPU_DETAIL=1' "${env_log}" \
+    || fail "one-shot validation hook environment was not applied"
 
-  (
-    cd "${root}"
-    xcodebuild \
-      -project MacVitals.xcodeproj \
-      -scheme MacVitalsRealRuntimeWakeupAB \
-      -configuration Debug \
-      -destination 'platform=macOS' \
-      -derivedDataPath "${derived}" \
-      ARCHS=arm64 \
-      ONLY_ACTIVE_ARCH=YES \
-      CODE_SIGNING_ALLOWED=NO \
-      test-without-building \
-      '-only-testing:MacVitalsUITests/ProcessWakeupRealRuntimeABUITests/testExposeCPUDetailForExternalMeasurement'
-  ) > "${test_log}" 2>&1 &
-  TEST_PID=$!
-
-  for _ in {1..180}; do
+  for _ in {1..120}; do
     [[ -f "${ready}" ]] && break
-    if ! kill -0 "${TEST_PID}" 2>/dev/null; then
-      break
-    fi
     exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
-      || fail "${label} MacVitals exited before UI ready marker"
+      || fail "${label} MacVitals exited before CPU detail ready marker"
     sleep 0.25
   done
-  if [[ ! -f "${ready}" ]]; then
-    tail -n 300 "${test_log}" >&2 || true
-    fail "${label} run ${iteration} did not expose CPU detail"
-  fi
-  grep -Fxq 'cpu-detail-active' "${ready}" || fail "invalid UI ready marker"
+  [[ -f "${ready}" ]] || fail "${label} run ${iteration} did not expose CPU detail"
+  grep -Fxq 'cpu-detail-ready' "${ready}" || fail "invalid CPU detail ready marker"
+
+  history_root="${isolated_home}/Library/Application Support/MacVitals/consumption-history-v1.json.segments"
+  for _ in {1..40}; do
+    segment_count="$(find "${history_root}" -maxdepth 1 -type f -name 'segment-*.json' 2>/dev/null | wc -l | tr -d '[:space:]')"
+    [[ "${segment_count}" =~ ^[0-9]+$ && "${segment_count}" -ge 1 ]] && break
+    sleep 0.25
+  done
+  [[ -f "${history_root}/FORMAT.json" && ! -L "${history_root}/FORMAT.json" ]] \
+    || fail "autonomous history format marker is missing"
+  segment_count="$(find "${history_root}" -maxdepth 1 -type f -name 'segment-*.json' | wc -l | tr -d '[:space:]')"
+  [[ "${segment_count}" =~ ^[0-9]+$ && "${segment_count}" -ge 1 ]] \
+    || fail "autonomous history did not persist a segment before measurement"
+  (
+    cd "${history_root}"
+    for file in FORMAT.json segment-*.json; do
+      [[ -f "${file}" && ! -L "${file}" ]] || continue
+      printf '%s %s %s\n' "${file}" "$(stat -f '%z' "${file}")" "$(shasum -a 256 "${file}" | awk '{print $1}')"
+    done
+  ) > "${history_log}"
+
   exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
     || fail "${label} process identity changed before measurement"
   fail_on_foreign_macvitals || fail "foreign MacVitals appeared before measurement"
+  sleep 1
 
   PROCESS_ID="${OWNED_PID}" \
   EXPECTED_EXECUTABLE_PATH="${EXPECTED_EXECUTABLE}" \
@@ -277,42 +280,6 @@ run_iteration() {
   fi
   exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
     || fail "${label} process identity changed after measurement"
-
-  printf '%s\n' 'external-measurement-complete' > "${stop}"
-
-  for _ in {1..160}; do
-    if ! kill -0 "${TEST_PID}" 2>/dev/null; then
-      break
-    fi
-    sleep 0.25
-  done
-  if kill -0 "${TEST_PID}" 2>/dev/null; then
-    fail "${label} UI driver did not finish after stop marker"
-  fi
-  set +e
-  wait "${TEST_PID}"
-  test_status=$?
-  set -e
-  TEST_PID=""
-  if [[ ${test_status} -ne 0 ]]; then
-    tail -n 300 "${test_log}" >&2 || true
-    fail "${label} UI driver failed in run ${iteration}"
-  fi
-  grep -Eq '\*\* TEST( EXECUTE)? SUCCEEDED \*\*' "${test_log}" \
-    || fail "${label} Xcode success marker missing"
-  [[ -f "${complete}" ]] || fail "${label} completion marker missing"
-  grep -Fxq 'cpu-detail-complete' "${complete}" || fail "invalid completion marker"
-
-  for _ in {1..60}; do
-    exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" || break
-    sleep 0.1
-  done
-  if exact_pid_is_owned "${OWNED_PID}" "${EXPECTED_EXECUTABLE}"; then
-    fail "${label} MacVitals remained alive after graceful UI termination"
-  fi
-  OWNED_PID=""
-  EXPECTED_EXECUTABLE=""
-  fail_on_foreign_macvitals || fail "MacVitals remained after ${label} run ${iteration}"
 
   summaries="$(find "${runtime_root}" -mindepth 2 -maxdepth 2 -type f -name summary.json -print)"
   summary_count="$(printf '%s\n' "${summaries}" | awk 'NF { count += 1 } END { print count + 0 }')"
@@ -345,6 +312,12 @@ measurement = resource.get("measurement") or {}
 if int(measurement.get("sampleCount", 0)) < 30 or float(measurement.get("durationSeconds", 0)) < 55:
     raise SystemExit("resource observation is incomplete")
 PY
+
+  terminate_exact_pid "${OWNED_PID}" "${EXPECTED_EXECUTABLE}" \
+    || fail "could not safely terminate ${label} run ${iteration}"
+  OWNED_PID=""
+  EXPECTED_EXECUTABLE=""
+  fail_on_foreign_macvitals || fail "MacVitals remained after ${label} run ${iteration}"
 }
 
 build_comparison() {
@@ -368,6 +341,7 @@ def load(label, iteration):
         "packageIdleWakeupsPerSecond": float(wake["packageIdleWakeupsPerSecond"]),
         "cpuMean": float((measurement.get("cpuPercent") or {}).get("mean", 0)),
         "rssGrowthMiB": float((measurement.get("residentMemoryMiB") or {}).get("growth", 0)),
+        "rssPeakMiB": float((measurement.get("residentMemoryMiB") or {}).get("peak", 0)),
         "threadsMax": float((measurement.get("threads") or {}).get("max", 0)),
         "sampleCount": int(measurement.get("sampleCount", 0)),
         "durationSeconds": float(measurement.get("durationSeconds", 0)),
@@ -402,11 +376,12 @@ cpu_lower_pairs = sum(
 result = {
     "schemaVersion": 1,
     "result": "collected-pending-independent-review",
-    "method": "ordinary-MacVitals-process-controlled-by-external-XCUITest",
+    "method": "ordinary-release-MacVitals-with-identical-one-shot-validation-launch-hook",
     "baselineSha": baseline_sha,
     "candidateSha": candidate_sha,
     "sameRunner": True,
-    "uiDriverOutsideMeasuredProcess": True,
+    "inProcessXCTest": False,
+    "recurringValidationTimer": False,
     "baseline": {
         "runs": baseline,
         "medianInterruptWakeupsPerSecond": baseline_wakeup,
@@ -434,7 +409,7 @@ PY
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] \
   || fail "native Apple Silicon macOS is required"
 [[ -x "${PROBE}" ]] || fail "wakeup probe is missing"
-[[ -f "${UI_SOURCE}" ]] || fail "UI driver source is missing"
+[[ -f "${PATCHER}" && ! -L "${PATCHER}" ]] || fail "validation patcher is missing or unsafe"
 [[ "$(git -C "${VALIDATION_ROOT}" rev-parse HEAD)" == "${VALIDATION_SHA}" ]] \
   || fail "checkout does not match exact validation SHA"
 
@@ -444,6 +419,7 @@ fail_on_foreign_macvitals || fail "pre-existing MacVitals blocks real-runtime A/
 
 prepare_revision baseline "${BASELINE_SHA}"
 prepare_revision candidate "${CANDIDATE_SHA}"
+verify_identical_validation_patch
 
 run_iteration baseline baseline 1
 run_iteration candidate candidate 1
