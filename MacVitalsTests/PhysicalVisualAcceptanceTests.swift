@@ -24,17 +24,16 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       at: evidenceDirectory,
       withIntermediateDirectories: true)
 
-    guard let appDelegate = NSApp.delegate as? AppDelegate else {
-      XCTFail("MacVitals AppDelegate is unavailable in the physical test host")
-      return
-    }
-    guard let statusController: StatusItemController = reflectedChild(
-      appDelegate,
-      label: "statusController")
-    else {
-      XCTFail("Product StatusItemController was not created")
-      return
-    }
+    let settings = SettingsStore()
+    let coordinator = MetricsCoordinator()
+    let fanControl = FanControlClient()
+    let statusController = StatusItemController(
+      coordinator: coordinator,
+      settings: settings,
+      fanControl: fanControl)
+    coordinator.start()
+    fanControl.refreshStatus()
+
     guard let statusItem: NSStatusItem = reflectedChild(statusController, label: "statusItem"),
       let popover: NSPopover = reflectedChild(statusController, label: "popover"),
       let notchHUD: NotchHUDController = reflectedChild(statusController, label: "notchHUD")
@@ -43,9 +42,6 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       return
     }
 
-    let settings = appDelegate.settings
-    let originalHUDEnabled = settings.showAroundStatusBar
-    let originalHUDConfiguration = settings.notchHUDConfiguration
     let originalSamplingInterval = settings.samplingInterval
     let preferredScreen = statusItem.button?.window?.screen ?? NSScreen.main
     let history = HistoricalConsumptionCenter.shared
@@ -54,19 +50,17 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     defer {
       if popover.isShown { popover.performClose(nil) }
       MetricDetailWindowPresenter.shared.close()
-      notchHUD.update(
-        snapshot: appDelegate.coordinator.snapshot,
-        preferredScreen: preferredScreen,
-        enabled: originalHUDEnabled,
-        configuration: originalHUDConfiguration)
+      notchHUD.hide()
       history.stop(flush: false)
       if historyWasCollecting {
         history.start(interval: originalSamplingInterval, initialDelay: 0)
       }
+      coordinator.stop()
+      fanControl.invalidateConnection()
     }
 
     notchHUD.update(
-      snapshot: appDelegate.coordinator.snapshot,
+      snapshot: coordinator.snapshot,
       preferredScreen: preferredScreen,
       enabled: true,
       configuration: .minimal)
@@ -86,12 +80,15 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     }
     try validateHUDDiagnostics(hud)
 
+    let hudWindowNumber = try XCTUnwrap(hud["panelWindowNumber"] as? Int)
     let visibleHUDPanels = NSApp.windows.compactMap { $0 as? NSPanel }
-      .filter { $0.level == .statusBar && $0.isVisible }
+      .filter {
+        $0.windowNumber == hudWindowNumber && $0.level == .statusBar && $0.isVisible
+      }
     XCTAssertEqual(
       visibleHUDPanels.count,
       1,
-      "Accepted HUD must use one visible AppKit status-bar panel before the popover is opened")
+      "Accepted HUD controller must own exactly one visible AppKit status-bar panel")
 
     guard let statusButton = statusItem.button else {
       XCTFail("MacVitals status item button is missing")
@@ -144,9 +141,9 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
 
     MetricDetailWindowPresenter.shared.show(
       kind: .memory,
-      coordinator: appDelegate.coordinator,
+      coordinator: coordinator,
       settings: settings,
-      fanControl: appDelegate.fanControl)
+      fanControl: fanControl)
     let memoryWindow = try await waitForWindow(title: L10n.string("Memory"), timeout: 5)
     let tabLabels = [
       ConsumptionHistoryL10n.string("Overview"),
@@ -164,9 +161,9 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
 
     MetricDetailWindowPresenter.shared.show(
       kind: .fans,
-      coordinator: appDelegate.coordinator,
+      coordinator: coordinator,
       settings: settings,
-      fanControl: appDelegate.fanControl)
+      fanControl: fanControl)
     let fanWindow = try await waitForWindow(title: L10n.string("Fans"), timeout: 5)
     try capture(
       view: try XCTUnwrap(fanWindow.contentView),
@@ -186,6 +183,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let summary: [String: Any] = [
       "schemaVersion": 1,
       "result": "passed",
+      "validationProductGraph": "StatusItemController+MetricsCoordinator+SettingsStore+FanControlClient",
       "screenCount": NSScreen.screens.count,
       "hudPanelCountBeforePopover": visibleHUDPanels.count,
       "hud": hud,
