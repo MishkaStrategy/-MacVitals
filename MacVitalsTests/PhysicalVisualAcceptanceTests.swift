@@ -48,9 +48,10 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
     let preferredScreen = statusItem.button?.window?.screen ?? NSScreen.main
     let history = HistoricalConsumptionCenter.shared
     let historyWasCollecting = history.isCollecting
+    var overviewWindow: NSWindow?
 
     defer {
-      if popover.isShown { popover.performClose(nil) }
+      overviewWindow?.close()
       MetricDetailWindowPresenter.shared.close()
       notchHUD.hide()
       history.stop(flush: false)
@@ -104,20 +105,23 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       1,
       "Accepted HUD controller must own exactly one visible AppKit status-bar panel")
 
-    guard let statusButton = statusItem.button else {
-      XCTFail("MacVitals status item button is missing")
-      return
-    }
-    // A second NSStatusItem created inside XCTest does not reliably dispatch performClick through
-    // the status-item scene. Open the real product NSPopover/content controller directly so this
-    // visual gate measures the production surface without depending on synthetic click dispatch.
-    popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+    // XCTest creates a disconnected status-item scene for secondary NSStatusItems, so neither
+    // performClick nor NSPopover.show(relativeTo:) can exercise that scene. Render the exact
+    // product popover content controller in a validation-owned window instead. This preserves the
+    // production OverviewView tree and its onAppear sampling lifecycle without pretending to test
+    // status-item scene dispatch, which is covered separately by UI/runtime gates.
+    let overviewController = try XCTUnwrap(popover.contentViewController)
+    let physicalOverviewWindow = NSWindow(contentViewController: overviewController)
+    physicalOverviewWindow.title = "MacVitals Physical Overview"
+    physicalOverviewWindow.styleMask = [.titled, .closable, .resizable]
+    physicalOverviewWindow.setContentSize(popover.contentSize)
+    physicalOverviewWindow.isReleasedWhenClosed = false
+    physicalOverviewWindow.center()
+    overviewWindow = physicalOverviewWindow
+    physicalOverviewWindow.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    try await waitUntil(timeout: 5) { popover.isShown }
-    guard let overviewView = popover.contentViewController?.view else {
-      XCTFail("Product overview popover has no content view")
-      return
-    }
+    try await waitUntil(timeout: 5) { physicalOverviewWindow.isVisible }
+    let overviewView = overviewController.view
 
     let network = NetworkTrafficMonitor.shared
     let storage = StorageUsageMonitor.shared
@@ -210,6 +214,7 @@ final class PhysicalVisualAcceptanceTests: XCTestCase {
       "result": "passed",
       "validationProductGraph":
         "StatusItemController+MetricsCoordinator+SettingsStore+FanControlClient",
+      "overviewPresentation": "product-popover-content-in-validation-window",
       "screenCount": NSScreen.screens.count,
       "hudPanelCountBeforePopover": visibleHUDPanels.count,
       "hud": hud,
